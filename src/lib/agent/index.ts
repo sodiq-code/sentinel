@@ -2,7 +2,8 @@
 // Sentinel — Agent package barrel
 // =============================================================================
 
-export { getLlm, NvidiaNimLlmClient, BASE_URL as LLM_BASE_URL, PRIMARY_MODEL as LLM_PRIMARY_MODEL, FALLBACK_MODEL as LLM_FALLBACK_MODEL } from './llm'
+export { getLlm, getLlmProvider, getLlmModel, getLlmResilienceStatus, CircuitOpenError } from './llm'
+export type { LlmProvider } from './llm'
 export { assembleSystemPrompt, loadPromptParts, PROMPT_VERSION, PROMPTS_DIR } from './prompts/system-prompt'
 export { buildToolCatalogue, toLlmTools, executeToolCall, TOOL_CATALOGUE, TOOL_NAMES } from './tools'
 export type { ToolDefinition, ToolContext, ToolExecResult } from './tools'

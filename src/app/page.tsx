@@ -134,6 +134,19 @@ interface ConnectorStatus {
   };
 }
 
+// Phase 3 resilience — LLM circuit + failover state from /api/llm/status.
+interface LlmResilienceStatus {
+  provider: "zai" | "nvidia";
+  model: string;
+  failoverEnabled: boolean;
+  hasNvidiaKey: boolean;
+  circuit: {
+    isOpen: boolean;
+    consecutiveFailures: number;
+    msUntilReset: number;
+  } | null;
+}
+
 interface PendingApproval {
   id: string;
   incidentUrn: string | null;
@@ -234,6 +247,23 @@ function Console() {
     },
     staleTime: 15_000,
     refetchInterval: 30_000,
+  });
+
+  // Phase 3 resilience — poll the LLM circuit state. Refetch every 5s while
+  // a circuit is open (so the operator sees the cooldown tick down); every
+  // 20s when healthy.
+  const llmStatus = useQuery<LlmResilienceStatus>({
+    queryKey: ["llm-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/llm/status");
+      if (!r.ok) throw new Error("Failed to load LLM status");
+      return (await r.json()) as LlmResilienceStatus;
+    },
+    staleTime: 5_000,
+    refetchInterval: (q) => {
+      const data = q.state.data as LlmResilienceStatus | undefined;
+      return data?.circuit?.isOpen ? 1_000 : 20_000;
+    },
   });
 
   // Auto-select the first signal once loaded.
@@ -339,6 +369,7 @@ function Console() {
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
             <Chip icon={Database} label="Provider" value={result?.llmProvider ?? "zai"} mono />
+            <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "—"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
           </div>
@@ -1346,6 +1377,55 @@ function Chip({
       <Icon className="h-3 w-3 text-slate-500" />
       <span className="text-slate-500">{label}</span>
       <span className={`text-slate-300 max-w-[180px] truncate ${mono ? "font-mono" : ""}`} title={value}>{value}</span>
+    </div>
+  );
+}
+
+// Phase 3 resilience — LLM circuit chip. Shows healthy (emerald) / throttled
+// (rose, pulsing) / loading (slate) state, plus the cooldown countdown when
+// the circuit is open. Surfaces the resilience state to the operator without
+// masking it (PDF §11.3 contingency plan).
+function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
+  const loading = !status;
+  const circuit = status?.circuit;
+  const open = !!circuit?.isOpen;
+  const secs = circuit ? Math.max(1, Math.ceil(circuit.msUntilReset / 1000)) : 0;
+
+  if (loading) {
+    return (
+      <div className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1">
+        <Loader2 className="h-3 w-3 text-slate-500 animate-spin" />
+        <span className="text-slate-500">Circuit</span>
+        <span className="text-slate-400">…</span>
+      </div>
+    );
+  }
+
+  if (open) {
+    return (
+      <div
+        className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1"
+        title={`Circuit open after ${circuit?.consecutiveFailures ?? 0} consecutive 429/5xx. Sentinel fails over to NVIDIA if a key is present, otherwise the orchestrator's fallback post-mortem path runs.`}
+      >
+        <span className="relative inline-flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/60" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
+        </span>
+        <ShieldAlert className="h-3 w-3 text-rose-400" />
+        <span className="text-rose-300">Throttled</span>
+        <span className="text-rose-400/80 font-mono">{secs}s</span>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1"
+      title={`LLM circuit healthy on provider '${status?.provider}'. Failover ${status?.failoverEnabled ? "armed (NVIDIA key present)" : "off"}.`}
+    >
+      <ShieldCheck className="h-3 w-3 text-emerald-500" />
+      <span className="text-slate-500">Circuit</span>
+      <span className="text-emerald-300">Healthy</span>
     </div>
   );
 }

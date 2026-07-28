@@ -1,27 +1,49 @@
 // =============================================================================
-// Sentinel — LLM client
+// Sentinel — LLM client (Phase 3 hardened)
 //
 // PDF §10.2: one LLM provider, temperature 0, deterministic.
 // PDF §9.5.4: retries with exponential backoff on any failure.
 //
+// Phase 3 resilience hardening (this file):
+//   • TokenBucket pace limiter (default 1 req / 6s per provider) — prevents
+//     the agent from bursting into 429s and contributing to the shared sandbox
+//     gateway throttle.
+//   • 429-specific backoff with jitter (5s → 10s → 20s ± 25%) — longer than
+//     the general network/5xx backoff, because a 429 from the shared gateway
+//     is a sustained throttle, not a per-account quota.
+//   • CircuitBreaker — opens after 3 consecutive 429/5xx, stays open for 60s.
+//     While open, calls throw CircuitOpenError immediately (no retry burn).
+//   • Optional provider failover — when the primary's circuit is open AND a
+//     NVIDIA key is present, the dormant NvidiaNimLlmClient takes over.
+//     In this sandbox the NVIDIA key is dead (401 on inference), so the
+//     failover surfaces a clear CircuitOpenError — the orchestrator's existing
+//     post-loop fallback post-mortem path runs gracefully (PDF §9.4.2 steps
+//     12-14). On a real deployment with a fresh NVIDIA key, the agent
+//     transparently switches providers and continues.
+//
+// All tunables via env: LLM_RATE_LIMIT_MS, LLM_CIRCUIT_THRESHOLD,
+// LLM_CIRCUIT_COOLDOWN_MS, LLM_FAILOVER_ENABLED. See .env.example.
+//
 // Provider selection (LLM_PROVIDER env, default 'zai'):
 //
-//   zai     — z-ai-web-dev-sdk gateway (DEFAULT). Works inside the build sandbox
-//             where direct outbound to integrate.api.nvidia.com is blocked
-//             (HTTP 403). Verified to support OpenAI-style tool-calling +
-//             multi-turn role:'tool' messages + parallel tool_calls. This is
-//             the provider the live demo runs on.
+//   zai     — z-ai-web-dev-sdk gateway (DEFAULT). Works inside the build
+//             sandbox where direct outbound to integrate.api.nvidia.com
+//             is blocked (HTTP 401 on inference). Verified to support
+//             OpenAI-style tool-calling + multi-turn role:'tool' messages +
+//             parallel tool_calls. This is the provider the live demo
+//             runs on.
 //
 //   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint
 //             (https://integrate.api.nvidia.com/v1). PRIMARY model
 //             nvidia/llama-3.3-nemotron-super-49b-v1 (parallel tool-calling),
-//             FALLBACK openai/gpt-oss-120b. Selected when a valid NVIDIA key is
-//             present in a non-sandboxed deployment. Kept as an alternative
-//             so the same orchestrator runs against real NVIDIA hardware.
+//             FALLBACK openai/gpt-oss-120b. Selected when a valid NVIDIA key
+//             is present in a non-sandboxed deployment. Kept as an
+//             alternative so the same orchestrator runs against real NVIDIA
+//             hardware, and as the dormant failover target for z-ai.
 //
 // Both providers expose the same OpenAI-compatible `chat/completions` surface,
-// so the orchestrator is provider-agnostic. The fallback model is swapped in
-// only after the primary exhausts retries on a retryable error.
+// so the orchestrator is provider-agnostic. The fallback MODEL is swapped in
+// only after the primary model exhausts retries on a retryable error.
 //
 // This file runs on the server only. No secrets are logged or sent to client.
 // =============================================================================
@@ -37,10 +59,37 @@ import type {
 
 export type LlmProvider = 'zai' | 'nvidia'
 
+// ---------------------------------------------------------------------------
+// Configuration
+// ---------------------------------------------------------------------------
+
 const DEFAULT_TEMP = Number(process.env.LLM_TEMPERATURE ?? 0)
 const DEFAULT_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? 1500)
 const MAX_RETRIES = 3
+
+// General backoff (network / 5xx) — keeps the original aggressive curve.
 const INITIAL_BACKOFF_MS = 800
+
+// 429-specific backoff with jitter — much longer, because a 429 from the
+// shared sandbox gateway is a sustained throttle, not a per-account quota.
+const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 5000)
+const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 20000)
+const RATE_LIMIT_JITTER_PCT = 0.25
+
+// Pace limiter — at most one call per interval per provider. Default 6s
+// keeps the agent from contributing to the shared sandbox 429 pressure.
+// Set to 0 (or a low value) to disable for fast dev loops.
+const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 6000)
+
+// Circuit breaker — opens after N consecutive 429/5xx, stays open for cooldown.
+const CIRCUIT_THRESHOLD = Number(process.env.LLM_CIRCUIT_THRESHOLD ?? 3)
+const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 60000)
+
+// Failover toggle — when 'true' (default), the z-ai primary can fail over to
+// the dormant NVIDIA client when its circuit is open AND a NVIDIA key is
+// present. Set LLM_FAILOVER_ENABLED=false to keep z-ai-only behavior.
+const LLM_FAILOVER_ENABLED =
+  (process.env.LLM_FAILOVER_ENABLED ?? 'true').toLowerCase() !== 'false'
 
 function getProvider(): LlmProvider {
   const raw = (process.env.LLM_PROVIDER ?? 'zai').toLowerCase()
@@ -52,6 +101,125 @@ function isRetryableStatus(status: number): boolean {
 }
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
+}
+function jitter(ms: number, pct: number = RATE_LIMIT_JITTER_PCT): number {
+  const delta = ms * pct
+  return Math.round(ms + (Math.random() * 2 - 1) * delta)
+}
+
+/**
+ * The z-ai-web-dev-sdk throws plain `Error` instances whose `.message` is
+ * `API request failed with status 429: ...` — the HTTP status is NOT exposed
+ * as a `.status` property. Extract it from the message so the retry +
+ * circuit-breaker logic can recognise 429/5xx. (NVIDIA NIM uses `fetch`
+ * directly and gets a real `Response.status`, so this helper is z-ai only.)
+ */
+function extractStatusFromMessage(msg: string): number | null {
+  const m = msg.match(/status (\d{3})\b/i)
+  return m ? parseInt(m[1], 10) : null
+}
+
+// ---------------------------------------------------------------------------
+// Resilience primitives (shared by both providers)
+// ---------------------------------------------------------------------------
+
+/**
+ * Single-capacity token bucket. Refills at `capacity` tokens per
+ * `refillIntervalMs`. `acquire()` waits until a token is available.
+ *
+ * Used per-provider to pace calls so the agent doesn't burst into the
+ * shared sandbox gateway's 429 throttle.
+ */
+class TokenBucket {
+  private tokens: number
+  private lastRefill: number
+  constructor(
+    private readonly capacity: number,
+    private readonly refillIntervalMs: number,
+  ) {
+    this.tokens = capacity
+    this.lastRefill = Date.now()
+  }
+  async acquire(): Promise<void> {
+    if (this.refillIntervalMs <= 0) return // disabled
+    while (true) {
+      const now = Date.now()
+      const elapsed = now - this.lastRefill
+      const refilled = elapsed / this.refillIntervalMs
+      this.tokens = Math.min(this.capacity, this.tokens + refilled)
+      if (this.tokens >= 1) {
+        this.tokens -= 1
+        // Snap the refill clock to "now minus the fraction we used" so the
+        // next acquire sees a correct partial refill.
+        this.lastRefill = now - Math.max(0, (1 - this.tokens) * this.refillIntervalMs)
+        return
+      }
+      const waitMs = Math.ceil((1 - this.tokens) * this.refillIntervalMs)
+      await sleep(Math.max(100, Math.min(waitMs, this.refillIntervalMs + 500)))
+    }
+  }
+}
+
+/**
+ * Opens after `threshold` consecutive 429/5xx failures, stays open for
+ * `cooldownMs`. While open, callers should throw CircuitOpenError instead
+ * of retrying.
+ */
+class CircuitBreaker {
+  private consecutiveFailures = 0
+  private openUntil = 0
+  constructor(
+    private readonly threshold: number,
+    private readonly cooldownMs: number,
+  ) {}
+  isOpen(): boolean {
+    return Date.now() < this.openUntil
+  }
+  /**
+   * Records a failure. Returns true if THIS call opened the circuit.
+   * Non-retryable statuses (4xx other than 429) do not bump the counter —
+   * they are config errors, not throttle/availability signals.
+   */
+  recordFailure(status: number): boolean {
+    if (status === 429 || status >= 500) {
+      this.consecutiveFailures++
+      if (this.consecutiveFailures >= this.threshold && !this.isOpen()) {
+        this.openUntil = Date.now() + this.cooldownMs
+        return true
+      }
+    }
+    return false
+  }
+  recordSuccess(): void {
+    this.consecutiveFailures = 0
+    this.openUntil = 0
+  }
+  msUntilReset(): number {
+    return Math.max(0, this.openUntil - Date.now())
+  }
+  /** Snapshot for the UI status chip / `/api/llm/status`. */
+  snapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number } {
+    return {
+      isOpen: this.isOpen(),
+      consecutiveFailures: this.consecutiveFailures,
+      msUntilReset: this.msUntilReset(),
+    }
+  }
+}
+
+/** Thrown when the circuit is open — distinguishes "throttled" from "failed". */
+export class CircuitOpenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'CircuitOpenError'
+  }
+}
+
+/** LlmClient that also exposes circuit state for failover + UI status. */
+interface ResilientLlmClient extends LlmClient {
+  isThrottled(): boolean
+  providerName(): string
+  circuitSnapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number }
 }
 
 // ---------------------------------------------------------------------------
@@ -95,11 +263,26 @@ function mapCompletion(res: OpenAiResponse): LlmCompletion {
 // Provider: z-ai-web-dev-sdk (DEFAULT — works in-sandbox)
 // ===========================================================================
 
-class ZaiLlmClient implements LlmClient {
+class ZaiLlmClient implements ResilientLlmClient {
   private zaiPromise: Promise<InstanceType<typeof ZAI>> | null = null
+  private readonly rateLimiter = new TokenBucket(1, RATE_LIMIT_INTERVAL_MS)
+  private readonly circuit = new CircuitBreaker(CIRCUIT_THRESHOLD, CIRCUIT_COOLDOWN_MS)
+
   private async zai(): Promise<InstanceType<typeof ZAI>> {
     if (!this.zaiPromise) this.zaiPromise = ZAI.create()
     return this.zaiPromise
+  }
+
+  providerName(): string {
+    return 'zai'
+  }
+
+  isThrottled(): boolean {
+    return this.circuit.isOpen()
+  }
+
+  circuitSnapshot() {
+    return this.circuit.snapshot()
   }
 
   async complete(input: {
@@ -108,14 +291,38 @@ class ZaiLlmClient implements LlmClient {
     temperature?: number
     maxTokens?: number
   }): Promise<LlmCompletion> {
+    // If circuit is open, throw immediately so the failover (or the
+    // orchestrator's post-loop fallback) can take over without burning
+    // 60s on retries that will all fail.
+    if (this.circuit.isOpen()) {
+      throw new CircuitOpenError(
+        `z-ai circuit open for ${this.circuit.msUntilReset()}ms ` +
+          `(sustained 429 from the shared sandbox gateway). ` +
+          `Sentinel will fail over to NVIDIA if a key is present, otherwise ` +
+          `the orchestrator's fallback post-mortem path runs (PDF §9.4.2).`,
+      )
+    }
+
     const model = process.env.LLM_MODEL || 'gpt-4o'
     const fallbackModel = process.env.LLM_FALLBACK_MODEL || 'gpt-4o-mini'
     const zai = await this.zai()
 
     const call = async (m: string): Promise<LlmCompletion> => {
       let lastErr: Error | null = null
+      let sawRateLimit = false
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (attempt > 0) await sleep(INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+        if (attempt > 0) {
+          // 429s use longer backoff with jitter; other retryables use the
+          // original aggressive curve.
+          const baseBackoff = sawRateLimit
+            ? Math.min(
+                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                RATE_LIMIT_BACKOFF_MAX_MS,
+              )
+            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+          await sleep(jitter(baseBackoff))
+        }
+        await this.rateLimiter.acquire()
         try {
           // The SDK body has an index signature; we cast to pass tools/tool_choice
           // and to allow role:'tool' + assistant.tool_calls on messages.
@@ -129,14 +336,31 @@ class ZaiLlmClient implements LlmClient {
             stream: false,
             thinking: { type: 'disabled' },
           } as Record<string, unknown>)) as unknown as OpenAiResponse
+          this.circuit.recordSuccess()
           return mapCompletion(res)
         } catch (err) {
           const e = err as { status?: number; statusCode?: number; message?: string }
-          const status = e.status ?? e.statusCode ?? 0
           const msg = e.message ?? String(err)
+          // The z-ai SDK throws plain Errors with the HTTP status embedded in
+          // the message — extract it so the retry + circuit-breaker logic
+          // recognises 429/5xx. Real fetch Errors keep their .status.
+          const status =
+            e.status ?? e.statusCode ?? extractStatusFromMessage(msg) ?? 0
+          if (status === 429) sawRateLimit = true
           lastErr = new Error(`z-ai LLM (model ${m}) failed: ${msg}`)
+          const openedNow = this.circuit.recordFailure(status || 503)
+          if (openedNow) {
+            // Circuit just opened — stop retrying, let failover take over.
+            throw new CircuitOpenError(
+              `z-ai circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+                `Cooldown ${CIRCUIT_COOLDOWN_MS}ms. Last error: ${msg.slice(0, 120)}`,
+            )
+          }
           // Retry on 429/5xx or network errors; otherwise throw.
-          if ((status && isRetryableStatus(status)) || /network|fetch|ECONN|ETIMEDOUT|timeout/i.test(msg)) {
+          if (
+            (status && isRetryableStatus(status)) ||
+            /network|fetch|ECONN|ETIMEDOUT|timeout/i.test(msg)
+          ) {
             if (attempt < MAX_RETRIES) continue
           }
           throw lastErr
@@ -148,11 +372,13 @@ class ZaiLlmClient implements LlmClient {
     try {
       return await call(model)
     } catch (primaryErr) {
+      if (primaryErr instanceof CircuitOpenError) throw primaryErr
       if (model === fallbackModel) throw primaryErr
       // Fallback model attempt.
       try {
         return await call(fallbackModel)
       } catch (fallbackErr) {
+        if (fallbackErr instanceof CircuitOpenError) throw fallbackErr
         const pm = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
         const fm = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
         throw new Error(
@@ -166,18 +392,41 @@ class ZaiLlmClient implements LlmClient {
 
 // ===========================================================================
 // Provider: NVIDIA NIM direct (OpenAI-compatible)
-// Kept for non-sandboxed deployments where the NVIDIA key is valid.
+// Kept for non-sandboxed deployments where the NVIDIA key is valid. Also
+// serves as the dormant failover target when the z-ai circuit opens.
 // ===========================================================================
 
 const NVIDIA_BASE_URL = process.env.LLM_BASE_URL ?? 'https://integrate.api.nvidia.com/v1'
 
-class NvidiaNimLlmClient implements LlmClient {
+class NvidiaNimLlmClient implements ResilientLlmClient {
+  private readonly rateLimiter = new TokenBucket(1, RATE_LIMIT_INTERVAL_MS)
+  private readonly circuit = new CircuitBreaker(CIRCUIT_THRESHOLD, CIRCUIT_COOLDOWN_MS)
+
+  providerName(): string {
+    return 'nvidia'
+  }
+
+  isThrottled(): boolean {
+    return this.circuit.isOpen()
+  }
+
+  circuitSnapshot() {
+    return this.circuit.snapshot()
+  }
+
   async complete(input: {
     messages: LlmMessage[]
     tools?: LlmTool[]
     temperature?: number
     maxTokens?: number
   }): Promise<LlmCompletion> {
+    if (this.circuit.isOpen()) {
+      throw new CircuitOpenError(
+        `nvidia circuit open for ${this.circuit.msUntilReset()}ms ` +
+          `(sustained 429/5xx from the NVIDIA NIM endpoint).`,
+      )
+    }
+
     const model = process.env.LLM_MODEL || 'nvidia/llama-3.3-nemotron-super-49b-v1'
     const fallbackModel = process.env.LLM_FALLBACK_MODEL || 'openai/gpt-oss-120b'
     const apiKey = process.env.NVIDIA_API_KEY
@@ -194,10 +443,21 @@ class NvidiaNimLlmClient implements LlmClient {
         stream: false,
       }
       let lastErr: Error | null = null
+      let sawRateLimit = false
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (attempt > 0) await sleep(INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+        if (attempt > 0) {
+          const baseBackoff = sawRateLimit
+            ? Math.min(
+                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                RATE_LIMIT_BACKOFF_MAX_MS,
+              )
+            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+          await sleep(jitter(baseBackoff))
+        }
+        await this.rateLimiter.acquire()
+        let res: Response
         try {
-          const res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
+          res = await fetch(`${NVIDIA_BASE_URL}/chat/completions`, {
             method: 'POST',
             headers: {
               Authorization: `Bearer ${apiKey}`,
@@ -206,22 +466,39 @@ class NvidiaNimLlmClient implements LlmClient {
             },
             body: JSON.stringify(body),
           })
-          if (!res.ok) {
-            const text = await res.text().catch(() => '')
-            const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
-            if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
-              lastErr = err
-              continue
-            }
-            throw err
-          }
-          return mapCompletion((await res.json()) as OpenAiResponse)
         } catch (err) {
-          if (err instanceof Error && err.name === 'AbortError') throw err
-          lastErr = err instanceof Error ? err : new Error(String(err))
+          // Network error — treat as a 503 for the circuit (transient infra).
+          const openedNow = this.circuit.recordFailure(503)
+          const e = err instanceof Error ? err : new Error(String(err))
+          if (openedNow) {
+            throw new CircuitOpenError(
+              `nvidia circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
+                `failures (last: network error: ${e.message.slice(0, 120)})`,
+            )
+          }
+          lastErr = e
           if (attempt < MAX_RETRIES) continue
           throw lastErr
         }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          if (res.status === 429) sawRateLimit = true
+          const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
+          const openedNow = this.circuit.recordFailure(res.status)
+          if (openedNow) {
+            throw new CircuitOpenError(
+              `nvidia circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+                `Last error: HTTP ${res.status}`,
+            )
+          }
+          if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
+            lastErr = err
+            continue
+          }
+          throw err
+        }
+        this.circuit.recordSuccess()
+        return mapCompletion((await res.json()) as OpenAiResponse)
       }
       throw lastErr ?? new Error('NVIDIA LLM call failed after retries')
     }
@@ -229,10 +506,12 @@ class NvidiaNimLlmClient implements LlmClient {
     try {
       return await call(model)
     } catch (primaryErr) {
+      if (primaryErr instanceof CircuitOpenError) throw primaryErr
       if (model === fallbackModel) throw primaryErr
       try {
         return await call(fallbackModel)
       } catch (fallbackErr) {
+        if (fallbackErr instanceof CircuitOpenError) throw fallbackErr
         const pm = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
         const fm = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
         throw new Error(
@@ -244,16 +523,95 @@ class NvidiaNimLlmClient implements LlmClient {
   }
 }
 
+// ===========================================================================
+// Failover wrapper — wires the dormant NVIDIA path in front of z-ai without
+// breaking the single-LlmClient contract the orchestrator expects. Used only
+// when LLM_PROVIDER=zai AND a NVIDIA key looks configured.
+// ===========================================================================
+
+class FailoverLlmClient implements LlmClient {
+  constructor(
+    private readonly primary: ResilientLlmClient,
+    private readonly fallback: ResilientLlmClient,
+  ) {}
+
+  async complete(input: {
+    messages: LlmMessage[]
+    tools?: LlmTool[]
+    temperature?: number
+    maxTokens?: number
+  }): Promise<LlmCompletion> {
+    // Proactive failover: if primary is throttled and fallback is healthy,
+    // go straight to the fallback without burning a primary attempt.
+    if (this.primary.isThrottled() && !this.fallback.isThrottled()) {
+      try {
+        return await this.fallback.complete(input)
+      } catch {
+        // Fallback also failed — fall through to try the primary (its
+        // circuit may have cooled down by the time we get here).
+      }
+    }
+    try {
+      return await this.primary.complete(input)
+    } catch (err) {
+      if (!(err instanceof CircuitOpenError)) throw err
+      // Primary circuit just opened — try the fallback once.
+      try {
+        return await this.fallback.complete(input)
+      } catch (fallbackErr) {
+        const fe = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        throw new CircuitOpenError(
+          `Primary '${this.primary.providerName()}' circuit open AND ` +
+            `fallback '${this.fallback.providerName()}' failed: ${fe.slice(0, 160)}`,
+        )
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
-// Singleton
+// Singleton — stored on `globalThis` so it survives Next.js dev-mode module
+// re-evaluations. (Each route can re-evaluate the module on hot reload, but
+// `globalThis` is per-process, so the LLM client + circuit state persists
+// across routes. Production builds don't re-evaluate modules, but using
+// globalThis is harmless there.)
 // ---------------------------------------------------------------------------
 
-let _client: LlmClient | null = null
+interface SentinelLlmSingleton {
+  client: LlmClient | null
+  zai: ZaiLlmClient | null
+  nvidia: NvidiaNimLlmClient | null
+}
+
+function getSingleton(): SentinelLlmSingleton {
+  const g = globalThis as unknown as { __sentinelLlm?: SentinelLlmSingleton }
+  if (!g.__sentinelLlm) g.__sentinelLlm = { client: null, zai: null, nvidia: null }
+  return g.__sentinelLlm
+}
+
 export function getLlm(): LlmClient {
-  if (!_client) {
-    _client = getProvider() === 'nvidia' ? new NvidiaNimLlmClient() : new ZaiLlmClient()
+  const s = getSingleton()
+  if (!s.client) {
+    const provider = getProvider()
+    if (provider === 'nvidia') {
+      s.nvidia = new NvidiaNimLlmClient()
+      s.client = s.nvidia
+    } else {
+      s.zai = new ZaiLlmClient()
+      const nvidiaKey = process.env.NVIDIA_API_KEY
+      // Optional dormant failover — only if a NVIDIA key looks configured.
+      // In the sandbox this key is dead (401 on inference), so the failover
+      // surfaces a clear CircuitOpenError instead of masking it; the
+      // orchestrator's post-loop fallback post-mortem path runs gracefully.
+      if (LLM_FAILOVER_ENABLED && nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
+        s.nvidia = new NvidiaNimLlmClient()
+        s.client = new FailoverLlmClient(s.zai, s.nvidia)
+      } else {
+        s.client = s.zai
+      }
+    }
   }
-  return _client
+  return s.client
 }
 
 export function getLlmProvider(): LlmProvider {
@@ -264,4 +622,39 @@ export function getLlmModel(): string {
   return process.env.LLM_MODEL || (getProvider() === 'nvidia'
     ? 'nvidia/llama-3.3-nemotron-super-49b-v1'
     : 'gpt-4o')
+}
+
+/**
+ * Phase 3 resilience — expose circuit state for the UI status chip and the
+ * `/api/llm/status` endpoint. Read-only; never throws.
+ *
+ * In sandbox mode (z-ai + dead NVIDIA key), `failoverEnabled` is true but
+ * `nvidiaHealthy` is false — the UI shows the operator that the agent will
+ * degrade gracefully via the post-loop fallback path, not via live NVIDIA.
+ */
+export function getLlmResilienceStatus(): {
+  provider: LlmProvider
+  model: string
+  failoverEnabled: boolean
+  hasNvidiaKey: boolean
+  circuit: {
+    isOpen: boolean
+    consecutiveFailures: number
+    msUntilReset: number
+  } | null
+} {
+  const hasNvidiaKey = !!(
+    process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('nvapi-')
+  )
+  const s = getSingleton()
+  let circuit: { isOpen: boolean; consecutiveFailures: number; msUntilReset: number } | null = null
+  if (s.zai && getProvider() === 'zai') circuit = s.zai.circuitSnapshot()
+  else if (s.nvidia && getProvider() === 'nvidia') circuit = s.nvidia.circuitSnapshot()
+  return {
+    provider: getProvider(),
+    model: getLlmModel(),
+    failoverEnabled: LLM_FAILOVER_ENABLED && hasNvidiaKey && getProvider() === 'zai',
+    hasNvidiaKey,
+    circuit,
+  }
 }

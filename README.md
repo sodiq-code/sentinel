@@ -220,6 +220,7 @@ The same TypeScript interfaces (`McpClient`, `ContextKitClient`, `IngestionClien
 | LLM (z-ai, default) | `gpt-4o` | temperature 0, parallel tool-calls |
 | LLM (NVIDIA NIM, alt) | `nvidia/llama-3.3-nemotron-super-49b-v1` | temperature 0, parallel tool-calls |
 | LLM fallback | `gpt-4o-mini` / `openai/gpt-oss-120b` | swapped on 429/5xx |
+| LLM resilience | TokenBucket + CircuitBreaker + Failover | Phase 3 hardening (see below) |
 | License | Apache 2.0 | visible in repo About |
 
 ---
@@ -299,6 +300,7 @@ See `worklog.md` for the running build log.
 | `/api/connectors/status` | GET | Live/sandbox + reachability for GitHub + Slack (used by the DemoControlBar chips). |
 | `/api/connectors/test` | POST | Open a test GitHub issue + post a test Slack card (honors `SENTINEL_DRY_RUN` or `{ dryRun }` body override). |
 | `/api/connectors/sandbox-log` | GET | Last N sandbox JSONL entries (query: `?kind=github|slack`, `?limit=`). |
+| `/api/llm/status` | GET | Phase 3 resilience: provider + circuit state + failover readiness (polled by the header `Circuit` chip). |
 
 ### Demo control bar
 
@@ -306,6 +308,25 @@ The page renders a sticky bottom bar with:
 - A live/sandbox mode chip (reads `SENTINEL_DRY_RUN`).
 - A "test connectors" button (calls `/api/connectors/test`).
 - The GitHub + Slack connector rows show reachability + token presence.
+
+### Phase 3 LLM resilience layer (`src/lib/agent/llm.ts`)
+
+The LLM client now hardens against the shared sandbox gateway's 429 throttle. PDF §9.5.4 (retry with exponential backoff) + §11.3 (contingency plan — surface throttle state, don't mask it). All knobs are env-tunable and default to safe-for-demo values.
+
+| Layer | Class | Behaviour | Default |
+|---|---|---|---|
+| Pace limiter | `TokenBucket` | 1 token / `LLM_RATE_LIMIT_MS` per provider. The agent paces itself instead of bursting into the shared sandbox 429. | 6s |
+| 429 backoff | per-attempt | `LLM_RATE_LIMIT_BACKOFF_MS * 2^(attempt-1)`, capped at `LLM_RATE_LIMIT_BACKOFF_MAX_MS`, with ±25% jitter. Distinct from the network/5xx curve (which keeps the original 800ms base). | 5s → 10s → 20s |
+| Circuit breaker | `CircuitBreaker` | Opens after `LLM_CIRCUIT_THRESHOLD` consecutive 429/5xx, stays open for `LLM_CIRCUIT_COOLDOWN_MS`. While open, calls throw `CircuitOpenError` immediately — no retry burn. | threshold 3, cooldown 60s |
+| Provider failover | `FailoverLlmClient` | When the primary's circuit is open AND `LLM_FAILOVER_ENABLED=true` AND a NVIDIA key is present, the dormant `NvidiaNimLlmClient` takes over. In-sandbox the NVIDIA key is dead (401), so the failover surfaces a clear `CircuitOpenError` instead of masking it — the orchestrator's existing post-loop fallback post-mortem path runs gracefully. On a real deployment with a fresh NVIDIA key, the agent transparently switches providers and continues. | on (when key present) |
+
+The header now shows a `Circuit` chip (emerald `Healthy` / rose pulsing `Throttled {N}s` with cooldown countdown / slate `…`). The state is polled via `/api/llm/status` — every 1s while the circuit is open (so the operator sees the cooldown tick down), every 20s when healthy.
+
+**End-to-end behaviour when z-ai is throttled (in-sandbox, no valid NVIDIA key):**
+1. First 3 calls return 429 → circuit opens, throws `CircuitOpenError`.
+2. `FailoverLlmClient` tries NVIDIA → NVIDIA returns 401 → re-thrown as `CircuitOpenError` with both errors in the message.
+3. Orchestrator catches it, emits an `error` step ("z-ai circuit open for Nms..."), runs the existing fallback post-mortem path (inline PII check → write the compounding artefact to DataHub via the Agent Context Kit, or refuse with the same PII tag the guardrail would surface).
+4. Incident is marked `failed`; the trace + post-mortem + audit events are visible in the console. No hang, no 60s of wasted retries, no silent failure.
 
 ---
 
