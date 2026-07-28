@@ -33,6 +33,8 @@ import {
   toLlmTools,
   type ToolContext,
 } from './tools'
+import { checkBeforeExecute, recordGuardrailCheck } from '@/lib/guardrail/pre-exec'
+import { checkPiiForAsset as checkPiiForAssetInline } from '@/lib/guardrail/pii-check'
 import { getAudit } from './audit'
 import {
   buildInitialUserMessage,
@@ -147,6 +149,7 @@ export async function runSentinel(
   let totalPromptTokens = 0
   let totalCompletionTokens = 0
   let wrotePostMortem = false
+  let piiRefusalOnPostMortem = false
   let finalReflection = ''
   let lastError: string | null = null
 
@@ -266,10 +269,69 @@ export async function runSentinel(
       // Execute each tool call in order; append results to the scratchpad.
       for (const call of completion.toolCalls) {
         const effectiveName = call.function.name
+        const parsedArgs = safeParseArgs(call.function.arguments)
         emit('tool_call', {
           toolName: effectiveName,
-          toolArgs: safeParseArgs(call.function.arguments),
+          toolArgs: parsedArgs,
         })
+
+        // Phase 3 GUARDRAIL — run the pre-execute hook before every tool call.
+        // For action.* + ack.save_document this can REFUSE (e.g. PII tag on
+        // the asset) or surface a NEEDS_APPROVAL gate (e.g. ownership/glossary
+        // proposals). For mcp.* read tools it always allows. The check is on
+        // the structured args, not on the model's text — so the LLM cannot
+        // bypass it by rephrasing. (PDF §12.3 prompt-injection mitigation)
+        const verdict = await checkBeforeExecute(effectiveName, parsedArgs, ctx)
+        await recordGuardrailCheck(incidentUrn, verdict, call.id)
+        if (verdict.decision !== 'allow') {
+          const decisionLabel =
+            verdict.decision === 'refuse' ? 'REFUSED' : 'NEEDS_APPROVAL'
+          const guardrailResult = {
+            guardrail: true,
+            decision: verdict.decision,
+            toolName: effectiveName,
+            ruleId: verdict.ruleId,
+            reason: verdict.reason,
+            approvalId: verdict.approvalId,
+            approver: verdict.approver,
+            note:
+              verdict.decision === 'refuse'
+                ? `Guardrail ${decisionLabel} this tool call. The tool was NOT executed. Reason: ${verdict.reason ?? '(unspecified)'}`
+                : `Guardrail surfaced an approval gate for this tool call. The tool was NOT executed; a human must approve (${verdict.approver ?? 'operator'}). Reason: ${verdict.reason ?? '(unspecified)'}`,
+          }
+          emit('tool_result', {
+            toolName: effectiveName,
+            toolResult: guardrailResult,
+            error: `${decisionLabel} by guardrail (${verdict.ruleId ?? 'rule'})`,
+          })
+          // Persist the tool call (status: 'skipped' — the guardrail blocked it)
+          await db.toolCall.create({
+            data: {
+              incidentUrn,
+              tool: effectiveName,
+              argsJson: JSON.stringify(parsedArgs),
+              resultJson: JSON.stringify(guardrailResult),
+              status: 'skipped',
+              durationMs: 0,
+              ts: new Date(),
+            },
+          })
+          // For PII refusals on ack.save_document, mark the refusal so the
+          // post-loop fallback does NOT re-attempt the write (PDF §12.3 — the
+          // refusal is the correct agent behaviour, not a missing post-mortem).
+          if (effectiveName === 'ack.save_document' && verdict.decision === 'refuse') {
+            wrotePostMortem = true
+            piiRefusalOnPostMortem = true
+          }
+          messages.push({
+            role: 'tool',
+            toolCallId: call.id,
+            name: effectiveName,
+            content: JSON.stringify(guardrailResult),
+          })
+          continue
+        }
+
         const exec = await executeToolCall(call, defs, ctx)
         emit('tool_result', {
           toolName: effectiveName,
@@ -297,38 +359,61 @@ export async function runSentinel(
   }
 
   // 3. Post-loop: guarantee a post-mortem context doc (the compounding artefact).
-  if (!wrotePostMortem) {
+  // SKIP the fallback if the guardrail refused the post-mortem on a PII-tagged
+  // asset (PDF §12.3 — the refusal IS the correct agent behaviour, not a
+  // missing post-mortem).
+  if (!wrotePostMortem && !piiRefusalOnPostMortem) {
     try {
-      const me = await clients.mcp.get_me()
-      const postMortemContent = buildFallbackPostMortem(sig, signal, steps, finalReflection, lastError)
-      const res = await clients.contextKit.save_document({
-        assetUrn: signal.assetUrn,
-        title: `Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`,
-        content: postMortemContent,
-        format: 'markdown',
-        authorUrn: me.urn,
-        sentinelPostMortem: true,
-      })
-      await db.writeBack.create({
-        data: {
-          incidentUrn,
-          kind: 'context_doc',
-          datahubUrn: res.urn,
-          status: 'succeeded',
-          path: 'agent_context_kit',
-          dataJson: JSON.stringify({ title: `Sentinel Post-Mortem — ${sig.assetName}` }),
-          ts: new Date(),
-        },
-      })
-      emit('write_back', {
-        toolName: 'ack.save_document',
-        toolArgs: { assetUrn: signal.assetUrn, sentinelPostMortem: true },
-        toolResult: { urn: res.urn, kind: 'context_doc', fallback: true },
-        reasoning: 'Orchestrator wrote a fallback post-mortem (agent did not call ack.save_document).',
-      })
+      // Phase 3: re-run the PII check on the asset before writing the fallback.
+      // The fallback bypasses the tool-call loop, so the guardrail's pre-exec
+      // hook doesn't fire — we inline the same PII check here. (PDF §12.3)
+      const piiCheck = await checkPiiForAssetInline(clients.mcp, signal.assetUrn)
+      if (piiCheck.hasPii) {
+        emit('observe', {
+          reasoning:
+            `Orchestrator fallback post-mortem BLOCKED: asset carries PII tag(s): ` +
+            `${piiCheck.tags.map((t) => `'${t.name}'`).join(', ')}. The guardrail ` +
+            `would refuse this write — the fallback does the same. (PDF §12.3)`,
+        })
+      } else {
+        const me = await clients.mcp.get_me()
+        const postMortemContent = buildFallbackPostMortem(sig, signal, steps, finalReflection, lastError)
+        const res = await clients.contextKit.save_document({
+          assetUrn: signal.assetUrn,
+          title: `Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`,
+          content: postMortemContent,
+          format: 'markdown',
+          authorUrn: me.urn,
+          sentinelPostMortem: true,
+        })
+        await db.writeBack.create({
+          data: {
+            incidentUrn,
+            kind: 'context_doc',
+            datahubUrn: res.urn,
+            status: 'succeeded',
+            path: 'agent_context_kit',
+            dataJson: JSON.stringify({ title: `Sentinel Post-Mortem — ${sig.assetName}` }),
+            ts: new Date(),
+          },
+        })
+        emit('write_back', {
+          toolName: 'ack.save_document',
+          toolArgs: { assetUrn: signal.assetUrn, sentinelPostMortem: true },
+          toolResult: { urn: res.urn, kind: 'context_doc', fallback: true },
+          reasoning: 'Orchestrator wrote a fallback post-mortem (agent did not call ack.save_document).',
+        })
+      }
     } catch (err) {
       emit('error', { error: `Fallback post-mortem write failed: ${(err as Error).message}` })
     }
+  } else if (piiRefusalOnPostMortem) {
+    emit('observe', {
+      reasoning:
+        'Guardrail refused the post-mortem write-back on this PII-tagged asset. ' +
+        'No fallback post-mortem was written. The refusal is the correct agent ' +
+        'behaviour (PDF §12.3) — a human must approve any write to a PII asset.',
+    })
   }
 
   // 4. Resolve the incident.

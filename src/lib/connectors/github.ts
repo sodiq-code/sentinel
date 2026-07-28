@@ -1,0 +1,306 @@
+// =============================================================================
+// Sentinel — GitHub connector (Phase 3)
+//
+// PDF §10.3 Phase 3 spec:
+//   - openIssue(repo, title, body, labels) — POST /repos/{repo}/issues
+//   - openPR(repo, title, body, branch, base) — POST /repos/{repo}/pulls
+//   - **NEVER merges** a PR (PDF §9.3.5 no-merge policy). There is no `merge`
+//     method on this connector. The PR is always left OPEN for human review.
+//   - Sandbox mode (SENTINEL_DRY_RUN=true): writes a JSON line to
+//     `examples/sandbox/github-actions.log`, returns a sandbox URL — no
+//     GitHub API call is made. This is the dry-run toggle (PDF §11.3).
+//
+// Token scope (PDF §10.3): a single PAT scoped to the sandbox demo repo
+// with `issues:write` + `pull_requests:write` only. We never ask for
+// `repo:admin` or `contents:write` — so we cannot push branches, cannot
+// merge, cannot delete.
+//
+// This file runs on the SERVER only. The token is read from process.env at
+// call-time, never logged, never sent to client.
+// =============================================================================
+
+import { appendSandboxLog, isDryRun, requireEnv } from './_sandbox'
+
+const GITHUB_API = 'https://api.github.com'
+
+export interface GitHubIssueInput {
+  /** owner/name — defaults to GITHUB_DEMO_REPO. */
+  repo?: string
+  title: string
+  body: string
+  labels?: string[]
+}
+
+export interface GitHubIssueResult {
+  kind: 'github.openIssue'
+  repo: string
+  number: number
+  url: string
+  state: 'open'
+  sandbox: boolean
+  ts: string
+}
+
+export interface GitHubPrInput {
+  repo?: string
+  title: string
+  body: string
+  /** Head branch — must already exist on the repo (Phase 3 does NOT push branches). */
+  branch: string
+  /** Base branch to merge into. Defaults to 'main'. */
+  base?: string
+}
+
+export interface GitHubPrResult {
+  kind: 'github.openPR'
+  repo: string
+  number: number
+  url: string
+  state: 'open'
+  /** Sentinel NEVER merges — surfaced in UI as a NOT MERGED badge (PDF §9.3.5). */
+  mergeable: boolean | null
+  sandbox: boolean
+  ts: string
+}
+
+export interface GitHubConnectorStatus {
+  mode: 'live' | 'sandbox'
+  repo: string
+  dryRun: boolean
+  tokenPresent: boolean
+  reachable: boolean
+  defaultBranch?: string
+  error?: string
+}
+
+// ---------------------------------------------------------------------------
+// Token + repo resolution
+// ---------------------------------------------------------------------------
+
+function getToken(): string | null {
+  const t = process.env.GITHUB_TOKEN
+  return t && t.trim() ? t.trim() : null
+}
+
+function defaultRepo(): string {
+  return process.env.GITHUB_DEMO_REPO || 'sodiq-code/sentinel-demo-pipeline'
+}
+
+// ---------------------------------------------------------------------------
+// Shared fetch with Authorization + Accept + UA headers (GitHub requires UA).
+// ---------------------------------------------------------------------------
+
+async function ghFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ status: number; body: unknown; headers: Headers }> {
+  const token = requireEnv('GITHUB_TOKEN', 'GitHub connector')
+  const res = await fetch(`${GITHUB_API}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'sentinel-agent/1.0 (+https://github.com/sodiq-code/sentinel)',
+      'Content-Type': 'application/json',
+      ...(init.headers || {}),
+    },
+  })
+  const text = await res.text()
+  let body: unknown = null
+  if (text) {
+    try {
+      body = JSON.parse(text)
+    } catch {
+      body = text
+    }
+  }
+  return { status: res.status, body, headers: res.headers }
+}
+
+// ---------------------------------------------------------------------------
+// openIssue — POST /repos/{repo}/issues
+// ---------------------------------------------------------------------------
+
+export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueResult> {
+  const repo = input.repo || defaultRepo()
+  const ts = new Date().toISOString()
+  const labels = (input.labels || []).filter(Boolean)
+
+  if (isDryRun()) {
+    const sandboxRec = {
+      kind: 'github.openIssue',
+      repo,
+      title: input.title,
+      body: input.body,
+      labels,
+      ts,
+    }
+    await appendSandboxLog('github', sandboxRec)
+    return {
+      kind: 'github.openIssue',
+      repo,
+      number: -1,
+      url: `sandbox://github/${repo}/issues/${Date.now()}`,
+      state: 'open',
+      sandbox: true,
+      ts,
+    }
+  }
+
+  // Live: create the issue. Labels are auto-created on the repo if they don't exist.
+  const { status, body } = await ghFetch(`/repos/${repo}/issues`, {
+    method: 'POST',
+    body: JSON.stringify({
+      title: input.title,
+      body: input.body,
+      labels,
+    }),
+  })
+  if (status !== 201) {
+    const detail =
+      typeof body === 'object' && body && 'message' in body
+        ? (body as { message: string }).message
+        : `GitHub issues POST returned ${status}`
+    throw new Error(`GitHub openIssue failed: ${detail}`)
+  }
+  const issue = body as { number: number; html_url: string; state: string }
+  return {
+    kind: 'github.openIssue',
+    repo,
+    number: issue.number,
+    url: issue.html_url,
+    state: 'open',
+    sandbox: false,
+    ts,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// openPR — POST /repos/{repo}/pulls. NEVER merges.
+// ---------------------------------------------------------------------------
+
+export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
+  const repo = input.repo || defaultRepo()
+  const ts = new Date().toISOString()
+  const branch = input.branch || 'sentinel/proposed-fix'
+  const base = input.base || 'main'
+
+  if (isDryRun()) {
+    const sandboxRec = {
+      kind: 'github.openPR',
+      repo,
+      title: input.title,
+      body: input.body,
+      branch,
+      base,
+      neverMerged: true,
+      ts,
+    }
+    await appendSandboxLog('github', sandboxRec)
+    return {
+      kind: 'github.openPR',
+      repo,
+      number: -1,
+      url: `sandbox://github/${repo}/pulls/${Date.now()}`,
+      state: 'open',
+      mergeable: null,
+      sandbox: true,
+      ts,
+    }
+  }
+
+  // Live: open the PR. Sentinel does NOT push branches — the head branch must
+  // already exist on the repo (Phase 3 only opens PRs the human can review).
+  const { status, body } = await ghFetch(`/repos/${repo}/pulls`, {
+    method: 'POST',
+    body: JSON.stringify({
+      title: input.title,
+      body: input.body,
+      head: branch,
+      base,
+      draft: false,
+      maintainer_can_modify: true,
+    }),
+  })
+  if (status !== 201) {
+    const detail =
+      typeof body === 'object' && body && 'message' in body
+        ? (body as { message: string }).message
+        : `GitHub pulls POST returned ${status}`
+    throw new Error(`GitHub openPR failed: ${detail}`)
+  }
+  const pr = body as { number: number; html_url: string; state: string; mergeable: boolean | null }
+  return {
+    kind: 'github.openPR',
+    repo,
+    number: pr.number,
+    url: pr.html_url,
+    state: 'open',
+    mergeable: pr.mergeable,
+    sandbox: false,
+    ts,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// getRepoInfo — used by /api/connectors/status to verify reachability.
+// ---------------------------------------------------------------------------
+
+export async function getRepoInfo(repo?: string): Promise<{
+  ok: boolean
+  full_name?: string
+  default_branch?: string
+  private?: boolean
+  error?: string
+}> {
+  const target = repo || defaultRepo()
+  if (!getToken()) {
+    return { ok: false, error: 'GITHUB_TOKEN not set' }
+  }
+  try {
+    const { status, body } = await ghFetch(`/repos/${target}`)
+    if (status !== 200) {
+      const detail =
+        typeof body === 'object' && body && 'message' in body
+          ? (body as { message: string }).message
+          : `HTTP ${status}`
+      return { ok: false, error: detail }
+    }
+    const r = body as { full_name: string; default_branch: string; private: boolean }
+    return {
+      ok: true,
+      full_name: r.full_name,
+      default_branch: r.default_branch,
+      private: r.private,
+    }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// status() — surfaced by /api/connectors/status for the DemoControlBar chip.
+// ---------------------------------------------------------------------------
+
+export async function githubStatus(): Promise<GitHubConnectorStatus> {
+  const repo = defaultRepo()
+  const dryRun = isDryRun()
+  const tokenPresent = Boolean(getToken())
+  if (dryRun) {
+    return { mode: 'sandbox', repo, dryRun: true, tokenPresent, reachable: false }
+  }
+  if (!tokenPresent) {
+    return { mode: 'live', repo, dryRun: false, tokenPresent: false, reachable: false, error: 'GITHUB_TOKEN not set' }
+  }
+  const info = await getRepoInfo(repo)
+  return {
+    mode: 'live',
+    repo,
+    dryRun: false,
+    tokenPresent: true,
+    reachable: info.ok,
+    defaultBranch: info.default_branch,
+    error: info.error,
+  }
+}

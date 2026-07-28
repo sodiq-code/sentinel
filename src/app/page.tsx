@@ -13,6 +13,7 @@ import {
   Database,
   FileText,
   Github,
+  GitPullRequest,
   Loader2,
   Lock,
   PlayCircle,
@@ -20,8 +21,10 @@ import {
   RotateCcw,
   Send,
   ShieldAlert,
+  ShieldCheck,
   Slack,
   Terminal,
+  XCircle,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
@@ -109,6 +112,41 @@ interface HydratedIncident {
   auditEvents: Array<{ id: string; kind: string; summary: string; ts: string }>;
 }
 
+interface ConnectorStatus {
+  dryRun: boolean;
+  github: {
+    mode: "live" | "sandbox";
+    repo: string;
+    dryRun: boolean;
+    tokenPresent: boolean;
+    reachable: boolean;
+    defaultBranch?: string;
+    error?: string;
+  };
+  slack: {
+    mode: "live" | "sandbox";
+    channel: string;
+    tokenPresent: boolean;
+    reachable: boolean;
+    botUser?: string;
+    team?: string;
+    error?: string;
+  };
+}
+
+interface PendingApproval {
+  id: string;
+  incidentUrn: string | null;
+  kind: string;
+  reason: string;
+  proposedAction: Record<string, unknown>;
+  approver: string;
+  status: "pending" | "approved" | "denied";
+  approverUrn: string | null;
+  decidedAt: string | null;
+  createdAt: string;
+}
+
 // ---------------------------------------------------------------------------
 // Static: phase roadmap
 // ---------------------------------------------------------------------------
@@ -121,7 +159,7 @@ const PHASES = [
   { id: 4, name: "Write-Back + Audit Log", status: "PENDING" as const },
   { id: 5, name: "Incident Console UI (demo surface)", status: "PENDING" as const },
   { id: 6, name: "DataHub Skill + RFC + README", status: "PENDING" as const },
-  { id: 7, name: "CI + Hardening + Submission", status: "PENDING" as const },
+  { id: 7, name: "CI+ Hardening + Submission", status: "PENDING" as const },
 ];
 
 const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; label: string; bg: string; border: string }> = {
@@ -186,6 +224,18 @@ function Console() {
     staleTime: 10_000,
   });
 
+  // Phase 3: connector status (live/sandbox + reachability chips).
+  const connectors = useQuery<ConnectorStatus>({
+    queryKey: ["connectors-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/connectors/status");
+      if (!r.ok) throw new Error("Failed to load connectors");
+      return (await r.json()) as ConnectorStatus;
+    },
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+
   // Auto-select the first signal once loaded.
   useEffect(() => {
     if (signals.data && !selectedSignalId && signals.data.length > 0) {
@@ -224,6 +274,8 @@ function Console() {
       setResult(data);
       setRevealedCount(0);
       queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] });
+      queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
     },
     onError: (err: Error) => {
       runStartRef.current = 0;
@@ -282,7 +334,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 2 · Orchestrator + ReAct Loop ✓
+            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 3 · Connectors + Guardrails ✓
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
@@ -293,17 +345,19 @@ function Console() {
         </div>
       </header>
 
-      <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1">
+      <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-28">
         {/* Hero */}
         <section className="mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-50">
-            Watch Sentinel think.
+            Watch Sentinel think — then act, governed.
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
-            Inject a DataHub assertion-failure signal. Sentinel&apos;s ReAct loop calls the
-            NVIDIA Nemotron Super 49B model to investigate — fetch the asset, traverse lineage,
-            read prior post-mortems, propose a GitHub issue + Slack triage, and write a post-mortem
-            back to DataHub. Every reasoning step is visible below.
+            Inject a DataHub assertion-failure signal. Sentinel&apos;s ReAct loop investigates — fetches the asset,
+            traverses lineage, reads prior post-mortems — then opens a <strong className="text-slate-200">real GitHub issue</strong> in
+            the sandbox repo and posts a <strong className="text-slate-200">real Slack triage card</strong>. A
+            code-level <strong className="text-amber-300">guardrail</strong> refuses writes to PII-tagged assets
+            and surfaces an approval gate for ownership/glossary proposals. Every action is sandboxed, audited,
+            and rendered live below.
           </p>
         </section>
 
@@ -321,7 +375,7 @@ function Console() {
             />
 
             {runError && (
-              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-300 flex items-start gap-2">
+              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 p-4 text-sm text-rose-300 flex items-center gap-2">
                 <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                 <div>
                   <div className="font-semibold">Run failed</div>
@@ -339,12 +393,17 @@ function Console() {
               onClearView={() => setViewedIncident(null)}
               writebacks={viewedIncident?.writebacks ?? []}
               actions={viewedIncident?.actions ?? []}
+              auditEvents={viewedIncident?.auditEvents ?? []}
             />
+
+            {/* Phase 3: Guardrail panel — refusals + approval gates for the viewed incident */}
+            <GuardrailPanel incidentUrn={viewedIncident?.incident.urn ?? result?.incident.urn ?? null} />
           </div>
 
-          {/* Right: metrics + history + roadmap */}
+          {/* Right: metrics + history + connectors + roadmap */}
           <div className="space-y-5">
             <MetricsCard result={result} historyCount={history.data?.length ?? 0} />
+            <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
             <IncidentHistory
               items={history.data ?? []}
               loading={history.isLoading}
@@ -357,11 +416,33 @@ function Console() {
         </div>
       </main>
 
+      {/* Phase 3: Demo control bar (sticky bottom) — dry-run toggle + connector test + sandbox log */}
+      <DemoControlBar
+        status={connectors.data ?? null}
+        onTestConnectors={async (dryRun) => {
+          try {
+            const r = await fetch("/api/connectors/test", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ dryRun }),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error ?? "Test failed");
+            queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
+            queryClient.invalidateQueries({ queryKey: ["sandbox-log"] });
+            return j;
+          } catch (err) {
+            setRunError((err as Error).message);
+            return null;
+          }
+        }}
+      />
+
       {/* Sticky footer */}
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 2 · Orchestrator + ReAct Loop ✓
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 3 · Connectors + Guardrails ✓
           </span>
           <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
@@ -370,10 +451,14 @@ function Console() {
             <Github className="h-3.5 w-3.5" /> sodiq-code/sentinel
           </Link>
           <span className="text-slate-700">·</span>
+          <Link href="https://github.com/sodiq-code/sentinel-demo-pipeline" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
+            <Github className="h-3.5 w-3.5" /> sandbox repo
+          </Link>
+          <span className="text-slate-700">·</span>
           <Link href="https://datahub.devpost.com" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
             Build with DataHub Hackathon
           </Link>
-          <span className="ml-auto hidden sm:inline text-slate-600">New DataHub Skill · Agent Context Kit · MCP Server</span>
+          <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">New DataHub Skill · Agent Context Kit · MCP Server</span>
         </div>
       </footer>
     </div>
@@ -404,35 +489,31 @@ function SignalInjector({
   const scenarioColor: Record<string, string> = {
     "nyc-taxi-freshness": "border-amber-500/40 bg-amber-500/5",
     "showcase-ecommerce": "border-emerald-500/40 bg-emerald-500/5",
-    pii: "border-rose-500/40 bg-rose-500/5",
+    "pii": "border-rose-500/40 bg-rose-500/5",
   };
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <Radar className="h-4 w-4 text-emerald-400" /> Inject a DataHub signal
-        </h2>
-        {running && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-amber-300">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Sentinel is investigating… {elapsed.toFixed(1)}s
-          </span>
-        )}
-      </div>
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+        <Radar className="h-4 w-4 text-emerald-400" /> Inject a DataHub signal
+      </h2>
+      {loading && (
+        <div className="space-y-2">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-16 rounded-md bg-slate-800/40 animate-pulse" />
+          ))}
+        </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        {loading && Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-28 rounded-lg bg-slate-800/40 animate-pulse" />
-        ))}
         {signals.map((s) => {
           const active = s.id === selectedId;
           return (
             <button
               key={s.id}
-              type="button"
               onClick={() => onSelect(s.id)}
               className={`text-left rounded-lg border p-3 transition-all ${
                 active
-                  ? `${scenarioColor[s.scenarioId] ?? "border-emerald-500/40 bg-emerald-500/5"} ring-1 ring-emerald-500/30`
-                  : "border-slate-800 bg-slate-900/30 hover:border-slate-700"
+                  ? `${scenarioColor[s.scenarioId] ?? "border-slate-700 bg-slate-800/40"} ring-1 ring-emerald-500/30`
+                  : "border-slate-800 bg-slate-900/40 hover:bg-slate-800/40"
               }`}
             >
               <div className="flex items-center gap-2 mb-1">
@@ -443,7 +524,7 @@ function SignalInjector({
                 ) : (
                   <Clock className="h-3.5 w-3.5 text-amber-400" />
                 )}
-                <span className="text-[11px] font-mono uppercase tracking-wider text-slate-400">{s.type}</span>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{s.type}</span>
               </div>
               <div className="text-sm font-semibold text-slate-100">{s.label}</div>
               <div className="text-xs text-slate-400 mt-1 line-clamp-3">{s.description}</div>
@@ -462,7 +543,9 @@ function SignalInjector({
           {running ? "Investigating…" : "Inject & run Sentinel"}
         </button>
         <span className="text-xs text-slate-500">
-          Runs the full ReAct loop against the NVIDIA Nemotron Super 49B model. Can take 10–40s.
+          {running
+            ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
+            : "Runs the full ReAct loop. Live GitHub + Slack actions are sandboxed by default (toggle below)."}
         </span>
       </div>
     </section>
@@ -482,6 +565,7 @@ function ReasoningStream({
   onClearView,
   writebacks,
   actions,
+  auditEvents,
 }: {
   steps: ReasoningStep[];
   revealed: number;
@@ -489,8 +573,9 @@ function ReasoningStream({
   hasResult: boolean;
   viewedIncidentUrn?: string;
   onClearView: () => void;
-  writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string; ts: string }>;
+  writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string }>;
   actions: Array<{ id: string; kind: string; target: string; payload: string; status: string; url: string | null; ts: string }>;
+  auditEvents: Array<{ id: string; kind: string; summary: string; ts: string }>;
 }) {
   const empty = steps.length === 0 && !running;
   return (
@@ -518,7 +603,7 @@ function ReasoningStream({
         {running && steps.length === 0 && (
           <div className="flex items-center gap-3 py-6 text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
-            <span className="text-sm">Calling NVIDIA Nemotron Super 49B…</span>
+            <span className="text-sm">Calling the LLM…</span>
           </div>
         )}
         <AnimatePresence initial={false}>
@@ -531,9 +616,9 @@ function ReasoningStream({
             <Loader2 className="h-3 w-3 animate-spin" /> revealing trace…
           </div>
         )}
-        {/* Write-back + proposed actions summary (only for viewed incidents) */}
+        {/* Phase 3: artifacts + actions + guardrail events (for viewed incidents) */}
         {(writebacks.length > 0 || actions.length > 0) && revealed >= steps.length && (
-          <ArtifactsSummary writebacks={writebacks} actions={actions} />
+          <ArtifactsSummary writebacks={writebacks} actions={actions} auditEvents={auditEvents} />
         )}
       </div>
     </section>
@@ -545,33 +630,49 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
   const Icon = meta.icon;
   const [expanded, setExpanded] = useState(false);
   const isWrite = step.toolName?.startsWith("ack.") || step.toolName?.startsWith("action.");
+  const isGuardrail = step.toolResult && typeof step.toolResult === "object" && (step.toolResult as Record<string, unknown>)?.guardrail === true;
   const resultJson = step.toolResult ? JSON.stringify(step.toolResult, null, 2) : "";
   const resultIsLong = resultJson.length > 240;
+
+  // Phase 3: detect guardrail refusal/approval in tool_result to render with the right palette
+  const guardrailDecision = isGuardrail
+    ? ((step.toolResult as Record<string, unknown>)?.decision as "refuse" | "needs_approval" | undefined)
+    : undefined;
+  const isRefusal = guardrailDecision === "refuse";
+  const isApproval = guardrailDecision === "needs_approval";
+  const overrideBorder = isRefusal
+    ? "border-rose-500/50 bg-rose-500/10"
+    : isApproval
+      ? "border-amber-500/50 bg-amber-500/10"
+      : meta.border;
+  const overrideBg = isRefusal || isApproval ? "" : meta.bg;
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
-      className={`rounded-lg border ${meta.border} ${meta.bg} p-3`}
+      className={`rounded-lg border ${overrideBorder} ${overrideBg} p-3`}
     >
       <div className="flex items-start gap-2.5">
-        <div className={`mt-0.5 shrink-0 ${meta.color}`}>
-          <Icon className="h-4 w-4" />
+        <div className={`mt-0.5 shrink-0 ${isRefusal ? "text-rose-400" : isApproval ? "text-amber-300" : meta.color}`}>
+          {isRefusal ? <ShieldAlert className="h-4 w-4" /> : isApproval ? <Lock className="h-4 w-4" /> : <Icon className="h-4 w-4" />}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 mb-1">
-            <span className={`text-[10px] font-mono font-bold tracking-wider ${meta.color}`}>{meta.label}</span>
+            <span className={`text-[10px] font-mono font-bold tracking-wider ${isRefusal ? "text-rose-300" : isApproval ? "text-amber-300" : meta.color}`}>
+              {isRefusal ? "GUARDRAIL REFUSED" : isApproval ? "NEEDS APPROVAL" : meta.label}
+            </span>
             {step.toolName && (
               <span className="text-xs font-mono text-slate-300 bg-slate-800/70 rounded px-1.5 py-0.5">
                 {step.toolName}
               </span>
             )}
-            {isWrite && step.kind === "tool_result" && (
+            {isWrite && step.kind === "tool_result" && !isGuardrail && (
               <span className="text-[10px] text-rose-300/80">→ write-back</span>
             )}
             <span className="ml-auto text-[10px] text-slate-600 font-mono">
-              {new Date(step.ts).toLocaleTimeString([], { hour12: false })}
+              {new Date(step.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
             </span>
           </div>
 
@@ -589,7 +690,7 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
 
           {step.kind === "tool_result" && (
             <div className="mt-1">
-              <pre className={`text-xs text-slate-300 bg-slate-950/60 rounded p-2 overflow-x-auto font-mono ${expanded ? "" : "max-h-24"} ${resultIsLong ? "" : ""}`}>
+              <pre className={`text-xs text-slate-300 bg-slate-950/60 rounded p-2 overflow-x-auto font-mono ${expanded ? "" : "max-h-24"}`}>
                 {resultJson}
               </pre>
               {resultIsLong && (
@@ -616,12 +717,16 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
 function ArtifactsSummary({
   writebacks,
   actions,
+  auditEvents,
 }: {
   writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string }>;
-  actions: Array<{ id: string; kind: string; target: string; payload: string; status: string }>;
+  actions: Array<{ id: string; kind: string; target: string; payload: string; status: string; url: string | null; ts: string }>;
+  auditEvents: Array<{ id: string; kind: string; summary: string; ts: string }>;
 }) {
+  // Phase 3: render actions as cards (GitHub issue / PR / Slack post) with URLs
   return (
     <div className="mt-4 space-y-3">
+      {actions.length > 0 && <ActionsPanel actions={actions} />}
       {writebacks.length > 0 && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
           <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-rose-300">
@@ -645,22 +750,251 @@ function ArtifactsSummary({
           </ul>
         </div>
       )}
-      {actions.length > 0 && (
-        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
-          <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-amber-300">
-            <Send className="h-3.5 w-3.5" /> Proposed actions ({actions.length})
-          </div>
-          <ul className="space-y-1.5 text-xs text-slate-300">
-            {actions.map((a) => (
-              <li key={a.id} className="font-mono">
-                <span className="text-amber-300">●</span> {a.kind} → <span className="text-slate-400">{a.target}</span>{" "}
-                <span className="text-[10px] text-amber-400">{a.status}</span>
+      {/* Audit events (compact timeline) */}
+      {auditEvents.length > 0 && (
+        <details className="rounded-lg border border-slate-800 bg-slate-900/40">
+          <summary className="px-3 py-2 text-xs font-semibold text-slate-300 cursor-pointer hover:bg-slate-800/40 rounded-lg">
+            Audit log ({auditEvents.length} events)
+          </summary>
+          <ul className="px-3 py-2 space-y-1 text-[11px] font-mono text-slate-400 max-h-48 overflow-y-auto custom-scroll">
+            {auditEvents.map((e) => (
+              <li key={e.id} className="flex gap-2">
+                <span className="text-slate-600 shrink-0">
+                  {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
+                </span>
+                <span className="text-slate-500 uppercase tracking-wider shrink-0">{e.kind}</span>
+                <span className="text-slate-300 truncate">{e.summary}</span>
               </li>
             ))}
           </ul>
-          <div className="mt-2 text-[10px] text-slate-500">
-            Phase 2 records these as proposals. Phase 3 connectors will execute against the sandbox GitHub + Slack.
-          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Actions panel — render GitHub issues + PRs + Slack posts as cards
+// ---------------------------------------------------------------------------
+
+function ActionsPanel({ actions }: { actions: Array<{ id: string; kind: string; target: string; payload: string; status: string; url: string | null; ts: string }> }) {
+  const cards = actions.map((a) => {
+    const p = safeParse(a.payload) ?? {};
+    return { ...a, parsed: p };
+  });
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+      <div className="flex items-center gap-2 mb-3 text-xs font-semibold text-amber-300">
+        <Send className="h-3.5 w-3.5" /> Executed actions ({cards.length})
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {cards.map((a) => (
+          <ActionCard key={a.id} action={a} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ActionCard({
+  action,
+}: {
+  action: {
+    kind: string;
+    target: string;
+    payload: string;
+    status: string;
+    url: string | null;
+    ts: string;
+    parsed: Record<string, unknown>;
+  };
+}) {
+  const isIssue = action.kind === "github.openIssue";
+  const isPR = action.kind === "github.openPR";
+  const isSlack = action.kind === "slack.postMessage";
+  const Icon = isIssue ? Github : isPR ? GitPullRequest : Slack;
+  const accent = isIssue ? "text-slate-300" : isPR ? "text-emerald-300" : "text-slate-300";
+  const accentBg = isIssue ? "bg-slate-700/40" : isPR ? "bg-emerald-700/40" : "bg-amber-700/40";
+  const executed = action.status === "executed";
+  const refused = action.status === "refused";
+  const neverMerged = isPR && action.parsed?.neverMerged === true;
+  const number = typeof action.parsed?.number === "number" ? action.parsed.number : null;
+  const title = typeof action.parsed?.title === "string" ? action.parsed.title : "";
+  const sandbox = action.parsed?.sandbox === true;
+
+  return (
+    <div
+      className={`rounded-md border p-2.5 ${
+        refused
+          ? "border-rose-500/40 bg-rose-500/5"
+          : executed
+            ? "border-slate-700 bg-slate-800/40"
+            : "border-slate-800 bg-slate-900/40"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className={`h-6 w-6 rounded ${accentBg} flex items-center justify-center shrink-0`}>
+          <Icon className={`h-3.5 w-3.5 ${accent}`} />
+        </div>
+        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{action.kind}</span>
+        <span
+          className={`ml-auto text-[10px] font-mono ${
+            refused ? "text-rose-400" : executed ? "text-emerald-400" : "text-amber-400"
+          }`}
+        >
+          {action.status}
+          {sandbox && executed && " · sandbox"}
+        </span>
+      </div>
+      <div className="text-xs font-mono text-slate-200 truncate" title={title}>
+        {number && number > 0 ? `#${number}` : ""} {title}
+      </div>
+      <div className="text-[10px] text-slate-500 mt-1 font-mono truncate">{action.target}</div>
+      {neverMerged && (
+        <div className="mt-1.5 inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-emerald-300">
+          <ShieldCheck className="h-3 w-3" /> Never merged
+        </div>
+      )}
+      {action.url && !sandbox && (
+        <Link
+          href={action.url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-emerald-300 hover:text-emerald-200 transition-colors"
+        >
+          view <ArrowRight className="h-3 w-3" />
+        </Link>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Guardrail panel — approval gates surfaced for human review
+// ---------------------------------------------------------------------------
+
+function GuardrailPanel({ incidentUrn }: { incidentUrn: string | null }) {
+  const queryClient = useQueryClient();
+  const [approverUrn, setApproverUrn] = useState("urn:li:corpUser:operator");
+  const approvals = useQuery<PendingApproval[]>({
+    queryKey: ["guardrail-pending", incidentUrn ?? ""],
+    queryFn: async () => {
+      const url = incidentUrn
+        ? `/api/guardrail/pending?incidentUrn=${encodeURIComponent(incidentUrn)}&limit=20`
+        : "/api/guardrail/pending?limit=20";
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("Failed to load guardrail approvals");
+      const j = await r.json();
+      return j.approvals as PendingApproval[];
+    },
+    staleTime: 5_000,
+    refetchInterval: 10_000,
+  });
+
+  const items = approvals.data ?? [];
+  if (items.length === 0 && !approvals.isLoading) return null;
+
+  return (
+    <section className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-amber-300 flex items-center gap-2">
+          <ShieldAlert className="h-4 w-4" /> Guardrail — approval gates
+        </h2>
+        <span className="text-[10px] text-slate-500">{items.length} event{items.length !== 1 ? "s" : ""}</span>
+      </div>
+      {approvals.isLoading && <div className="text-xs text-slate-500">Loading guardrail events…</div>}
+      <div className="space-y-2 max-h-72 overflow-y-auto custom-scroll">
+        {items.map((a) => (
+          <GuardrailCard key={a.id} approval={a} approverUrn={approverUrn} onDecided={() => queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] })} />
+        ))}
+      </div>
+      <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
+        <label className="font-mono">approver:</label>
+        <input
+          value={approverUrn}
+          onChange={(e) => setApproverUrn(e.target.value)}
+          className="flex-1 rounded border border-slate-700 bg-slate-900/60 px-2 py-1 font-mono text-[11px] text-slate-300 focus:outline-none focus:border-emerald-500/40"
+        />
+      </div>
+    </section>
+  );
+}
+
+function GuardrailCard({
+  approval,
+  approverUrn,
+  onDecided,
+}: {
+  approval: PendingApproval;
+  approverUrn: string;
+  onDecided: () => void;
+}) {
+  const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
+  const isPending = approval.status === "pending";
+  const isApproved = approval.status === "approved";
+  const isDenied = approval.status === "denied";
+
+  async function decide(decision: "approve" | "deny") {
+    setBusy(decision);
+    try {
+      const r = await fetch(`/api/guardrail/${decision}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: approval.id, approverUrn }),
+      });
+      if (!r.ok) throw new Error("Decision failed");
+      onDecided();
+    } catch {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div
+      className={`rounded-lg border p-3 ${
+        isPending
+          ? "border-amber-500/40 bg-amber-500/5"
+          : isApproved
+            ? "border-emerald-500/40 bg-emerald-500/5"
+            : "border-rose-500/40 bg-rose-500/5"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <Lock className={`h-3.5 w-3.5 ${isPending ? "text-amber-300" : isApproved ? "text-emerald-300" : "text-rose-300"}`} />
+        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{approval.kind}</span>
+        <span
+          className={`ml-auto text-[10px] font-mono ${
+            isPending ? "text-amber-300" : isApproved ? "text-emerald-300" : "text-rose-300"
+          }`}
+        >
+          {approval.status}
+        </span>
+      </div>
+      <div className="text-xs text-slate-300 leading-relaxed">{approval.reason}</div>
+      <div className="mt-2 text-[10px] text-slate-500 font-mono">
+        approver: {approval.approver} · {new Date(approval.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
+      </div>
+      {isPending && (
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={() => decide("approve")}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-40 transition-colors"
+          >
+            {busy === "approve" ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />} approve
+          </button>
+          <button
+            onClick={() => decide("deny")}
+            disabled={busy !== null}
+            className="inline-flex items-center gap-1 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[11px] text-rose-300 hover:bg-rose-500/20 disabled:opacity-40 transition-colors"
+          >
+            {busy === "deny" ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />} deny
+          </button>
+        </div>
+      )}
+      {approval.decidedAt && (
+        <div className="mt-1.5 text-[10px] text-slate-500 font-mono">
+          decided by {approval.approverUrn ?? "(unknown)"} at {new Date(approval.decidedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
         </div>
       )}
     </div>
@@ -691,7 +1025,7 @@ function MetricsCard({
         <Stat label="Prompt tokens" value={tokens ? tokens.promptTokens.toLocaleString() : "—"} icon={BookOpen} />
         <Stat label="Completion tokens" value={tokens ? tokens.completionTokens.toLocaleString() : "—"} icon={Zap} />
         <Stat label="Total tokens" value={total ? total.toLocaleString() : "—"} icon={Activity} highlight />
-        <Stat label="LLM model" value={result ? "nemotron-49b" : "—"} icon={Database} />
+        <Stat label="LLM model" value={result ? "gpt-4o" : "—"} icon={Database} />
       </div>
     </section>
   );
@@ -714,6 +1048,156 @@ function Stat({
         <Icon className="h-3 w-3" /> {label}
       </div>
       <div className={`mt-1 font-mono text-lg font-bold ${highlight ? "text-emerald-300" : "text-slate-100"}`}>{value}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Connector status card — live/sandbox + reachability
+// ---------------------------------------------------------------------------
+
+function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | null; loading: boolean }) {
+  if (loading && !status) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+          <Terminal className="h-4 w-4 text-emerald-400" /> Connectors
+        </h2>
+        <div className="space-y-2">
+          <div className="h-10 rounded bg-slate-800/40 animate-pulse" />
+          <div className="h-10 rounded bg-slate-800/40 animate-pulse" />
+        </div>
+      </section>
+    );
+  }
+  if (!status) return null;
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+        <Terminal className="h-4 w-4 text-emerald-400" /> Connectors
+        <span
+          className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded ${
+            status.dryRun
+              ? "border border-amber-500/40 bg-amber-500/10 text-amber-300"
+              : "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+          }`}
+        >
+          {status.dryRun ? "SANDBOX" : "LIVE"}
+        </span>
+      </h2>
+      <div className="space-y-2">
+        <ConnectorRow
+          icon={Github}
+          name="GitHub"
+          target={status.github.repo}
+          mode={status.github.mode}
+          reachable={status.github.reachable}
+          tokenPresent={status.github.tokenPresent}
+          error={status.github.error}
+        />
+        <ConnectorRow
+          icon={Slack}
+          name="Slack"
+          target={`#${status.slack.channel}`}
+          mode={status.slack.mode}
+          reachable={status.slack.reachable}
+          tokenPresent={status.slack.tokenPresent}
+          error={status.slack.error}
+          hint={status.slack.botUser ? `bot: ${status.slack.botUser}` : undefined}
+        />
+      </div>
+      <div className="mt-2 text-[10px] text-slate-500">
+        {status.dryRun
+          ? "Sandbox mode writes to examples/sandbox/*.log. Toggle LIVE in the control bar to file real issues + posts."
+          : "LIVE mode: each Sentinel run opens a real GitHub issue + posts a real Slack message. Use sparingly."}
+      </div>
+    </section>
+  );
+}
+
+function ConnectorRow({
+  icon: Icon,
+  name,
+  target,
+  mode,
+  reachable,
+  tokenPresent,
+  error,
+  hint,
+}: {
+  icon: typeof Github;
+  name: string;
+  target: string;
+  mode: "live" | "sandbox";
+  reachable: boolean;
+  tokenPresent: boolean;
+  error?: string;
+  hint?: string;
+}) {
+  const dotColor = !tokenPresent
+    ? "bg-rose-400"
+    : mode === "sandbox"
+      ? "bg-amber-400"
+      : reachable
+        ? "bg-emerald-400"
+        : "bg-rose-400";
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-2.5">
+      <div className="flex items-center gap-2">
+        <Icon className="h-3.5 w-3.5 text-slate-400" />
+        <span className="text-xs font-semibold text-slate-200">{name}</span>
+        <span className={`h-2 w-2 rounded-full ${dotColor}`} />
+        <span className="ml-auto text-[10px] font-mono text-slate-500">
+          {mode === "sandbox" ? "sandbox" : reachable ? "live · reachable" : tokenPresent ? "live · blocked" : "no token"}
+        </span>
+      </div>
+      <div className="mt-1 text-[10px] font-mono text-slate-400 truncate">{target}</div>
+      {hint && <div className="text-[10px] text-slate-500 font-mono">{hint}</div>}
+      {error && <div className="text-[10px] text-rose-300 font-mono mt-0.5 truncate" title={error}>{error}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Demo control bar (sticky bottom) — dry-run toggle + test button
+// ---------------------------------------------------------------------------
+
+function DemoControlBar({
+  status,
+  onTestConnectors,
+}: {
+  status: ConnectorStatus | null;
+  onTestConnectors: (dryRun: boolean) => Promise<unknown>;
+}) {
+  const [testing, setTesting] = useState(false);
+  const dryRun = status?.dryRun ?? true;
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
+        <span className="text-[11px] text-slate-500 font-mono">demo controls:</span>
+        <div className="inline-flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-1">
+          <span className={`h-2 w-2 rounded-full ${dryRun ? "bg-amber-400" : "bg-emerald-400"} animate-pulse`} />
+          <span className="text-slate-400">mode</span>
+          <span className={`font-mono ${dryRun ? "text-amber-300" : "text-emerald-300"}`}>
+            {dryRun ? "SANDBOX" : "LIVE"}
+          </span>
+          <span className="text-slate-600 text-[10px]">(SENTINEL_DRY_RUN={dryRun ? "true" : "false"})</span>
+        </div>
+        <button
+          onClick={() => onTestConnectors(dryRun)}
+          disabled={testing}
+          className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-slate-300 hover:bg-slate-700/60 disabled:opacity-40 transition-colors"
+          title="Open a test GitHub issue + post a test Slack card (uses the current mode)"
+        >
+          {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+          test connectors
+        </button>
+        <span className="ml-auto text-[10px] text-slate-600 hidden sm:inline">
+          {dryRun
+            ? "Sandbox writes to examples/sandbox/*.log — safe. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real issues + posts."
+            : "LIVE mode: every Inject & run files real artifacts in your sandbox GitHub + Slack."}
+        </span>
+      </div>
     </div>
   );
 }

@@ -2,24 +2,34 @@
 // Sentinel — Tool registry
 //
 // Maps the LLM's `tool_calls` to executable functions backed by the three
-// DataHub client interfaces (mcp / contextKit / ingestion). PDF §12.3:
-// tool-call inputs are structured JSON validated against a schema — never
-// free-text execution — so a malicious DataHub doc cannot inject a tool call.
+// DataHub client interfaces (mcp / contextKit / ingestion) + the Phase 3
+// action connectors (github / slack). PDF §12.3: tool-call inputs are
+// structured JSON validated against a schema — never free-text execution —
+// so a malicious DataHub doc cannot inject a tool call.
 //
-// Catalogue (Phase 2):
-//   mcp.*  — 9 read tools (DataHub MCP Server)
-//   ack.*  — 6 write tools (Agent Context Kit) — post-mortem is a direct write,
-//            glossary/ownership/tags/description are proposals
-//   action.* — 2 action stubs (Phase 3 wires real GitHub + Slack). In Phase 2
-//            they record the proposed action to the Action table and return a
-//            "proposed" result — no external side effects.
+// Catalogue (Phase 3):
+//   mcp.*     — 9 read tools (DataHub MCP Server)
+//   ack.*     — 6 write tools (Agent Context Kit) — post-mortem is a direct
+//               write, glossary/ownership/tags/description are proposals
+//   action.*  — 3 action tools (Phase 3): github_open_issue, github_open_pr
+//               (NEVER merges), slack_post_triage. All call the real
+//               connectors against the sandbox repo / channel. SENTINEL_DRY_RUN
+//               flips them to the sandbox log.
 //
 // Every tool call is recorded to the ToolCall table (PDF §9.4.3) and the audit
-// trail. Write tools additionally record a WriteBack row.
+// trail. Action tools additionally record an Action row (status: executed /
+// refused). Write tools additionally record a WriteBack row.
+//
+// GUARDRAIL (Phase 3): the orchestrator calls `checkBeforeExecute` from
+// src/lib/guardrail BEFORE every action.* + ack.save_document call. The hook
+// can refuse (PII) or surface an approval gate (ownership/glossary proposals).
+// See src/lib/guardrail/pre-exec.ts.
 // =============================================================================
 
 import { db } from '@/lib/db'
 import type { DataHubClients } from '@/lib/datahub/types'
+import { openIssue as ghOpenIssue, openPR as ghOpenPR } from '@/lib/connectors/github'
+import { postTriage as slackPostTriage } from '@/lib/connectors/slack'
 import type { LlmTool, LlmToolCall } from './types'
 
 // ---------------------------------------------------------------------------
@@ -503,23 +513,26 @@ const WRITE_TOOLS: ToolDefinition[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// ACTION stubs — action.* (Phase 3 wires real GitHub + Slack)
-// In Phase 2 these record the proposed action and return a "proposed" result;
-// no external side effects (honours SENTINEL_DRY_RUN and the Phase 3 boundary).
+// ACTION tools — action.* (Phase 3: real GitHub + Slack connectors)
+// These now call src/lib/connectors/{github,slack}.ts. SENTINEL_DRY_RUN=true
+// (default) routes to the sandbox JSONL log; SENTINEL_DRY_RUN=false calls the
+// live GitHub + Slack APIs against the sandbox repo + channel.
+// Sentinel NEVER merges (PDF §9.3.5). The guardrail's NoMergeRule enforces this
+// in code even if the LLM attempts to call a merge tool.
 // ---------------------------------------------------------------------------
 
-const ACTION_STUBS: ToolDefinition[] = [
+const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.github_open_issue',
     description:
-      'Open a GitHub issue in the sandbox repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Phase 2: recorded as PROPOSED. Phase 3 will execute against the sandbox repo. Sentinel NEVER merges (PDF §9.3.5).',
+      'Open a GitHub issue in the sandbox repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Sentinel NEVER merges (PDF §9.3.5). Honors SENTINEL_DRY_RUN: sandbox mode writes to examples/sandbox/github-actions.log.',
     parameters: {
       type: 'object',
       properties: {
         repo: { type: 'string', description: 'Defaults to GITHUB_DEMO_REPO' },
         title: { type: 'string' },
         body: { type: 'string', description: 'Markdown body of the issue' },
-        labels: { type: 'array', items: { type: 'string' } },
+        labels: { type: 'array', items: { type: 'string' }, description: 'GitHub labels (auto-created on the repo if missing)' },
       },
       required: ['title', 'body'],
     },
@@ -528,53 +541,169 @@ const ACTION_STUBS: ToolDefinition[] = [
       const title = asString(args.title)
       const body = asString(args.body)
       const labels = asStringArray(args.labels)
-      await recordAction({
-        incidentUrn: ctx.incidentUrn,
-        kind: 'github.openIssue',
-        target: repo,
-        payload: { repo, title, body, labels },
-        status: ctx.dryRun ? 'proposed' : 'proposed',
-        dryRun: ctx.dryRun,
-      })
-      return {
-        kind: 'github.openIssue',
-        repo,
-        title,
-        status: 'proposed',
-        note: 'Phase 2: action proposed (recorded to audit). Phase 3 connector will execute against the sandbox repo.',
-        dryRun: ctx.dryRun,
+      try {
+        const res = await ghOpenIssue({ repo, title, body, labels })
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'github.openIssue',
+            target: repo,
+            payload: JSON.stringify({ repo, title, body, labels, number: res.number, sandbox: res.sandbox }),
+            status: 'executed',
+            url: res.sandbox ? null : res.url,
+            ts: new Date(),
+          },
+        })
+        return {
+          kind: 'github.openIssue',
+          repo,
+          number: res.number,
+          url: res.url,
+          state: res.state,
+          sandbox: res.sandbox,
+          status: 'executed',
+          note: res.sandbox
+            ? 'Sandbox: written to examples/sandbox/github-actions.log. Set SENTINEL_DRY_RUN=false to file a live issue.'
+            : 'Live: GitHub issue opened in the sandbox repo. Sentinel NEVER merges — issue is left OPEN for human review.',
+        }
+      } catch (err) {
+        const error = (err as Error).message ?? String(err)
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'github.openIssue',
+            target: repo,
+            payload: JSON.stringify({ repo, title, body, labels, error }),
+            status: 'refused',
+            ts: new Date(),
+          },
+        })
+        return { kind: 'github.openIssue', repo, title, status: 'failed', error }
+      }
+    },
+  },
+  {
+    name: 'action.github_open_pr',
+    description:
+      'Open a GitHub pull request in the sandbox repo (GITHUB_DEMO_REPO) with the proposed fix. Sentinel NEVER merges (PDF §9.3.5 no-merge policy) — the PR is always left OPEN for human review. The head branch MUST already exist on the repo (Phase 3 only opens PRs; it does NOT push branches). Honors SENTINEL_DRY_RUN.',
+    parameters: {
+      type: 'object',
+      properties: {
+        repo: { type: 'string', description: 'Defaults to GITHUB_DEMO_REPO' },
+        title: { type: 'string' },
+        body: { type: 'string', description: 'Markdown body of the PR' },
+        branch: { type: 'string', description: 'Head branch (must already exist on the repo). Defaults to sentinel/proposed-fix.' },
+        base: { type: 'string', description: 'Base branch. Defaults to main.' },
+      },
+      required: ['title', 'body', 'branch'],
+    },
+    async execute(args, ctx) {
+      const repo = asString(args.repo) || process.env.GITHUB_DEMO_REPO || 'sodiq-code/sentinel-demo-pipeline'
+      const title = asString(args.title)
+      const body = asString(args.body)
+      const branch = asString(args.branch, 'sentinel/proposed-fix')
+      const base = asString(args.base, 'main')
+      try {
+        const res = await ghOpenPR({ repo, title, body, branch, base })
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'github.openPR',
+            target: repo,
+            payload: JSON.stringify({ repo, title, body, branch, base, number: res.number, sandbox: res.sandbox, neverMerged: true }),
+            status: 'executed',
+            url: res.sandbox ? null : res.url,
+            ts: new Date(),
+          },
+        })
+        return {
+          kind: 'github.openPR',
+          repo,
+          number: res.number,
+          url: res.url,
+          state: res.state,
+          mergeable: res.mergeable,
+          sandbox: res.sandbox,
+          neverMerged: true,
+          status: 'executed',
+          note: 'Sentinel NEVER merges this PR (PDF §9.3.5). It is left OPEN for human review. A human reviewer decides whether to merge.',
+        }
+      } catch (err) {
+        const error = (err as Error).message ?? String(err)
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'github.openPR',
+            target: repo,
+            payload: JSON.stringify({ repo, title, body, branch, base, error }),
+            status: 'refused',
+            ts: new Date(),
+          },
+        })
+        return { kind: 'github.openPR', repo, title, branch, base, status: 'failed', error, neverMerged: true }
       }
     },
   },
   {
     name: 'action.slack_post_triage',
     description:
-      'Post a 3-bullet triage summary (what failed / who is affected / what on-call should do) to the sandbox Slack channel (SLACK_DEMO_CHANNEL). Phase 2: recorded as PROPOSED. Phase 3 will execute against the sandbox workspace.',
+      'Post a 3-bullet triage summary (what failed / who is affected / what on-call should do) to the sandbox Slack channel (SLACK_DEMO_CHANNEL). Renders as a Slack Block Kit triage card. Honors SENTINEL_DRY_RUN: sandbox mode writes to examples/sandbox/slack-posts.log.',
     parameters: {
       type: 'object',
       properties: {
         channel: { type: 'string', description: 'Defaults to SLACK_DEMO_CHANNEL' },
-        text: { type: 'string', description: 'Triage summary text' },
+        title: { type: 'string', description: 'Short headline of the triage card' },
+        bullets: {
+          type: 'array',
+          items: { type: 'string' },
+          description: '1–3 bullets. The connector renders them as a Slack Block Kit triage card.',
+        },
+        footer: { type: 'string', description: 'Optional footer (e.g. Sentinel incident urn).' },
       },
-      required: ['text'],
+      required: ['title', 'bullets'],
     },
     async execute(args, ctx) {
       const channel = asString(args.channel) || process.env.SLACK_DEMO_CHANNEL || 'C0BL9CQ4D5G'
-      const text = asString(args.text)
-      await recordAction({
-        incidentUrn: ctx.incidentUrn,
-        kind: 'slack.postMessage',
-        target: channel,
-        payload: { channel, text },
-        status: 'proposed',
-        dryRun: ctx.dryRun,
-      })
-      return {
-        kind: 'slack.postMessage',
-        channel,
-        status: 'proposed',
-        note: 'Phase 2: action proposed (recorded to audit). Phase 3 connector will execute against the sandbox channel.',
-        dryRun: ctx.dryRun,
+      const title = asString(args.title)
+      const bullets = asStringArray(args.bullets)
+      const footer = asString(args.footer) || undefined
+      try {
+        const res = await slackPostTriage({ channel, title, bullets, footer })
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'slack.postMessage',
+            target: channel,
+            payload: JSON.stringify({ channel, title, bullets, footer, ts: res.ts, sandbox: res.sandbox }),
+            status: 'executed',
+            url: res.sandbox ? null : res.url,
+            ts: new Date(),
+          },
+        })
+        return {
+          kind: 'slack.postMessage',
+          channel,
+          ts: res.ts,
+          url: res.url,
+          sandbox: res.sandbox,
+          status: 'executed',
+          note: res.sandbox
+            ? 'Sandbox: written to examples/sandbox/slack-posts.log. Set SENTINEL_DRY_RUN=false to post live.'
+            : 'Live: Slack triage card posted to the sandbox channel.',
+        }
+      } catch (err) {
+        const error = (err as Error).message ?? String(err)
+        await db.action.create({
+          data: {
+            incidentUrn: ctx.incidentUrn,
+            kind: 'slack.postMessage',
+            target: channel,
+            payload: JSON.stringify({ channel, title, bullets, footer, error }),
+            status: 'refused',
+            ts: new Date(),
+          },
+        })
+        return { kind: 'slack.postMessage', channel, title, status: 'failed', error }
       }
     },
   },
@@ -585,7 +714,7 @@ const ACTION_STUBS: ToolDefinition[] = [
 // ---------------------------------------------------------------------------
 
 export function buildToolCatalogue(): ToolDefinition[] {
-  return [...READ_TOOLS, ...WRITE_TOOLS, ...ACTION_STUBS]
+  return [...READ_TOOLS, ...WRITE_TOOLS, ...ACTION_TOOLS]
 }
 
 /** Map our ToolDefinition[] to the OpenAI `tools` schema the LLM expects. */

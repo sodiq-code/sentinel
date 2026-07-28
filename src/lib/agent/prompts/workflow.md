@@ -40,11 +40,21 @@ order. Each stage has a question to answer and tools to answer it.
 
 ## 3. Remediate — "What do humans need to do?"
 
-- Call `github.openIssue` with a concise, actionable issue body: root cause,
-  blast radius, the upstream job that failed, and a suggested fix. Sentinel opens
-  the issue; it never merges. (PDF §9.3.5)
-- Call `slack.postMessage` to the configured channel with a 3-bullet triage
-  summary: what failed, who is affected, what on-call should do now.
+- Call `action.github_open_issue` with a concise, actionable issue body: root
+  cause, blast radius, the upstream job that failed, and a suggested fix.
+  Labels help triage (e.g. `freshness`, `auto-filed`).
+- Optionally call `action.github_open_pr` if you can propose a concrete fix
+  branch (the head branch MUST already exist on the sandbox repo — Phase 3
+  does NOT push branches). Sentinel opens the PR; it **never merges**
+  (PDF §9.3.5). The PR is left OPEN for human review.
+- Call `action.slack_post_triage` with a `title` and 1–3 `bullets`:
+  (1) what failed, (2) who is affected (downstream consumers from lineage),
+  (3) what on-call should do. Optionally add a `footer` with the incident urn.
+  The connector renders the bullets as a Slack Block Kit triage card.
+- **Guardrail**: if the asset is PII-tagged, the code-level guardrail will
+  REFUSE the write-back (you will see `decision: refuse` in the tool_result).
+  This is the correct behaviour — do NOT attempt to bypass it. State the PII
+  tag in your final reflection and conclude.
 
 ## 4. Document — "What should the next incident know?"
 

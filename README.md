@@ -89,15 +89,26 @@ sentinel/                              # the agent (Phase 0 interface contracts)
   audit.ts                             # SQLite + DataHub Assertion mirror
   demo_driver.ts                       # injects nyc-taxi freshness failure; replays loop
   types.ts                             # shared agent types (Phase 0 contracts)
-src/lib/agent/                         # the LIVE agent (Phase 2)
-  orchestrator.ts                      # the ReAct loop (plan→act→observe→reflect→write-back)
+src/lib/agent/                         # the LIVE agent (Phase 2+)
+  orchestrator.ts                      # the ReAct loop (plan→act→observe→reflect→write-back) + Phase 3 guardrail hook
   llm.ts                               # NVIDIA NIM / z-ai gateway client (OpenAI-compatible, retries+fallback)
-  tools.ts                             # tool registry: 9 read + 6 write + 2 action stubs
+  tools.ts                             # tool registry: 9 read + 6 write + 3 action tools (Phase 3: real GitHub + Slack)
   audit.ts                             # Prisma-backed audit log + reasoning-trace reconstruction
   seed-signals.ts                      # the 3 injectable demo signals
   types.ts                             # canonical Phase 2 agent types
   prompts/                             # PDF §9.4.4 layered system prompt (committed, versioned)
     role.md · workflow.md · governance.md · tools.md · system-prompt.ts
+  index.ts                             # barrel
+src/lib/connectors/                    # Phase 3 action connectors
+  github.ts                            # openIssue, openPR (NEVER merges), getRepoInfo
+  slack.ts                             # postTriage (Slack Web API chat.postMessage, Block Kit triage card)
+  _sandbox.ts                          # requireEnv, isDryRun, appendSandboxLog, readSandboxLog
+  index.ts                             # barrel
+src/lib/guardrail/                     # Phase 3 code-level guardrail (PDF §9.3.5, §12.3)
+  policy.ts                            # NoMergeRule + DirectWriteAllowlistRule + ActionApprovalGateRule
+  pii-check.ts                         # reads DataHub governance tags via MCP get_entities
+  approval-gate.ts                     # PendingApproval persistence + approve/deny/list
+  pre-exec.ts                          # checkBeforeExecute hook + recordGuardrailCheck audit
   index.ts                             # barrel
 skill/                                 # the bonus DataHub Skill
   incident-triage/
@@ -117,9 +128,13 @@ prisma/
   schema.prisma                        # 5 tables (PDF §9.4.3) + demo seed models
 .github/workflows/ci.yml               # lint + integration demo
 src/                                   # Next.js 16 incident console (the demo surface)
-  app/page.tsx                         # the Phase 2 console: live ReAct reasoning stream
+  app/page.tsx                         # the Phase 3 console: live ReAct reasoning + actions panel + guardrail panel + demo control bar
   app/api/agent/                       # run / incidents / incident/[urn] / signals routes
-  lib/agent/                           # the live Phase 2 agent (see above)
+  app/api/guardrail/                    # Phase 3: pending / approve / deny routes
+  app/api/connectors/                   # Phase 3: status / test / sandbox-log routes
+  lib/agent/                           # the live Phase 2+ agent (see above)
+  lib/connectors/                      # Phase 3 GitHub + Slack connectors
+  lib/guardrail/                       # Phase 3 code-level guardrail
   lib/datahub/                         # McpClient + ContextKitClient + IngestionClient (mock + live)
 ```
 
@@ -247,12 +262,54 @@ Block demonstrated human-driven incident response with Goose + the DataHub MCP S
 **Phase 0 — Foundation & Repo hygiene** ✅ complete.
 **Phase 1 — DataHub Mock + Seed** ✅ complete.
 **Phase 2 — Orchestrator + ReAct Loop** ✅ complete — inject a seed signal and the agent (gpt-4o via the z-ai gateway) runs the full closed loop: investigate with the MCP read tools, traverse lineage, read prior post-mortems, open a GitHub issue, post a Slack triage, and write a post-mortem back to DataHub. A completion gate refuses premature stops until the mandatory write-back tools are called. The reasoning stream is visible live in the console (PDF §5.3).
-**Phase 3 — Action Connectors + Guardrails** next.
+**Phase 3 — Action Connectors + Guardrails** ✅ complete — the Phase 2 action stubs are replaced with real GitHub (`action.github_open_issue`, `action.github_open_pr` — never merges) and Slack (`action.slack_post_triage`) connectors against the sandbox repo `sodiq-code/sentinel-demo-pipeline` and channel `C0BL9CQ4D5G`. `SENTINEL_DRY_RUN=true` (default) routes both connectors to `examples/sandbox/*.log`; flip to `false` to file live issues + post live Slack cards. A **code-level guardrail** (`src/lib/guardrail/`) now enforces the PDF §9.3.5 no-merge policy, PII refusal (reads DataHub governance tags via MCP `get_entities`), and surfaces a human-approval gate for ownership / glossary / tags / description proposals. The guardrail runs BEFORE every `action.*` and `ack.save_document` tool call — the LLM cannot bypass it by rephrasing. Refusals + approval cards render live in the console.
 
 See `worklog.md` for the running build log.
+
+---
+
+## Phase 3 — Connectors & Guardrail
+
+### Connectors (`src/lib/connectors/`)
+
+| File | What it does |
+|---|---|
+| `github.ts` | `openIssue` (POST /repos/{repo}/issues), `openPR` (POST /repos/{repo}/pulls — no merge method exposed), `getRepoInfo`, `githubStatus`. Honors `SENTINEL_DRY_RUN`. |
+| `slack.ts` | `postTriage` (Slack Web API `chat.postMessage` with Block Kit triage card), `slackStatus`. Honors `SENTINEL_DRY_RUN`. |
+| `_sandbox.ts` | Shared helpers: `requireEnv`, `isDryRun`, `appendSandboxLog`, `readSandboxLog`. |
+| `index.ts` | Barrel. |
+
+### Guardrail (`src/lib/guardrail/`)
+
+| File | What it does |
+|---|---|
+| `policy.ts` | Policy DSL with three built-in rules: `NoMergeRule` (refuses any merge-like tool), `DirectWriteAllowlistRule` (surfaces approval gate for `ack.add_owners`/`add_glossary_terms`/`add_tags`/`update_description`), `ActionApprovalGateRule`. |
+| `pii-check.ts` | Reads an asset's governance tags via the live MCP `get_entities` tool. Classifies `pii`, `restricted`, `confidential`, `sensitive` tags as PII. |
+| `approval-gate.ts` | Persists `PendingApproval` rows; `requestApproval`, `approveApproval`, `denyApproval`, `listApprovals`. |
+| `pre-exec.ts` | `checkBeforeExecute(toolName, args, ctx)` — the orchestrator calls this BEFORE every tool. Returns `{ decision: 'allow' | 'refuse' | 'needs_approval', ... }`. `recordGuardrailCheck` writes an `AuditEvent` so the UI timeline shows it. |
+| `index.ts` | Barrel. |
+
+### API routes (Phase 3)
+
+| Route | Method | What it does |
+|---|---|---|
+| `/api/guardrail/pending` | GET | List pending + decided approvals (query: `?incidentUrn=`, `?status=`, `?limit=`). |
+| `/api/guardrail/approve` | POST | Mark an approval as approved (body: `{ id, approverUrn }`). |
+| `/api/guardrail/deny` | POST | Mark an approval as denied. |
+| `/api/connectors/status` | GET | Live/sandbox + reachability for GitHub + Slack (used by the DemoControlBar chips). |
+| `/api/connectors/test` | POST | Open a test GitHub issue + post a test Slack card (honors `SENTINEL_DRY_RUN` or `{ dryRun }` body override). |
+| `/api/connectors/sandbox-log` | GET | Last N sandbox JSONL entries (query: `?kind=github|slack`, `?limit=`). |
+
+### Demo control bar
+
+The page renders a sticky bottom bar with:
+- A live/sandbox mode chip (reads `SENTINEL_DRY_RUN`).
+- A "test connectors" button (calls `/api/connectors/test`).
+- The GitHub + Slack connector rows show reachability + token presence.
 
 ---
 
 ## License
 
 Apache 2.0 — see [`LICENSE`](./LICENSE).
+
