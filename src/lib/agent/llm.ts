@@ -63,7 +63,7 @@ import type {
   LlmToolCall,
 } from './types'
 
-export type LlmProvider = 'zai' | 'nvidia'
+export type LlmProvider = 'zai' | 'nvidia' | 'groq'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -98,8 +98,10 @@ const LLM_FAILOVER_ENABLED =
   (process.env.LLM_FAILOVER_ENABLED ?? 'true').toLowerCase() !== 'false'
 
 function getProvider(): LlmProvider {
-  const raw = (process.env.LLM_PROVIDER ?? 'zai').toLowerCase()
-  return raw === 'nvidia' ? 'nvidia' : 'zai'
+  const raw = (process.env.LLM_PROVIDER ?? 'groq').toLowerCase()
+  if (raw === 'nvidia') return 'nvidia'
+  if (raw === 'zai') return 'zai'
+  return 'groq'
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -244,6 +246,39 @@ interface OpenAiChoice {
 interface OpenAiResponse {
   choices: OpenAiChoice[]
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+}
+
+/**
+ * Sentinel's internal LlmMessage shape uses camelCase (`toolCalls`,
+ * `toolCallId`) so the orchestrator's scratchpad is provider-agnostic. Real
+ * OpenAI-compatible wire APIs (Groq, NVIDIA NIM) require snake_case
+ * (`tool_calls`, `tool_call_id`) AND `content: null` (not `''`) on assistant
+ * messages that carry tool_calls. This maps the internal shape to the wire
+ * shape for any direct-fetch OpenAI-compatible provider.
+ */
+function toWireMessages(messages: LlmMessage[]): Record<string, unknown>[] {
+  return messages.map((m) => {
+    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+      return {
+        role: 'assistant',
+        content: m.content || null,
+        tool_calls: m.toolCalls.map((c) => ({
+          id: c.id,
+          type: 'function',
+          function: { name: c.function.name, arguments: c.function.arguments },
+        })),
+      }
+    }
+    if (m.role === 'tool') {
+      return {
+        role: 'tool',
+        tool_call_id: m.toolCallId,
+        name: m.name,
+        content: m.content,
+      }
+    }
+    return { role: m.role, content: m.content }
+  })
 }
 
 function mapCompletion(res: OpenAiResponse): LlmCompletion {
@@ -441,7 +476,7 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
     const call = async (m: string): Promise<LlmCompletion> => {
       const body = {
         model: m,
-        messages: input.messages,
+        messages: toWireMessages(input.messages),
         tools: input.tools,
         tool_choice: input.tools?.length ? 'auto' : undefined,
         temperature: input.temperature ?? DEFAULT_TEMP,
@@ -530,6 +565,142 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
 }
 
 // ===========================================================================
+// Provider: Groq (OpenAI-compatible, real outbound LLM — DEFAULT)
+//
+// Groq's chat/completions endpoint is a drop-in OpenAI-compatible surface
+// (same request/response shape as NVIDIA NIM), so it reuses the exact same
+// resilience primitives (TokenBucket, CircuitBreaker, retry/backoff). This
+// is the provider actually reachable from outside the build sandbox — no
+// z-ai gateway, no dead NVIDIA key. Get a free key at console.groq.com/keys.
+// ===========================================================================
+
+const GROQ_BASE_URL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1'
+
+class GroqLlmClient implements ResilientLlmClient {
+  private readonly rateLimiter = new TokenBucket(1, RATE_LIMIT_INTERVAL_MS)
+  private readonly circuit = new CircuitBreaker(CIRCUIT_THRESHOLD, CIRCUIT_COOLDOWN_MS)
+
+  providerName(): string {
+    return 'groq'
+  }
+
+  isThrottled(): boolean {
+    return this.circuit.isOpen()
+  }
+
+  circuitSnapshot() {
+    return this.circuit.snapshot()
+  }
+
+  async complete(input: {
+    messages: LlmMessage[]
+    tools?: LlmTool[]
+    temperature?: number
+    maxTokens?: number
+  }): Promise<LlmCompletion> {
+    if (this.circuit.isOpen()) {
+      throw new CircuitOpenError(
+        `groq circuit open for ${this.circuit.msUntilReset()}ms ` +
+          `(sustained 429/5xx from the Groq endpoint).`,
+      )
+    }
+
+    const model = process.env.LLM_MODEL || 'llama-3.3-70b-versatile'
+    const fallbackModel = process.env.LLM_FALLBACK_MODEL || 'llama-3.1-8b-instant'
+    const apiKey = process.env.GROQ_API_KEY
+    if (!apiKey) throw new Error('GROQ_API_KEY is not set in the environment')
+
+    const call = async (m: string): Promise<LlmCompletion> => {
+      const body = {
+        model: m,
+        messages: toWireMessages(input.messages),
+        tools: input.tools,
+        tool_choice: input.tools?.length ? 'auto' : undefined,
+        temperature: input.temperature ?? DEFAULT_TEMP,
+        max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
+        stream: false,
+      }
+      let lastErr: Error | null = null
+      let sawRateLimit = false
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          const baseBackoff = sawRateLimit
+            ? Math.min(
+                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                RATE_LIMIT_BACKOFF_MAX_MS,
+              )
+            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+          await sleep(jitter(baseBackoff))
+        }
+        await this.rateLimiter.acquire()
+        let res: Response
+        try {
+          res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify(body),
+          })
+        } catch (err) {
+          const openedNow = this.circuit.recordFailure(503)
+          const e = err instanceof Error ? err : new Error(String(err))
+          if (openedNow) {
+            throw new CircuitOpenError(
+              `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
+                `failures (last: network error: ${e.message.slice(0, 120)})`,
+            )
+          }
+          lastErr = e
+          if (attempt < MAX_RETRIES) continue
+          throw lastErr
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          if (res.status === 429) sawRateLimit = true
+          const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
+          const openedNow = this.circuit.recordFailure(res.status)
+          if (openedNow) {
+            throw new CircuitOpenError(
+              `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+                `Last error: HTTP ${res.status}`,
+            )
+          }
+          if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
+            lastErr = err
+            continue
+          }
+          throw err
+        }
+        this.circuit.recordSuccess()
+        return mapCompletion((await res.json()) as OpenAiResponse)
+      }
+      throw lastErr ?? new Error('Groq LLM call failed after retries')
+    }
+
+    try {
+      return await call(model)
+    } catch (primaryErr) {
+      if (primaryErr instanceof CircuitOpenError) throw primaryErr
+      if (model === fallbackModel) throw primaryErr
+      try {
+        return await call(fallbackModel)
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof CircuitOpenError) throw fallbackErr
+        const pm = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
+        const fm = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        throw new Error(
+          `LLM unavailable: primary '${model}' (${pm.slice(0, 160)}) and ` +
+            `fallback '${fallbackModel}' (${fm.slice(0, 160)}) both failed.`,
+        )
+      }
+    }
+  }
+}
+
+// ===========================================================================
 // Failover wrapper — wires the dormant NVIDIA path in front of z-ai without
 // breaking the single-LlmClient contract the orchestrator expects. Used only
 // when LLM_PROVIDER=zai AND a NVIDIA key looks configured.
@@ -587,11 +758,12 @@ interface SentinelLlmSingleton {
   client: LlmClient | null
   zai: ZaiLlmClient | null
   nvidia: NvidiaNimLlmClient | null
+  groq: GroqLlmClient | null
 }
 
 function getSingleton(): SentinelLlmSingleton {
   const g = globalThis as unknown as { __sentinelLlm?: SentinelLlmSingleton }
-  if (!g.__sentinelLlm) g.__sentinelLlm = { client: null, zai: null, nvidia: null }
+  if (!g.__sentinelLlm) g.__sentinelLlm = { client: null, zai: null, nvidia: null, groq: null }
   return g.__sentinelLlm
 }
 
@@ -602,6 +774,9 @@ export function getLlm(): LlmClient {
     if (provider === 'nvidia') {
       s.nvidia = new NvidiaNimLlmClient()
       s.client = s.nvidia
+    } else if (provider === 'groq') {
+      s.groq = new GroqLlmClient()
+      s.client = s.groq
     } else {
       s.zai = new ZaiLlmClient()
       const nvidiaKey = process.env.NVIDIA_API_KEY
@@ -625,9 +800,11 @@ export function getLlmProvider(): LlmProvider {
 }
 
 export function getLlmModel(): string {
-  return process.env.LLM_MODEL || (getProvider() === 'nvidia'
-    ? 'nvidia/llama-3.3-nemotron-super-49b-v1'
-    : 'gpt-4o')
+  if (process.env.LLM_MODEL) return process.env.LLM_MODEL
+  const provider = getProvider()
+  if (provider === 'nvidia') return 'nvidia/llama-3.3-nemotron-super-49b-v1'
+  if (provider === 'groq') return 'llama-3.3-70b-versatile'
+  return 'gpt-4o'
 }
 
 /**
@@ -656,6 +833,7 @@ export function getLlmResilienceStatus(): {
   let circuit: { isOpen: boolean; consecutiveFailures: number; msUntilReset: number } | null = null
   if (s.zai && getProvider() === 'zai') circuit = s.zai.circuitSnapshot()
   else if (s.nvidia && getProvider() === 'nvidia') circuit = s.nvidia.circuitSnapshot()
+  else if (s.groq && getProvider() === 'groq') circuit = s.groq.circuitSnapshot()
   return {
     provider: getProvider(),
     model: getLlmModel(),

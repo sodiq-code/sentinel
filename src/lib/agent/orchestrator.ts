@@ -58,7 +58,7 @@ export interface OrchestratorResult {
   steps: ReasoningStep[]
   totalTokens: { promptTokens: number; completionTokens: number }
   llmModel: string
-  llmProvider: 'zai' | 'nvidia'
+  llmProvider: 'zai' | 'nvidia' | 'groq'
   promptVersion: string
   /** Phase 4: where the audit log is mirrored (DataHub Assertions or seed). */
   auditMirrorMode: AuditMirrorMode

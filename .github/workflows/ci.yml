@@ -100,12 +100,18 @@ jobs:
       DATAHUB_MODE: "demo"
       # Sandbox the GitHub + Slack connectors (writes to examples/sandbox/*.log).
       SENTINEL_DRY_RUN: "true"
-      # The z-ai gateway is unreachable in CI; the orchestrator's fallback
-      # post-mortem path is the PDF §11.3 contingency plan. The test asserts
-      # the write-back, not the LLM response.
-      LLM_PROVIDER: "zai"
-      LLM_MODEL: "gpt-4o"
-      LLM_FALLBACK_MODEL: "gpt-4o-mini"
+      # Real outbound LLM call via Groq (OpenAI-compatible, reachable from
+      # GitHub-hosted runners — unlike the z-ai sandbox gateway). Key comes
+      # from the repo's GROQ_API_KEY secret. Free-tier TPM is limited, so if
+      # the run gets throttled mid-loop the circuit breaker still degrades
+      # gracefully and the orchestrator's fallback post-mortem path runs
+      # (PDF §11.3) — the test below accepts 'failed' as a terminal state
+      # for exactly that reason, either way the write-back assertion holds.
+      LLM_PROVIDER: "groq"
+      LLM_MODEL: "llama-3.3-70b-versatile"
+      LLM_FALLBACK_MODEL: "llama-3.1-8b-instant"
+      LLM_RATE_LIMIT_MS: "15000"
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
