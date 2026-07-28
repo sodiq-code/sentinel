@@ -700,3 +700,68 @@ Constraints carried forward, Phase 8:
 - Sandbox all actions: GitHub token scoped to one demo repo (issues:write + pull_requests:write only, never merges); Slack token scoped to one channel (chat:write only); DataHub is seeded Prisma/SQLite in demo mode.
 - Apache 2.0 license visible at repo root.
 - Push to sodiq-code/sentinel using the provided GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
+
+---
+Task ID: Vercel-Deploy
+Agent: orchestrator (main)
+Task: Deploy the Sentinel dashboard to Vercel (user request: "let deploy the dashboard to vercel first before continue other phases"). Vercel token vcp_3i4zv8l1z... provided. Vercel CLI v58 installed globally.
+
+Work Log:
+- Investigated portability constraints before deploying:
+  - z-ai-web-dev-sdk reads config from /etc/.z-ai-config with baseUrl=https://internal-api.z.ai/v1 + apiKey + chatId + token — this is an INTERNAL sandbox gateway, NOT reachable from Vercel's servers. A live LLM deploy would fail.
+  - Prisma + SQLite (file:./db/custom.db) is file-based — Vercel serverless functions have an ephemeral, read-only filesystem. A live DB deploy would reset on every cold start.
+  - Conclusion: a full LIVE deploy is not viable given the hard constraint "ONE LLM provider only (zai)" + "no new LLM providers". The right path is a DEMO REPLAY MODE deploy — the Phase 7 dry-run trace replay (PDF §11.3 fallback 1) is purpose-built for exactly this scenario.
+- Implemented Vercel Demo Replay mode (read-only, public, no live LLM/DB):
+  - scripts/gen-demo-fixtures.ts — derives 10 fixtures from examples/dry-run/nyc-taxi-freshness.json (shared incident URN urn:li:incident:sentinel:dryrun:0001; run-result, incident-detail, audit, incidents, connectors-status, llm-status, connectors-test, writeback, guardrail-pending/approve/deny). Regenerable via `bun run demo:fixtures`.
+  - src/lib/demo-mode.ts — isDemoMode() (reads VERCEL_DEMO_MODE env) + demoFixture(name) (static JSON imports, bundled by Vercel's tree-shaking). Server-only.
+  - 13 API routes guarded with a 3-line `if (isDemoMode()) return NextResponse.json(demoFixture(...))` at the top of each handler (signals, incidents, run, incident/[urn], audit/[urn], dry-run, llm/status, connectors/status + test, writeback, guardrail/pending + approve + deny). Guards are INERT in the sandbox (flag unset).
+  - page.tsx — NEXT_PUBLIC_VERCEL_DEMO_MODE build flag: locks the DRY-RUN TRACE toggle ON + shows an emerald "VERCEL PREVIEW · DRY-RUN MODE" banner + auto-populates the dashboard on load by fetching /api/agent/dry-run (judges land on a fully rendered incident console before clicking anything).
+  - .vercelignore — excludes the sandbox SQLite DB (*.db), the websocket mini-service, uploads/, agent-ctx/, .github/, dev.log + the sandbox secrets (.env, .env.local, .env.production) so they're NEVER uploaded to Vercel.
+  - package.json — added `postinstall: "prisma generate || true"` (so @prisma/client is present in the Vercel build even though no db.* calls happen in demo mode) + `demo:fixtures` script + split `build` (clean `next build` for Vercel) from `build:standalone` (sandbox's standalone server).
+  - next.config.ts — made `output: "standalone"` CONDITIONAL on !process.env.VERCEL. The standalone output (for the sandbox's `bun .next/standalone/server.js`) interferes with Vercel's serverless function routing; disabling it on Vercel lets Vercel build standard serverless functions.
+- Vercel CLI deploy:
+  - Authenticated with the token (whoami: sodiq-code; team: mantle-deploy-s-projects, id team_Y8IO1W3uzFPKjBxqlJApDdr5).
+  - Created project `sentinel` under the team scope (personal-account scope is disallowed).
+  - Linked the local dir; set 3 env vars in Production: VERCEL_DEMO_MODE=true, NEXT_PUBLIC_VERCEL_DEMO_MODE=true, DATABASE_URL=file:./db/vercel.db (placeholder, for prisma generate).
+  - First deploy: framework not detected (None) + SSO protection ON (302→login) + 404 on routes (output:standalone interfered). Fixed via: (a) PATCH /v9/projects/sentinel to set ssoProtection:null + framework:nextjs; (b) conditional output + clean build script; (c) redeploy.
+  - Second deploy: SUCCESS. Build detected all 13 API routes as serverless functions (ƒ /api/...). Production URL: https://sentinel-cvi9b511g-mantle-deploy-s-projects.vercel.app. Alias: https://sentinel-ivory-two-79.vercel.app.
+- Verification (curl on the public URL):
+  - / → HTTP 200, 44563 bytes (full page HTML).
+  - /api/llm/status → {"provider":"zai","model":"gpt-4o","circuit":{"isOpen":false,"consecutiveFailures":0},"demoMode":true,...} ✓ (fixture, not live)
+  - /api/agent/signals → 3 signals (fixture) ✓
+  - /api/agent/incidents → 1 incident, resolved, 16 steps (fixture) ✓
+  - /api/agent/dry-run → 16 steps, urn:dryrun:0001, resolved (fixture) ✓
+  - /api/agent/incident/[urn] → 6 toolCalls, 2 actions, 1 writeback, 18 auditEvents (fixture) ✓
+  - /api/agent/audit/[urn] → 18 events, mirroredCount:3, mode:demo (fixture) ✓
+  - POST /api/agent/run → 16 steps, gpt-4o, urn:dryrun:0001 (fixture, NOT live LLM) ✓
+  - /api/connectors/status → demoMode:true, github reachable:true, slack reachable:true (polished fixture) ✓
+- Agent Browser QA on https://sentinel-ivory-two-79.vercel.app:
+  - Page title: "Sentinel — Autonomous Data Incident Response Agent for DataHub" ✓
+  - Zero console errors ✓
+  - Banner "VERCEL PREVIEW · DRY-RUN MODE" present ✓
+  - Header chip "Phase 7 · CI + Hardening ✓" ✓
+  - DRY-RUN TRACE toggle "ON · LOCKED" (disabled in demo mode) ✓
+  - "replay loop (compounding demo)" disabled (correct — needs live runs) ✓
+  - Dashboard auto-populated on load: SENTINEL branding, LLM gpt-4o / Provider zai / Circuit Healthy / Tokens / Audit 16 chips, hero "Watch Sentinel think — then act, governed.", Priya Patel persona card (urn:li:corpUser:priya.patel, paged · 03:14 UTC, FRESHNESS BREACH), 3 signal injector cards (FRESHNESS / SCHEMA / PII), "Replay dry-run trace" button + helper text ✓
+  - Reasoning stream "16 steps" with PLAN step at 03:14 + full reasoning text ✓
+  - Clicked "Replay dry-run trace" (@e15) → re-run produced the trace (tokens 10,751 from the fixture, post-mortem present), zero console errors ✓
+  - Screenshot saved /tmp/vercel-sentinel.png (404KB — full dashboard rendered) ✓
+- Sandbox health (no regression from the demo-mode wiring): localhost:3000 → HTTP 200, localhost:81 → HTTP 200. The VERCEL_DEMO_MODE flag is unset in the sandbox dev server, so all guards are inert + the live demo is unaffected.
+- README: added a "Public Vercel preview (PDF §11.3 fallback 1)" section after "Live sandbox" — documents the public URL, why it's in dry-run mode (z-ai gateway sandbox-internal + SQLite ephemeral on Vercel), what works on the public URL (auto-populate, replay, read APIs), what stays on the sandbox (live agent), + the architecture note (single env flag, 3-line guards, inert in sandbox).
+- Lint: clean (no errors, no warnings).
+- Git: committing + pushing next.
+
+Stage Summary:
+- Vercel deploy COMPLETE. Public URL: https://sentinel-ivory-two-79.vercel.app (Production alias; main URL https://sentinel-cvi9b511g-mantle-deploy-s-projects.vercel.app). No login, no SSO — judges can open it directly.
+- The deployment runs in Demo Replay mode (VERCEL_DEMO_MODE=true): the full Sentinel console auto-populates on load with the pinned Phase 7 dry-run trace (16-step closed loop, Priya persona, lineage, GitHub issue #42, Slack triage, post-mortem write-back, audit log). No live LLM, no DB writes, no connector calls — all 13 API routes return fixtures derived from the dry-run trace. The "Replay dry-run trace" button re-runs the trace through the same UI.
+- Honest constraint documented in the README + on-page banner: the z-ai LLM gateway is sandbox-internal + SQLite can't persist on Vercel's ephemeral filesystem, so a live agent deploy would break. The dry-run replay (PDF §11.3 fallback 1, built in Phase 7) is the purpose-built solution — judges can't tell the difference from a live run. The live agent demo (real LLM, real GitHub issues, real Slack posts, real write-backs) continues to run on the sandbox link, linked from the same README.
+- Sandbox unaffected: the VERCEL_DEMO_MODE flag is unset in the sandbox dev server; all 13 route guards are inert; the live demo, the dry-run toggle, the replay loop, the connector tests all work exactly as before. Dev server + Caddy gateway both 200. Lint clean.
+- Security: the sandbox .env (with live GitHub/Slack/NVIDIA secrets) is in .vercelignore + never uploaded to Vercel. A placeholder DATABASE_URL is set as a Vercel env var purely for prisma generate. No secrets exposed on the public deployment.
+- AWAITING USER APPROVAL before continuing other phases (the user said "let deploy the dashboard to vercel first before continue other phases").
+
+Constraints carried forward (unchanged):
+- Cron: DISABLED — no cron jobs created.
+- LLM provider: ONE only — zai. No new providers added (the Vercel deploy uses the dry-run fixture, not a live LLM).
+- Sandbox all actions: GitHub token scoped to one demo repo; Slack scoped to one channel; DataHub is seeded Prisma/SQLite in demo mode.
+- Apache 2.0 license at repo root.
+- Push to sodiq-code/sentinel using the GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.

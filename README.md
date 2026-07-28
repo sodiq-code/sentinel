@@ -236,6 +236,31 @@ Every action Sentinel takes is real, against sandbox surfaces, and auditable end
 
 ---
 
+## Public Vercel preview (PDF §11.3 fallback 1)
+
+| Surface | URL | What the judge sees |
+|---|---|---|
+| **Public Vercel deployment** | **https://sentinel-ivory-two-79.vercel.app** | The full Sentinel console — reasoning stream, lineage graph, persona, actions, write-backs, audit log, roadmap, skill, RFC — auto-populated on load with the pinned nyc-taxi freshness closed-loop trace. No login. No live LLM. No DB writes. |
+
+**Why the public deploy is in dry-run mode (and why that's the right call):**
+
+- The `z-ai-web-dev-sdk` LLM gateway (`internal-api.z.ai`) is **sandbox-internal** — it is only reachable from inside the z.ai build sandbox. On Vercel's servers the live LLM calls would fail with network errors.
+- SQLite (`file:./db/custom.db`) is a **file-based** database. Vercel serverless functions have an **ephemeral, read-only** filesystem — a file-based DB would reset on every cold start and couldn't persist incidents between requests.
+- Rather than ship a broken live demo, the Vercel deployment runs the **Phase 7 dry-run trace replay** (PDF §11.3 fallback 1) through the **SAME console UI**. A pinned `RunResult` fixture (`examples/dry-run/nyc-taxi-freshness.json`, the full 16-step closed loop) is served by `/api/agent/dry-run` and replayed through every component the live run uses — judges can't tell the difference.
+
+**What works on the public URL:**
+
+- The dashboard **auto-populates on load** — judges land on a fully rendered incident console (reasoning stream, lineage graph, Priya persona, GitHub issue #42, Slack triage, post-mortem write-back, audit log) before clicking anything.
+- The **"Replay dry-run trace"** button re-runs the trace through the same UI.
+- All read APIs (`/api/agent/signals`, `/api/agent/incidents`, `/api/agent/incident/[urn]`, `/api/agent/audit/[urn]`, `/api/llm/status`, `/api/connectors/status`) return fixtures derived from the pinned trace (regenerable via `bun run demo:fixtures`).
+- An emerald **"VERCEL PREVIEW · DRY-RUN MODE"** banner explains the mode; the `DRY-RUN TRACE` toggle is locked `ON · LOCKED`.
+
+**What stays on the sandbox:** the **live agent demo** — real LLM triage, real GitHub issues, real Slack posts, real DataHub write-backs — runs on the sandbox link (the "Live sandbox" section above). Both surfaces are linked from this README so judges can compare the dry-run replay (public) with the live run (sandbox).
+
+> **Architecture note**: the demo/sandbox split is enforced by a single env flag — `VERCEL_DEMO_MODE=true` on Vercel, unset in the sandbox. Every API route has a 3-line guard at the top (`if (isDemoMode()) return NextResponse.json(demoFixture(...))`) that short-circuits before any DB query or LLM call. The guard is inert in the sandbox (the flag is unset), so the live demo is unaffected. See `src/lib/demo-mode.ts` + `examples/demo-replay/`.
+
+---
+
 ## Theatrical demo arc (PDF §11.1, time-boxed to 2:45)
 
 | Time | Shot | On-screen text |

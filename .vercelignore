@@ -14,6 +14,14 @@
 *.db
 *.db-journal
 
+# Sandbox secrets — NEVER upload to Vercel. The Vercel deployment runs in
+# Demo Replay mode (VERCEL_DEMO_MODE=true) with no live LLM/DB/connectors, so
+# none of these are needed. A placeholder DATABASE_URL is set as a Vercel
+# env var purely so `prisma generate` resolves the schema datasource.
+.env
+.env.local
+.env.production
+
 # WebSocket mini-service — runs on its own port in the sandbox; Vercel
 # uses serverless functions, not long-running services.
 mini-services/
