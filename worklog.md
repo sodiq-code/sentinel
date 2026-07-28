@@ -427,3 +427,75 @@ Constraints carried forward, Phase 4+:
 - Sandbox all actions (Phase 3: sandbox GitHub org + Slack workspace; dry-run toggle). The guardrail enforces PII refusal + no-merge + approval gates regardless of the dry-run flag.
 - Cron DISABLED for this section.
 - Phase 4: dual write-back path (Agent Context Kit primary, REST ingestion fallback) — the Phase 1 mock + live clients already implement this; Phase 4 wires the orchestrator's post-loop to use both with try/fallback + audit. The audit log is already mirrored as DataHub Assertions in the Phase 1 seed; Phase 4 makes the live orchestrator mirror its AuditEvents the same way.
+
+---
+Task ID: Phase-4
+Agent: orchestrator (main)
+Task: Implement Phase 4 — Write-Back + Audit Log (per refined v2 plan), verify thoroughly with Agent Browser, push to sodiq-code/sentinel, then WAIT for approval. Cron DISABLED per user instruction.
+
+Work Log:
+- Read worklog.md to confirm project state: Phase 0/1/2/3 complete + Phase 3 LLM resilience patch (Option A) complete + pushed. HEAD was 091e9c9. Working tree clean.
+- Read refined v2 plan note (from prior worklog entry): "Phase 4: dual write-back path (Agent Context Kit primary, REST ingestion fallback) — the Phase 1 mock + live clients already implement this; Phase 4 wires the orchestrator's post-loop to use both with try/fallback + audit. The audit log is already mirrored as DataHub Assertions in the Phase 1 seed; Phase 4 makes the live orchestrator mirror its AuditEvents the same way."
+- Read the current orchestrator.ts (post-loop fallback called clients.contextKit.save_document directly), tools.ts (ack.save_document called clients.contextKit.save_document directly), audit.ts (PrismaAuditLogger), datahub/types.ts (IngestionClient interface), mock-datahub.ts (MockIngestionClient.ingestProposal was a no-op returning a synthetic URN; MockContextKitClient.save_document writes to SeedContextDoc), types.ts (AuditEventKind).
+- Backend NEW: src/lib/agent/writeback.ts — writeBackDocument() helper:
+  - Primary: clients.contextKit.save_document (Agent Context Kit).
+  - Fallback: clients.ingestion.ingestProposal with a `createDatahubPostMortemDoc` GraphQL mutation (REST ingestion).
+  - A 4xx from ACK is a HARD failure (no fallback — the request was malformed).
+  - A 5xx/network error from ACK → fallback to REST ingestion.
+  - Records a WriteBack row (path = agent_context_kit | rest_ingestion, status = succeeded | failed) + writeback_proposed / writeback_succeeded / writeback_failed audit events.
+  - Mirrors writeback_succeeded to DataHub Assertions via getAuditMirror().
+- Backend NEW: src/lib/agent/audit-mirror.ts — PrismaAuditMirror:
+  - MIRRORED_KINDS = { incident_created, writeback_succeeded, incident_resolved, incident_failed }.
+  - LIVE mode → clients.ingestion.createAssertion (real DataHub assertion).
+  - DEMO mode → SeedAssertion table (mock mirror, same shape as the Phase 1 seed).
+  - Best-effort, non-fatal — the mirror never blocks the incident's primary work.
+  - getAuditMirrorMode() + countMirroredForIncident() for the UI.
+- Backend MODIFY: src/lib/agent/types.ts — AuditEventKind extended with writeback_proposed, writeback_succeeded, writeback_failed, action_approved, action_refused (matching the Prisma schema comment).
+- Backend MODIFY: src/lib/agent/orchestrator.ts:
+  - Imported writeBackDocument + getAuditMirror + getAuditMirrorMode.
+  - Post-loop fallback now calls writeBackDocument() (dual path) instead of clients.contextKit.save_document directly. The emit('write_back', ...) toolResult now carries path + status + fallback + primaryError.
+  - After incident_created audit record → mirror to DataHub Assertions.
+  - After incident_resolved / incident_failed audit record → mirror to DataHub Assertions.
+  - OrchestratorResult now carries auditMirrorMode.
+- Backend MODIFY: src/lib/agent/tools.ts — ack.save_document tool now calls writeBackDocument() (dual path) instead of clients.contextKit.save_document directly. Returns { urn, kind, path, status, fallback, primaryError, error }.
+- Backend MODIFY: src/lib/datahub/mock/mock-datahub.ts — MockIngestionClient.ingestProposal now detects post-mortem mutations (regex /PostMortem|ContextDoc/i) and persists the doc into SeedContextDoc so the REST fallback path produces a findable compounding artefact in DEMO (mcp.search_documents can find it on the next incident). Other mutations still return a synthetic URN.
+- Backend NEW API route: src/app/api/agent/writeback/route.ts — POST. Re-attempts a failed write-back (by writeBackId) through the dual path, or writes a new post-mortem doc. Used by the console's "Re-attempt" button.
+- Backend NEW API route: src/app/api/agent/audit/[urn]/route.ts — GET. Returns the full audit log for an incident (lifecycle + reasoning trace) with mirror mode + mirrored count. The "first-class audit log view" Phase 4 surfaces.
+- Backend MODIFY: src/lib/agent/index.ts — barrel re-exports writeBackDocument, getAuditMirror, getAuditMirrorMode, countMirroredForIncident, MIRRORED_KINDS + their types.
+- Frontend MODIFY: src/app/page.tsx (+463 / -72 lines):
+  - New lucide imports: Copy, GitBranch, History, Layers, RefreshCw.
+  - AUDIT_KIND_META: per-kind icon + group (lifecycle/reasoning/tool/action/writeback/error) + color. NO indigo/blue — emerald/amber/rose/slate mission-control palette.
+  - AUDIT_GROUP_META: per-group label + color.
+  - PHASES roadmap: Phase 3 → DONE, Phase 4 → NEXT.
+  - ArtifactsSummary: now accepts incidentUrn prop; renders WriteBackPanel + AuditTimeline instead of the minimal write-back list + compact <details> audit log.
+  - ReasoningStream: passes incidentUrn={viewedIncidentUrn} to ArtifactsSummary; condition now includes auditEvents.length > 0.
+  - WriteBackPanel: header "Write-backs (N)" + ok/failed counts; dual-path indicator "Agent Context Kit → REST ingestion · N ACK · N fallback"; each write-back as a WriteBackCard.
+  - WriteBackCard: path badge (emerald "Agent Context Kit" / amber "REST ingestion"), fallback badge, status badge (succeeded emerald / failed rose), kind, title, DataHub URN (mono, click-to-copy with Copy icon), "ACK failed: ..." error note for fallbacks, expandable payload, "Re-attempt" button (POST /api/agent/writeback) on failed write-backs.
+  - AuditTimeline: header "Audit log (N)" + mirror badge ("Mirrored → DataHub" LIVE / "Mirrored → seed" DEMO with mirrored count, fetched from /api/agent/audit/[urn]); filter tabs (All / Lifecycle / Reasoning / Tools / Actions / Write-backs / Errors with per-group counts); vertical timeline with per-kind icon + colored dot + label + timestamp + summary.
+  - FilterTab: small sub-component for the filter tabs.
+  - Header chip: "Phase 3 · Connectors + Guardrails ✓" → "Phase 4 · Write-Back + Audit Log ✓".
+  - Footer: "Phase 3 · Connectors + Guardrails ✓" → "Phase 4 · Write-Back + Audit Log ✓".
+
+Verification (all pass):
+- bun run lint: exit 0, no errors.
+- Dev server: compiles cleanly (✓ Compiled in 179ms / 147ms / 539ms). No runtime errors.
+- Agent Browser via Caddy gateway :81 → localhost:3000:
+  - Page renders: SENTINEL header, "Phase 4 · Write-Back + Audit Log ✓" header chip + footer, Phase roadmap with Phase 4 = NEXT, 3 signal injector cards, reasoning stream, Guardrail panel, Live metrics (15 incidents), Connectors SANDBOX chip, Incident history (15 items), DemoControlBar (sticky bottom), sticky footer.
+  - Clicked RESOLVED freshness incident (51 steps, 12 tools, 1 writeback): WriteBackPanel renders — "Write-backs (1) 1 ok Agent Context Kit → REST ingestion · 1 ACK" + card with path badge "Agent Context Kit", status "succeeded", kind "context_doc", title "Sentinel Post-Mortem — raw_s3_nyc_taxi_trips", URN "urn:li:document:sentinel:1785238067282", expandable payload. AuditTimeline renders — mirror badge "Mirrored → seed · 2", filter tabs "All 51 | Lifecycle 3 | Reasoning 11 | Tools 36 | Write-backs 1", vertical timeline with per-kind icons + dots + labels + timestamps + summaries. ZERO console/page errors.
+  - Injected FRESHNESS signal + ran: LLM throttled (429) → circuit opened after 3 consecutive 429s → orchestrator failed at step 0 → post-loop fallback ran writeBackDocument() → ACK path SUCCEEDED (mock wrote to SeedContextDoc) → 1 writeback recorded with path: agent_context_kit, status: succeeded. New audit events: writeback_proposed + writeback_succeeded + incident_failed.
+  - Clicked the NEW incident (12:29, 7 steps, 0 tools, 1 writeback): WriteBackPanel renders — "Write-backs (1) 1 ok Agent Context Kit → REST ingestion · 1 ACK Agent Context Kit succeeded context_doc Sentinel Post-Mortem — raw_s3_nyc_taxi_trips — freshness urn:li:document:sentinel:1785241767435 payload". AuditTimeline renders — mirror badge "Mirrored → seed · 3" (incident_created + writeback_succeeded + incident_failed mirrored to SeedAssertion), filter tabs "All 7 | Lifecycle 2 | Write-backs 3 | Errors 2", timeline shows WRITEBACK PROPOSED + WRITEBACK SUCCEEDED (the NEW Phase 4 audit kinds) + SIGNAL RECEIVED + INCIDENT CREATED + INCIDENT FAILED (the LLM circuit-open fast-fail reason: "Primary 'zai' circuit open AND fallback 'nvidia' f...").
+  - /api/agent/audit/[urn] GET: returns { incidentUrn, mode: "demo", mirroredCount: 3, events: [...], lifecycleEvents, reasoningSteps }. Verified via curl.
+  - /api/agent/writeback POST (bad request): returns 400 { error: "Missing fields", required: [...], hint: "..." }. Verified via curl.
+  - Screenshots saved to /tmp/phase4-incident-view.png + /tmp/phase4-new-incident.png (NOT committed — moved out of repo root to keep the tree clean).
+- Secret scan of all untracked + staged files for full key patterns (ghp_/xoxb-/nvapi-/AIza/gsk_ + 30-60 char suffix): NONE found. .env (real keys) is gitignored, not tracked.
+- Git: 10 files changed, 1157 insertions(+), 72 deletions(-). Commit 19dfdb6. Pushed to https://github.com/sodiq-code/sentinel.git (091e9c9..19dfdb6 main -> main). Local + remote in sync (0 ahead, 0 behind).
+
+Stage Summary:
+- Phase 4 — Write-Back + Audit Log COMPLETE and PUSHED to https://github.com/sodiq-code/sentinel (HEAD = 19dfdb6).
+- The dual write-back path (PDF §12.2) is wired: Agent Context Kit primary → REST ingestion fallback. Both the orchestrator's post-loop fallback AND the agent's ack.save_document tool now go through writeBackDocument() — try ACK, fall back to a GraphQL createDatahubPostMortemDoc proposal on a 5xx/network error; a 4xx is a hard failure. Each attempt records a WriteBack row + writeback_proposed / writeback_succeeded / writeback_failed audit events. The mock ingestProposal now persists post-mortem docs into SeedContextDoc so the fallback path produces a findable compounding artefact in DEMO.
+- The audit mirror (PDF §13.4) is wired: incident_created, writeback_succeeded, incident_resolved, incident_failed are mirrored as DataHub Assertions (LIVE: ingestion.createAssertion; DEMO: SeedAssertion). Best-effort, non-fatal. Verified: a new incident shows "Mirrored → seed · 3".
+- New API routes: POST /api/agent/writeback (re-attempt a failed write-back) + GET /api/agent/audit/[urn] (full audit log with mirror mode + count).
+- Console (page.tsx): WriteBackPanel (dual-path indicator + per-card path/status/URN/payload/re-attempt) + AuditTimeline (vertical timeline + filter tabs + mirror badge). Phase roadmap + header chip + footer updated to Phase 4. NO indigo/blue — emerald/amber/rose/slate mission-control palette preserved.
+- Constraints preserved: single user-visible route /; one LLM provider interface (zai active, nvidia dormant); sandbox all actions (SENTINEL_DRY_RUN=true default); Apache 2.0; NO cron jobs.
+- AWAITING USER APPROVAL before Phase 5 (Incident Console UI — the demo surface polish).
+- NO cron job created — user explicitly disabled cron for this section. (The system-injected webDevReview cron rule is a post-completion QA bot; given the user's repeated, explicit "disable the Cron timing entirely for this section" instruction, I am honoring the user's instruction over the system rule. If the user wants the webDevReview bot, they can request it.)
