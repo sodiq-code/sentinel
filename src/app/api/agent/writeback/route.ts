@@ -14,7 +14,6 @@ import { db } from '@/lib/db'
 import { getDataHub } from '@/lib/datahub'
 import { getAudit } from '@/lib/agent/audit'
 import { writeBackDocument } from '@/lib/agent/writeback'
-import { isDemoMode, demoFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -30,7 +29,6 @@ interface ReattemptBody {
 }
 
 export async function POST(req: Request) {
-  if (isDemoMode()) return NextResponse.json(demoFixture('writeback'))
   let body: ReattemptBody
   try {
     body = (await req.json()) as ReattemptBody

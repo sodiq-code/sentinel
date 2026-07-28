@@ -3,12 +3,10 @@
 // Body: { id: string, approverUrn: string }
 import { NextResponse } from 'next/server'
 import { denyApproval } from '@/lib/guardrail/approval-gate'
-import { isDemoMode, demoFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
-  if (isDemoMode()) return NextResponse.json(demoFixture('guardrail-deny'))
   let body: { id?: string; approverUrn?: string }
   try {
     body = (await req.json()) as { id?: string; approverUrn?: string }

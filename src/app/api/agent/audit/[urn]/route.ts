@@ -16,7 +16,6 @@
 import { NextResponse } from 'next/server'
 import { getReasoningTrace, getLifecycleEvents } from '@/lib/agent/audit'
 import { countMirroredForIncident } from '@/lib/agent/audit-mirror'
-import { isDemoMode, demoFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,7 +23,6 @@ export async function GET(
   _req: Request,
   { params }: { params: Promise<{ urn: string }> },
 ) {
-  if (isDemoMode()) return NextResponse.json(demoFixture('audit'))
   const { urn } = await params
   if (!urn) {
     return NextResponse.json({ error: 'Missing incident URN' }, { status: 400 })

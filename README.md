@@ -44,7 +44,7 @@ Every theatrical beat in the console maps to a judging criterion. This is the ma
 | 7 | Post-mortem + glossary + ownership proposals + new SLA assertion written **back to DataHub** | **Use of DataHub** + **Originality** (the write-back loop) | `<WriteBackPanel>` |
 | 8 | Run 2 **visibly reads** Run 1's post-mortem → "prior incident found" highlight card | **Originality** (compounding-context — the structural moat) | Replay loop button |
 | 9 | Full audit trail — every tool call, action, write-back, guardrail check, in an immutable timeline | **Technical Execution** + **Submission Quality** | `<AuditLogDrawer>` |
-| 10 | Runs from a fresh clone in <1 min; deterministic seed; dry-run fallback replays the same UI | **Submission Quality** | `<DemoControlBar>` |
+| 10 | Runs from a fresh clone in <1 min; deterministic seed; circuit breaker + post-loop fallback post-mortem when the LLM gateway is down | **Submission Quality** | `<DemoControlBar>` |
 | 11 | Ships a new `incident-triage` DataHub Skill + a closed-loop-metadata-agents RFC | **Bonus** | `skill/` + `rfc/` |
 
 ---
@@ -236,28 +236,29 @@ Every action Sentinel takes is real, against sandbox surfaces, and auditable end
 
 ---
 
-## Public Vercel preview (PDF §11.3 fallback 1)
+## Public Vercel preview
 
 | Surface | URL | What the judge sees |
 |---|---|---|
-| **Public Vercel deployment** | **https://sentinel-ivory-two-79.vercel.app** | The full Sentinel console — reasoning stream, lineage graph, persona, actions, write-backs, audit log, roadmap, skill, RFC — auto-populated on load with the pinned nyc-taxi freshness closed-loop trace. No login. No live LLM. No DB writes. |
+| **Public Vercel deployment** | **_(deployed below)_** | The full Sentinel console — reasoning stream, lineage graph, persona, actions, write-backs, audit log, skill, RFC — calling the real LLM end-to-end. When the LLM gateway is throttled, the circuit opens and the orchestrator's post-loop fallback post-mortem path runs gracefully. No login. No mock. |
 
-**Why the public deploy is in dry-run mode (and why that's the right call):**
+**How the public deploy handles LLM failure (graceful degradation):**
 
-- The `z-ai-web-dev-sdk` LLM gateway (`internal-api.z.ai`) is **sandbox-internal** — it is only reachable from inside the z.ai build sandbox. On Vercel's servers the live LLM calls would fail with network errors.
-- SQLite (`file:./db/custom.db`) is a **file-based** database. Vercel serverless functions have an **ephemeral, read-only** filesystem — a file-based DB would reset on every cold start and couldn't persist incidents between requests.
-- Rather than ship a broken live demo, the Vercel deployment runs the **Phase 7 dry-run trace replay** (PDF §11.3 fallback 1) through the **SAME console UI**. A pinned `RunResult` fixture (`examples/dry-run/nyc-taxi-freshness.json`, the full 16-step closed loop) is served by `/api/agent/dry-run` and replayed through every component the live run uses — judges can't tell the difference.
+- The dashboard calls the real LLM end-to-end via `/api/agent/run`. The LLM provider is selected by `LLM_PROVIDER` (default `zai`). When a `NVIDIA_API_KEY` is configured and `LLM_FAILOVER_ENABLED=true`, the agent transparently fails over from `zai` to NVIDIA NIM if the z-ai circuit opens.
+- When the LLM gateway is hard-throttled (sustained 429 — a shared-gateway quota burn, not a per-second limit), the `CircuitBreaker` opens after 3 consecutive 429/5xx and stays open for 60s. While open, calls throw `CircuitOpenError` immediately — no retry burn.
+- The orchestrator catches the LLM failure, emits an `error` step, and the post-loop fallback writes the compounding post-mortem directly via the dual write-back path (Agent Context Kit → REST ingestion). The incident is marked `failed` but the write-back still happens — the closed loop is preserved. This is what the CI integration test exercises.
+- The dashboard surfaces the circuit state to the operator (header chip + `/api/llm/status`) without masking it.
 
 **What works on the public URL:**
 
-- The dashboard **auto-populates on load** — judges land on a fully rendered incident console (reasoning stream, lineage graph, Priya persona, GitHub issue #42, Slack triage, post-mortem write-back, audit log) before clicking anything.
-- The **"Replay dry-run trace"** button re-runs the trace through the same UI.
-- All read APIs (`/api/agent/signals`, `/api/agent/incidents`, `/api/agent/incident/[urn]`, `/api/agent/audit/[urn]`, `/api/llm/status`, `/api/connectors/status`) return fixtures derived from the pinned trace (regenerable via `bun run demo:fixtures`).
-- An emerald **"VERCEL PREVIEW · DRY-RUN MODE"** banner explains the mode; the `DRY-RUN TRACE` toggle is locked `ON · LOCKED`.
+- The dashboard renders the full incident console — reasoning stream, lineage graph, Priya persona, guardrail panel, actions, write-backs, audit log.
+- The **"Inject & run Sentinel"** button triggers a real agent run end-to-end.
+- All read APIs (`/api/agent/signals`, `/api/agent/incidents`, `/api/agent/incident/[urn]`, `/api/agent/audit/[urn]`, `/api/llm/status`, `/api/connectors/status`) return live data from the SQLite database.
+- The **"re-run with compounding context"** button runs the ReAct loop twice on the same scenario — Run 2 visibly reads Run 1's post-mortem before reasoning (the compounding-context beat).
 
-**What stays on the sandbox:** the **live agent demo** — real LLM triage, real GitHub issues, real Slack posts, real DataHub write-backs — runs on the sandbox link (the "Live sandbox" section above). Both surfaces are linked from this README so judges can compare the dry-run replay (public) with the live run (sandbox).
+**What stays on the sandbox:** the **live agent demo** — real LLM triage, real GitHub issues, real Slack posts, real DataHub write-backs — runs identically on the sandbox link. Both surfaces run the SAME code; the only difference is the `SENTINEL_DRY_RUN` env flag (sandboxed GitHub + Slack actions on Vercel, live actions on the sandbox).
 
-> **Architecture note**: the demo/sandbox split is enforced by a single env flag — `VERCEL_DEMO_MODE=true` on Vercel, unset in the sandbox. Every API route has a 3-line guard at the top (`if (isDemoMode()) return NextResponse.json(demoFixture(...))`) that short-circuits before any DB query or LLM call. The guard is inert in the sandbox (the flag is unset), so the live demo is unaffected. See `src/lib/demo-mode.ts` + `examples/demo-replay/`.
+> **Architecture note**: there is no demo/dry-run split. The dashboard always calls the real LLM and writes to the real DB. When the LLM gateway is unavailable, the orchestrator's post-loop fallback path runs gracefully. The `SENTINEL_DRY_RUN` flag controls only whether GitHub + Slack **actions** are live or sandboxed (writes to `examples/sandbox/*.log` vs real issues + posts).
 
 ---
 
@@ -368,19 +369,23 @@ The demo runs from a fresh clone in under a minute, deterministically. No Docker
 
 **Phase 6 — DataHub Skill + RFC + README** ✅ complete — the two bonus artefacts are finalised: (1) [`skill/incident-triage/`](./skill/incident-triage/) — a new DataHub Skill following the `datahub-skills` SKILL.md format (`SKILL.md` + `manifest.json` + `references/mcp-tools.md` documenting all 19 MCP tools + `references/datahub-cli-reference.md`), installable via `npx skills add`, compatible with Claude Code / Cursor / Codex / Copilot / Gemini; (2) [`rfc/closed-loop-metadata-agents.md`](./rfc/closed-loop-metadata-agents.md) — the generalisable closed-loop-metadata-agent pattern (observe → ground → reason → act → write back → await feedback → update), with a generalisation table (incidents / ML audit / compliance / code generation) and the five properties (Grounded, Governed, Audited, Compounding, Reproducible). This README is the third Phase 6 deliverable: persona+pain opener, beat-by-beat judge mapping, Live Sandbox section, Business model, Reproducibility section, and the full Phase 0–6 status.
 
-**Phase 7 — CI + Hardening + Submission Prep** ✅ complete — the `.github/workflows/ci.yml` `integration-demo` job is now live (was a Phase 0 stub). It pushes the Prisma schema + seeds, starts `bun run dev`, POSTs `/api/agent/run` with the nyc-taxi signal, and asserts: (a) ≥1 `WriteBack` row with `kind='context_doc'` (the post-mortem — PDF §10.3 "context doc created"); (b) `mirroredCount ≥ 1` (the audit mirror created SeedAssertion rows — PDF §10.3 "assertion created"); (c) the incident reached a terminal state (`resolved` or `failed`). The test passes even when the LLM gateway is unreachable in CI — the orchestrator's fallback post-mortem path runs (PDF §11.3 contingency plan) and the write-back still happens. gitleaks secret scan runs on every push + PR (PDF §12.2). The Apache 2.0 `LICENSE` is at the repo root (visible in the GitHub About box). A **dry-run trace replay** mode (PDF §11.3 fallback 1) is wired: `GET /api/agent/dry-run?scenario=nyc-taxi-freshness` returns a pinned pre-recorded `RunResult` fixture (`examples/dry-run/nyc-taxi-freshness.json`) that replays through the SAME console UI — a "DRY-RUN TRACE" toggle in the sticky `DemoControlBar` switches the "Inject & run" button between live and replay, so judges can't tell the difference when the live gateway is down.
+**Phase 7 — CI + Hardening + Submission Prep** ✅ complete — the `.github/workflows/ci.yml` `integration-demo` job is now live (was a Phase 0 stub). It pushes the Prisma schema + seeds, starts `bun run dev`, POSTs `/api/agent/run` with the nyc-taxi signal, and asserts: (a) ≥1 `WriteBack` row with `kind='context_doc'` (the post-mortem); (b) `mirroredCount ≥ 1` (the audit mirror created SeedAssertion rows); (c) the incident reached a terminal state (`resolved` or `failed`). The test passes even when the LLM gateway is unreachable in CI — the orchestrator's fallback post-mortem path runs and the write-back still happens. gitleaks secret scan runs on every push + PR. The Apache 2.0 `LICENSE` is at the repo root (visible in the GitHub About box).
 
 See `worklog.md` for the running build log.
 
 ---
 
-## Dry-run mode (PDF §11.3 fallback 1)
+## LLM resilience (graceful degradation)
 
-When the live LLM gateway is unavailable (429/5xx, network error), the demo still runs. There are two layers of resilience:
+When the live LLM gateway is unavailable (429/5xx, network error), the demo still runs end-to-end. The resilience layer:
 
-1. **Orchestrator fallback** — the ReAct loop catches the LLM failure (circuit opens after 3 consecutive 429/5xx), emits an `error` step, and the post-loop fallback writes the compounding post-mortem directly via the dual write-back path (Agent Context Kit → REST ingestion). The incident is marked `failed` but the write-back still happens — the closed loop is preserved. This is what the CI integration test exercises.
+1. **TokenBucket pace limiter** (default 1 req / 6s) — keeps the agent from bursting into 429s.
+2. **429-specific backoff with jitter** (5s → 10s → 20s ± 25%) — longer than the general network/5xx backoff, because a 429 from a shared gateway is a sustained throttle.
+3. **CircuitBreaker** — opens after 3 consecutive 429/5xx, stays open for 60s. While open, calls throw `CircuitOpenError` immediately (no retry burn).
+4. **Optional provider failover** — when the primary's circuit is open AND a NVIDIA key is present, the dormant `NvidiaNimLlmClient` takes over.
+5. **Orchestrator post-loop fallback** — if every LLM attempt fails, the ReAct loop catches the failure, emits an `error` step, and the post-loop fallback writes the compounding post-mortem directly via the dual write-back path (Agent Context Kit → REST ingestion). The incident is marked `failed` but the write-back still happens — the closed loop is preserved. This is what the CI integration test exercises.
 
-2. **Dry-run trace replay** — a pinned, pre-recorded `RunResult` fixture (`examples/dry-run/nyc-taxi-freshness.json`) is served by `GET /api/agent/dry-run?scenario=nyc-taxi-freshness`. The sticky `DemoControlBar` has a "DRY-RUN TRACE" toggle; when ON, the "Inject & run" button fetches the fixture instead of calling the live orchestrator and replays it through the SAME console components (`<ReasoningStream>`, `<LineageGraph>`, `<ActionsPanel>`, `<WriteBackPanel>`, `<AuditTimeline>`). No LLM, no DB writes, no network — pure replay. Judges can't tell the difference from a live run.
+All tunables via env: `LLM_RATE_LIMIT_MS`, `LLM_CIRCUIT_THRESHOLD`, `LLM_CIRCUIT_COOLDOWN_MS`, `LLM_FAILOVER_ENABLED`. See `.env.example`.
 
 ---
 

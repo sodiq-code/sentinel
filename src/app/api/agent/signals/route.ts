@@ -2,12 +2,10 @@
 
 import { NextResponse } from 'next/server'
 import { listSeedSignals } from '@/lib/agent'
-import { isDemoMode, demoFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  if (isDemoMode()) return NextResponse.json(demoFixture('signals'))
   const signals = await listSeedSignals()
   return NextResponse.json({
     signals: signals.map((s) => ({

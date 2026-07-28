@@ -1,25 +1,25 @@
 // =============================================================================
-// Sentinel — LLM client (Phase 3 hardened)
+// Sentinel — LLM client (resilience-hardened)
 //
-// PDF §10.2: one LLM provider, temperature 0, deterministic.
-// PDF §9.5.4: retries with exponential backoff on any failure.
+// Design: one LLM provider, temperature 0, deterministic. Retries with
+// exponential backoff on any failure.
 //
-// Phase 3 resilience hardening (this file):
-//   • TokenBucket pace limiter (default 1 req / 6s per provider) — prevents
-//     the agent from bursting into 429s and contributing to the shared sandbox
-//     gateway throttle.
+// Resilience hardening (this file):
+//   • TokenBucket pace limiter (default 1 req / 6s per provider) — keeps
+//     the agent from bursting into 429s and contributing to a shared-gateway
+//     throttle.
 //   • 429-specific backoff with jitter (5s → 10s → 20s ± 25%) — longer than
-//     the general network/5xx backoff, because a 429 from the shared gateway
-//     is a sustained throttle, not a per-account quota.
+//     the general network/5xx backoff, because a 429 from a shared gateway is
+//     a sustained throttle, not a per-account quota.
 //   • CircuitBreaker — opens after 3 consecutive 429/5xx, stays open for 60s.
 //     While open, calls throw CircuitOpenError immediately (no retry burn).
 //   • Optional provider failover — when the primary's circuit is open AND a
 //     NVIDIA key is present, the dormant NvidiaNimLlmClient takes over.
-//     In this sandbox the NVIDIA key is dead (401 on inference), so the
-//     failover surfaces a clear CircuitOpenError — the orchestrator's existing
-//     post-loop fallback post-mortem path runs gracefully (PDF §9.4.2 steps
-//     12-14). On a real deployment with a fresh NVIDIA key, the agent
-//     transparently switches providers and continues.
+//     In this sandbox the NVIDIA key is dead (403 on inference), so the
+//     failover surfaces a clear CircuitOpenError and the orchestrator's
+//     post-loop fallback post-mortem path runs gracefully. On a real
+//     deployment with a fresh NVIDIA key, the agent transparently switches
+//     providers and continues.
 //
 // All tunables via env: LLM_RATE_LIMIT_MS, LLM_CIRCUIT_THRESHOLD,
 // LLM_CIRCUIT_COOLDOWN_MS, LLM_FAILOVER_ENABLED. See .env.example.
@@ -27,11 +27,17 @@
 // Provider selection (LLM_PROVIDER env, default 'zai'):
 //
 //   zai     — z-ai-web-dev-sdk gateway (DEFAULT). Works inside the build
-//             sandbox where direct outbound to integrate.api.nvidia.com
-//             is blocked (HTTP 401 on inference). Verified to support
-//             OpenAI-style tool-calling + multi-turn role:'tool' messages +
-//             parallel tool_calls. This is the provider the live demo
-//             runs on.
+//             sandbox where direct outbound to integrate.api.nvidia.com is
+//             blocked (HTTP 401 on inference). Supports OpenAI-style
+//             tool-calling + multi-turn role:'tool' messages + parallel
+//             tool_calls. This is the provider the live demo runs on.
+//
+//             When the z-ai gateway is hard-throttled (sustained 429 — a
+//             shared-gateway quota burn, not a per-second limit), the circuit
+//             opens and the orchestrator's post-loop fallback post-mortem
+//             path runs gracefully. The dashboard surfaces the circuit state
+//             to the operator (header chip + /api/llm/status) without
+//             masking it.
 //
 //   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint
 //             (https://integrate.api.nvidia.com/v1). PRIMARY model

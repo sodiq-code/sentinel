@@ -146,7 +146,7 @@ interface ConnectorStatus {
   };
 }
 
-// Phase 3 resilience — LLM circuit + failover state from /api/llm/status.
+// Resilience — LLM circuit + failover state from /api/llm/status.
 interface LlmResilienceStatus {
   provider: "zai" | "nvidia";
   model: string;
@@ -172,7 +172,7 @@ interface PendingApproval {
   createdAt: string;
 }
 
-// Phase 5 — LineageGraph (SVG lineage with real-time traversal highlight)
+// LineageGraph — SVG lineage with real-time traversal highlight
 interface LineageGraphNode {
   urn: string;
   name: string;
@@ -193,7 +193,7 @@ interface LineageGraphResponse {
   edges: LineageGraphEdge[];
 }
 
-// Phase 5 — IncidentHeader (Priya persona + failing asset)
+// IncidentHeader — on-call persona + failing asset
 interface AssetEntity {
   urn: string;
   name: string;
@@ -213,20 +213,8 @@ interface AssetResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Static: phase roadmap
+// Static: step metadata (icons + colors)
 // ---------------------------------------------------------------------------
-
-const PHASES = [
-  { id: 0, name: "Foundation & Repo Hygiene", status: "DONE" as const },
-  { id: 1, name: "DataHub Mock + Seed", status: "DONE" as const },
-  { id: 2, name: "Orchestrator + ReAct Loop", status: "DONE" as const },
-  { id: 3, name: "Action Connectors + Guardrails", status: "DONE" as const },
-  { id: 4, name: "Write-Back + Audit Log", status: "DONE" as const },
-  { id: 5, name: "Incident Console UI (demo surface)", status: "DONE" as const },
-  { id: 6, name: "DataHub Skill + RFC + README", status: "DONE" as const },
-  { id: 7, name: "CI+ Hardening + Submission", status: "DONE" as const },
-  { id: 8, name: "Self-Verification (Agent Browser)", status: "NEXT" as const },
-];
 
 const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; label: string; bg: string; border: string }> = {
   plan: { icon: BrainCircuit, color: "text-amber-300", label: "PLAN", bg: "bg-amber-500/10", border: "border-amber-500/30" },
@@ -239,7 +227,7 @@ const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; la
 };
 
 // ---------------------------------------------------------------------------
-// Phase 4: audit-event metadata — the full audit log (lifecycle + reasoning
+// Audit-event metadata — the full audit log (lifecycle + reasoning
 // trace) is rendered as a vertical timeline. Each kind gets an icon, a
 // group (for the filter tabs), and a color. NO indigo/blue — mission-control
 // palette only (emerald/amber/rose/slate).
@@ -260,12 +248,12 @@ const AUDIT_KIND_META: Record<string, { icon: typeof Activity; group: AuditGroup
   // tool — slate (the DataHub MCP / ACK read+write calls)
   tool_call: { icon: Terminal, group: "tool", label: "TOOL CALL", color: "text-slate-300", dot: "bg-slate-400" },
   tool_result: { icon: Database, group: "tool", label: "TOOL RESULT", color: "text-slate-300", dot: "bg-slate-400" },
-  // action — amber/orange (the Phase 3 GitHub + Slack connectors)
+  // action — amber/orange (the GitHub + Slack connectors)
   action_proposed: { icon: Send, group: "action", label: "ACTION PROPOSED", color: "text-amber-300", dot: "bg-amber-400" },
   action_approved: { icon: ShieldCheck, group: "action", label: "ACTION APPROVED", color: "text-emerald-300", dot: "bg-emerald-400" },
   action_refused: { icon: Lock, group: "action", label: "ACTION REFUSED", color: "text-rose-300", dot: "bg-rose-400" },
   action_executed: { icon: Send, group: "action", label: "ACTION EXECUTED", color: "text-amber-300", dot: "bg-amber-400" },
-  // writeback — rose (the Phase 4 dual-path compounding artefact)
+  // writeback — rose (the dual-path compounding artefact)
   writeback_proposed: { icon: GitBranch, group: "writeback", label: "WRITEBACK PROPOSED", color: "text-rose-300", dot: "bg-rose-400" },
   writeback_succeeded: { icon: FileText, group: "writeback", label: "WRITEBACK SUCCEEDED", color: "text-rose-300", dot: "bg-rose-400" },
   writeback_failed: { icon: AlertTriangle, group: "writeback", label: "WRITEBACK FAILED", color: "text-rose-400", dot: "bg-rose-500" },
@@ -285,7 +273,7 @@ const AUDIT_GROUP_META: Record<AuditGroup, { label: string; color: string }> = {
 };
 
 // ---------------------------------------------------------------------------
-// QueryClient (inline, like Phase 1)
+// QueryClient (inline)
 // ---------------------------------------------------------------------------
 
 const queryClient = new QueryClient({
@@ -307,28 +295,17 @@ export default function Page() {
 function Console() {
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
-  // Vercel Demo Replay mode (build-time flag). When true, the dashboard
-  // auto-loads a pinned closed-loop trace so judges land on a fully
-  // populated incident console without the live LLM gateway (which is
-  // sandbox-internal to z.ai). See src/lib/demo-mode.ts + examples/demo-replay/.
-  const DEMO_MODE = process.env.NEXT_PUBLIC_VERCEL_DEMO_MODE === 'true';
   const [revealedCount, setRevealedCount] = useState(0);
   const [runError, setRunError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [viewedIncident, setViewedIncident] = useState<HydratedIncident | null>(null);
-  // Phase 5 — audit log drawer (collapsible side drawer streaming every event).
+  // Audit log drawer (collapsible side drawer streaming every event).
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
-  // Phase 5 — compounding replay loop (PDF §12.2). Runs the loop twice on the
-  // same scenario; Run 2 visibly reads Run 1's post-mortem.
+  // Compounding-context loop — runs the agent twice on the same scenario;
+  // Run 2 visibly reads Run 1's post-mortem (the structural learning beat).
   const [replayRun, setReplayRun] = useState<0 | 1 | 2>(0); // 0 = idle, 1 = run 1, 2 = run 2
   const [replayBusy, setReplayBusy] = useState(false);
   const [priorPostMortem, setPriorPostMortem] = useState<{ title: string; urn: string } | null>(null);
-  // Phase 7 — PDF §11.3 fallback 1: dry-run trace replay. When ON, the
-  // "Inject & run" button fetches a pre-recorded tool-call trace from
-  // /api/agent/dry-run and replays it through the SAME console UI — judges
-  // can't tell the difference from a live run. Used when the live LLM
-  // gateway is down (429/5xx). No DB writes, no LLM calls, no network.
-  const [traceReplayMode, setTraceReplayMode] = useState(DEMO_MODE);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
 
@@ -354,7 +331,7 @@ function Console() {
     staleTime: 10_000,
   });
 
-  // Phase 3: connector status (live/sandbox + reachability chips).
+  // Connector status — live/sandbox + reachability chips.
   const connectors = useQuery<ConnectorStatus>({
     queryKey: ["connectors-status"],
     queryFn: async () => {
@@ -366,7 +343,7 @@ function Console() {
     refetchInterval: 30_000,
   });
 
-  // Phase 3 resilience — poll the LLM circuit state. Refetch every 5s while
+  // Resilience — poll the LLM circuit state. Refetch every 5s while
   // a circuit is open (so the operator sees the cooldown tick down); every
   // 20s when healthy.
   const llmStatus = useQuery<LlmResilienceStatus>({
@@ -383,7 +360,7 @@ function Console() {
     },
   });
 
-  // Phase 5 — fetch the selected signal's asset entity (owners, glossary,
+  // Fetch the selected signal's asset entity (owners, glossary,
   // governance tags, schema) for the IncidentHeader persona card.
   const selectedSignalForAsset = useMemo(
     () => signals.data?.find((s) => s.id === selectedSignalId) ?? null,
@@ -415,43 +392,8 @@ function Console() {
     return () => clearInterval(t);
   }, [runStartRef.current === 0]);
 
-  // Vercel Demo Mode: auto-populate the dashboard on load with the pinned
-  // dry-run trace so judges land on a fully populated incident console —
-  // reasoning stream, lineage graph, persona, actions, write-backs all
-  // visible before the judge clicks anything (PDF §11.3 fallback 1).
-  useEffect(() => {
-    if (!DEMO_MODE || result) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch('/api/agent/dry-run?scenario=nyc-taxi-freshness');
-        const j = await r.json();
-        if (cancelled || !r.ok) return;
-        setResult(j as RunResult);
-        setRevealedCount((j as RunResult).steps.length);
-      } catch {
-        // silent — the run button still works as a manual replay
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [DEMO_MODE, result]);
-
   const run = useMutation({
     mutationFn: async (signalId: string) => {
-      // Phase 7 — PDF §11.3 fallback 1: when traceReplayMode is ON, replay a
-      // pre-recorded trace through the same UI instead of calling the live
-      // orchestrator. The fixture is a static JSON file; no LLM, no DB.
-      if (traceReplayMode) {
-        const scenario = signalId.includes("pii")
-          ? "nyc-taxi-freshness"
-          : signalId.includes("showcase")
-            ? "nyc-taxi-freshness"
-            : "nyc-taxi-freshness"; // only fixture shipped in Phase 7
-        const r = await fetch(`/api/agent/dry-run?scenario=${encodeURIComponent(scenario)}`);
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error ?? `Dry-run failed (HTTP ${r.status})`);
-        return j as RunResult;
-      }
       const r = await fetch("/api/agent/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -516,15 +458,15 @@ function Console() {
     }
   }
 
-  // Phase 5 — compounding replay loop (PDF §12.2). Runs the same scenario
-  // twice; Run 2 should visibly read Run 1's post-mortem via
-  // mcp.search_documents. Between runs we surface a "prior incident found"
-  // highlight card. The demo MUST run on the nyc-taxi-freshness scenario so
-  // the post-mortem is findable in Run 2's reasoning trace.
+  // Compounding-context loop: runs the agent twice on the same scenario.
+  // Run 2 should visibly read Run 1's post-mortem via mcp.search_documents.
+  // Between runs we surface a "prior incident found" highlight card.
+  // Must run on the nyc-taxi-freshness scenario so the post-mortem is
+  // findable in Run 2's reasoning trace.
   async function runReplayLoop() {
     if (replayBusy || !selectedSignalId) return;
-    // Force the nyc-taxi scenario for the compounding demo (the only one
-    // with a prior-post-mortem read beat that's visually obvious).
+    // Force the nyc-taxi scenario for the compounding-context beat (the
+    // only one with a prior-post-mortem read that's visually obvious).
     const nycSignal = signals.data?.find((s) => s.scenarioId === "nyc-taxi-freshness");
     const sigId = nycSignal?.id ?? selectedSignalId;
     if (nycSignal) setSelectedSignalId(nycSignal.id);
@@ -586,7 +528,7 @@ function Console() {
     }
   }
 
-  // Phase 5 — detect whether the visible trace read a prior Sentinel
+  // Compounding-context beat — detect whether the visible trace read a
   // post-mortem (Run 2 of the replay loop, or any run that calls
   // mcp.search_documents and gets back a sentinelPostMortem doc).
   const priorPostMortemFromTrace = useMemo(() => {
@@ -621,7 +563,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 7 · CI + Hardening ✓
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Operational
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
@@ -642,21 +584,6 @@ function Console() {
         </div>
       </header>
 
-      {/* Vercel Demo Mode banner — PDF §11.3 fallback 1. The public Vercel
-          deployment replays a pinned closed-loop trace through the SAME
-          console UI because the z-ai LLM gateway is sandbox-internal + SQLite
-          cannot persist on Vercel's ephemeral filesystem. The live agent
-          demo (with the real LLM) runs on the sandbox link. */}
-      {DEMO_MODE && (
-        <div className="border-b border-emerald-500/30 bg-emerald-500/10">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex items-center gap-2 text-xs">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-            <span className="font-mono text-emerald-300 font-semibold whitespace-nowrap">VERCEL PREVIEW · DRY-RUN MODE</span>
-            <span className="text-emerald-200/70 hidden sm:inline truncate">— this public deployment replays a pinned closed-loop trace (no live LLM, no DB writes). The live agent demo runs on the sandbox link. PDF §11.3 fallback 1.</span>
-          </div>
-        </div>
-      )}
-
       <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-28">
         {/* Hero */}
         <section className="mb-6">
@@ -665,15 +592,15 @@ function Console() {
           </h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
             Inject a DataHub assertion-failure signal. Sentinel&apos;s ReAct loop investigates — fetches the asset,
-            traverses lineage, reads prior post-mortems — then opens a <strong className="text-slate-200">real GitHub issue</strong> in
-            the sandbox repo and posts a <strong className="text-slate-200">real Slack triage card</strong>. A
+            traverses lineage, reads prior post-mortems — then opens a <strong className="text-slate-200">GitHub issue</strong> in
+            the sandbox repo and posts a <strong className="text-slate-200">Slack triage card</strong>. A
             code-level <strong className="text-amber-300">guardrail</strong> refuses writes to PII-tagged assets
-            and surfaces an approval gate for ownership/glossary proposals. Every action is sandboxed, audited,
+            and surfaces an approval gate for ownership and glossary proposals. Every action is sandboxed, audited,
             and rendered live below.
           </p>
         </section>
 
-        {/* Phase 5 — IncidentHeader: Priya persona + failing asset */}
+        {/* Incident header — on-call persona + failing asset */}
         <IncidentHeader
           signal={selectedSignal ?? null}
           asset={asset.data?.entity ?? null}
@@ -681,7 +608,8 @@ function Console() {
           elapsed={elapsed}
         />
 
-        {/* Phase 5 — compounding replay loop banner */}
+        {/* Compounding-context banner — surfaces when the agent re-runs the
+            same scenario and reads its own prior post-mortem. */}
         {(replayRun !== 0 || priorPostMortem || priorPostMortemFromTrace) && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
@@ -694,13 +622,13 @@ function Console() {
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-amber-200">
-                  Compounding-context demo — the structural moat
+                  Compounding context
                 </div>
                 <div className="text-xs text-amber-200/80 mt-0.5">
-                  {replayRun === 1 && "Run 1 of 2 · investigating from scratch → will write a post-mortem to DataHub."}
-                  {replayRun === 2 && "Run 2 of 2 · investigating the same failure → Sentinel reads Run 1's post-mortem → shorter reasoning trace → faster resolution."}
+                  {replayRun === 1 && "Run 1 of 2 · investigating from scratch — will write a post-mortem to DataHub."}
+                  {replayRun === 2 && "Run 2 of 2 · investigating the same failure — Sentinel reads Run 1's post-mortem, produces a shorter reasoning trace, resolves faster."}
                   {replayRun === 0 && (priorPostMortem || priorPostMortemFromTrace)
-                    ? "Replay complete — Run 2 read Run 1's post-mortem. This is the \"necessary, not just useful\" property."
+                    ? "Re-run complete — Run 2 read Run 1's post-mortem before reasoning. The agent learns from its own history."
                     : ""}
                 </div>
                 {(priorPostMortem || priorPostMortemFromTrace) && (
@@ -728,7 +656,6 @@ function Console() {
               onRun={() => selectedSignalId && run.mutate(selectedSignalId)}
               running={running}
               elapsed={elapsed}
-              traceReplayMode={traceReplayMode}
             />
 
             {runError && (
@@ -741,7 +668,7 @@ function Console() {
               </div>
             )}
 
-            {/* Phase 5 — LineageGraph: SVG lineage with real-time traversal highlight */}
+            {/* Lineage graph — SVG lineage with real-time traversal highlight */}
             <LineageGraph
               rootUrn={selectedSignal?.assetUrn ?? null}
               steps={displaySteps}
@@ -760,11 +687,11 @@ function Console() {
               auditEvents={viewedIncident?.auditEvents ?? []}
             />
 
-            {/* Phase 3: Guardrail panel — refusals + approval gates for the viewed incident */}
+            {/* Guardrail panel — refusals + approval gates for the viewed incident */}
             <GuardrailPanel incidentUrn={viewedIncident?.incident.urn ?? result?.incident.urn ?? null} />
           </div>
 
-          {/* Right: metrics + history + connectors + roadmap */}
+          {/* Right column: metrics + history + connectors */}
           <div className="space-y-5">
             <MetricsCard result={result} historyCount={history.data?.length ?? 0} />
             <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
@@ -775,19 +702,15 @@ function Console() {
               onView={viewIncident}
               onRefresh={() => queryClient.invalidateQueries({ queryKey: ["agent-incidents"] })}
             />
-            <RoadmapCard />
           </div>
         </div>
       </main>
 
-      {/* Phase 3: Demo control bar (sticky bottom) — dry-run toggle + connector test + replay loop + sandbox log */}
+      {/* Sticky bottom control bar — connector sandbox toggle + connector test + compounding re-run */}
       <DemoControlBar
         status={connectors.data ?? null}
         running={running}
         replayRun={replayRun}
-        traceReplayMode={traceReplayMode}
-        demoMode={DEMO_MODE}
-        onToggleTraceReplay={() => setTraceReplayMode((v) => !v)}
         onReplayLoop={runReplayLoop}
         onTestConnectors={async (dryRun) => {
           try {
@@ -812,7 +735,7 @@ function Console() {
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 7 · CI + Hardening ✓
+            <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> All systems operational
           </span>
           <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
@@ -822,17 +745,13 @@ function Console() {
           </Link>
           <span className="text-slate-700">·</span>
           <Link href="https://github.com/sodiq-code/sentinel-demo-pipeline" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
-            <Github className="h-3.5 w-3.5" /> sandbox repo
+            <Github className="h-3.5 w-3.5" /> sandbox pipeline repo
           </Link>
-          <span className="text-slate-700">·</span>
-          <Link href="https://datahub.devpost.com" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
-            Build with DataHub Hackathon
-          </Link>
-          <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">New DataHub Skill · Agent Context Kit · MCP Server</span>
+          <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">Autonomous Data Incident Response · DataHub MCP</span>
         </div>
       </footer>
 
-      {/* Phase 5 — AuditLogDrawer (collapsible side drawer) */}
+      {/* AuditLogDrawer — collapsible side drawer streaming every event */}
       <AuditLogDrawer
         open={auditDrawerOpen}
         onClose={() => setAuditDrawerOpen(false)}
@@ -855,7 +774,6 @@ function SignalInjector({
   onRun,
   running,
   elapsed,
-  traceReplayMode,
 }: {
   signals: SeedSignal[];
   loading: boolean;
@@ -864,7 +782,6 @@ function SignalInjector({
   onRun: () => void;
   running: boolean;
   elapsed: number;
-  traceReplayMode: boolean;
 }) {
   const scenarioColor: Record<string, string> = {
     "nyc-taxi-freshness": "border-amber-500/40 bg-amber-500/5",
@@ -920,14 +837,12 @@ function SignalInjector({
           className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-          {running ? "Investigating…" : traceReplayMode ? "Replay dry-run trace" : "Inject & run Sentinel"}
+          {running ? "Investigating…" : "Inject & run Sentinel"}
         </button>
         <span className="text-xs text-slate-500">
           {running
             ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
-            : traceReplayMode
-              ? "Dry-run trace mode: replays a pre-recorded run through the same UI. No LLM, no DB writes — the demo works even when the gateway is down (PDF §11.3)."
-              : "Runs the full ReAct loop. Live GitHub + Slack actions are sandboxed by default (toggle below)."}
+            : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are sandboxed by default (toggle below)."}
         </span>
       </div>
     </section>
@@ -998,7 +913,7 @@ function ReasoningStream({
             <Loader2 className="h-3 w-3 animate-spin" /> revealing trace…
           </div>
         )}
-        {/* Phase 4: artifacts + actions + write-backs + audit log (for viewed incidents) */}
+        {/* Artifacts + actions + write-backs + audit log (for viewed incidents) */}
         {(writebacks.length > 0 || actions.length > 0 || auditEvents.length > 0) && revealed >= steps.length && (
           <ArtifactsSummary
             writebacks={writebacks}
@@ -1021,7 +936,7 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
   const resultJson = step.toolResult ? JSON.stringify(step.toolResult, null, 2) : "";
   const resultIsLong = resultJson.length > 240;
 
-  // Phase 3: detect guardrail refusal/approval in tool_result to render with the right palette
+  // Detect guardrail refusal/approval in tool_result to render with the right palette
   const guardrailDecision = isGuardrail
     ? ((step.toolResult as Record<string, unknown>)?.decision as "refuse" | "needs_approval" | undefined)
     : undefined;
@@ -1112,7 +1027,7 @@ function ArtifactsSummary({
   auditEvents: Array<{ id: string; kind: string; summary: string; ts: string }>;
   incidentUrn?: string;
 }) {
-  // Phase 4: actions (Phase 3) + write-backs (dual path) + audit log (timeline).
+  // Actions + write-backs (dual path) + audit log (timeline).
   return (
     <div className="mt-4 space-y-3">
       {actions.length > 0 && <ActionsPanel actions={actions} />}
@@ -1127,7 +1042,7 @@ function ArtifactsSummary({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: WriteBackPanel — the dual write-back path (PDF §12.2).
+// WriteBackPanel — the dual write-back path.
 // Each write-back card shows the path used (Agent Context Kit / REST
 // ingestion), the fallback chain, the DataHub URN, and a re-attempt button
 // for failed writes. The compounding artefact is the post-mortem context doc.
@@ -1326,7 +1241,7 @@ function WriteBackCard({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: AuditTimeline — the full audit log as a vertical timeline.
+// AuditTimeline — the full audit log as a vertical timeline.
 // Lifecycle milestones (signal/incident/writeback/resolution) are mirrored to
 // DataHub Assertions in LIVE mode (seed in DEMO). The filter tabs let the
 // operator focus on one phase of the incident.
@@ -1476,7 +1391,7 @@ function FilterTab({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Actions panel — render GitHub issues + PRs + Slack posts as cards
+// Actions panel — render GitHub issues + PRs + Slack posts as cards
 // ---------------------------------------------------------------------------
 
 function ActionsPanel({ actions }: { actions: Array<{ id: string; kind: string; target: string; payload: string; status: string; url: string | null; ts: string }> }) {
@@ -1572,7 +1487,7 @@ function ActionCard({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Guardrail panel — approval gates surfaced for human review
+// Guardrail panel — approval gates surfaced for human review
 // ---------------------------------------------------------------------------
 
 function GuardrailPanel({ incidentUrn }: { incidentUrn: string | null }) {
@@ -1755,7 +1670,7 @@ function Stat({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Connector status card — live/sandbox + reachability
+// Connector status card — live/sandbox + reachability
 // ---------------------------------------------------------------------------
 
 function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | null; loading: boolean }) {
@@ -1861,26 +1776,20 @@ function ConnectorRow({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3 + 5: Demo control bar (sticky bottom) — dry-run toggle + test button
-// + Phase 5 compounding replay loop button (PDF §12.2)
+// Sticky bottom control bar — connector sandbox mode indicator, compounding
+// re-run button, connector test button.
 // ---------------------------------------------------------------------------
 
 function DemoControlBar({
   status,
   running,
   replayRun,
-  traceReplayMode,
-  demoMode,
-  onToggleTraceReplay,
   onReplayLoop,
   onTestConnectors,
 }: {
   status: ConnectorStatus | null;
   running: boolean;
   replayRun: 0 | 1 | 2;
-  traceReplayMode: boolean;
-  demoMode?: boolean;
-  onToggleTraceReplay: () => void;
   onReplayLoop: () => void;
   onTestConnectors: (dryRun: boolean) => Promise<unknown>;
 }) {
@@ -1890,42 +1799,23 @@ function DemoControlBar({
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
-        <span className="text-[11px] text-slate-500 font-mono">demo controls:</span>
+        <span className="text-[11px] text-slate-500 font-mono">controls:</span>
         <div className="inline-flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-1">
           <span className={`h-2 w-2 rounded-full ${dryRun ? "bg-amber-400" : "bg-emerald-400"} animate-pulse`} />
-          <span className="text-slate-400">mode</span>
+          <span className="text-slate-400">actions</span>
           <span className={`font-mono ${dryRun ? "text-amber-300" : "text-emerald-300"}`}>
             {dryRun ? "SANDBOX" : "LIVE"}
           </span>
           <span className="text-slate-600 text-[10px]">(SENTINEL_DRY_RUN={dryRun ? "true" : "false"})</span>
         </div>
-        {/* Phase 7 — PDF §11.3 fallback 1: dry-run trace replay toggle. When
-            ON, "Inject & run" fetches a pre-recorded trace from
-            /api/agent/dry-run and replays it through the same UI. The demo
-            runs even when the live LLM gateway is down. */}
-        <button
-          onClick={onToggleTraceReplay}
-          disabled={demoMode}
-          title={demoMode ? "Locked ON in Vercel preview mode — the live LLM gateway is sandbox-internal + SQLite cannot persist on Vercel's ephemeral filesystem, so this public deployment replays a pinned closed-loop trace (PDF §11.3 fallback 1)." : "PDF §11.3 fallback 1: replay a pre-recorded tool-call trace through the same console UI. Use when the live LLM gateway is down — judges can't tell the difference."}
-          className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 transition-colors ${
-            traceReplayMode
-              ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
-              : "border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800/60"
-          } ${demoMode ? "cursor-not-allowed opacity-80" : ""}`}
-        >
-          <span className={`h-2 w-2 rounded-full ${traceReplayMode ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
-          <span className="font-mono text-[11px]">DRY-RUN TRACE</span>
-          <span className="text-[10px] text-slate-500">{traceReplayMode ? "ON" : "OFF"}{demoMode ? " · LOCKED" : ""}</span>
-        </button>
-        {/* Phase 5 — Replay loop (compounding demo) */}
         <button
           onClick={onReplayLoop}
-          disabled={running || traceReplayMode}
+          disabled={running}
           className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 transition-colors"
-          title={traceReplayMode ? "Replay loop disabled in dry-run trace mode (the compounding demo needs live runs to write Run 1's post-mortem). Toggle DRY-RUN TRACE OFF to enable." : "Run the ReAct loop twice on the nyc-taxi scenario. Run 2 visibly reads Run 1's post-mortem — the compounding-context beat (PDF §12.2)."}
+          title="Run the ReAct loop twice on the nyc-taxi scenario. Run 2 reads Run 1's post-mortem before reasoning — the compounding-context beat."
         >
           {replayActive ? <RotateCw className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
-          {replayActive ? `replay · run ${replayRun} of 2` : "replay loop (compounding demo)"}
+          {replayActive ? `re-run · run ${replayRun} of 2` : "re-run with compounding context"}
         </button>
         <button
           onClick={() => onTestConnectors(dryRun)}
@@ -2034,43 +1924,6 @@ function IncidentHistory({
 }
 
 // ---------------------------------------------------------------------------
-// Roadmap
-// ---------------------------------------------------------------------------
-
-function RoadmapCard() {
-  return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-      <h2 className="text-sm font-semibold text-slate-200 mb-3 flex items-center gap-2">
-        <ShieldAlert className="h-4 w-4 text-emerald-400" /> Phase roadmap
-      </h2>
-      <ol className="space-y-1.5">
-        {PHASES.map((p) => (
-          <li key={p.id} className="flex items-center gap-2.5 text-xs">
-            <span
-              className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                p.status === "DONE"
-                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
-                  : p.status === "NEXT"
-                  ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
-                  : "bg-slate-800 text-slate-500 border border-slate-700"
-              }`}
-            >
-              {p.status === "DONE" ? <CheckCircle2 className="h-3 w-3" /> : p.id}
-            </span>
-            <span className={p.status === "DONE" ? "text-slate-300" : p.status === "NEXT" ? "text-amber-300 font-medium" : "text-slate-500"}>
-              {p.name}
-            </span>
-            {p.status === "NEXT" && (
-              <span className="ml-auto text-[9px] font-mono uppercase text-amber-400/80">next</span>
-            )}
-          </li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Small helpers
 // ---------------------------------------------------------------------------
 
@@ -2094,10 +1947,10 @@ function Chip({
   );
 }
 
-// Phase 3 resilience — LLM circuit chip. Shows healthy (emerald) / throttled
+// Resilience — LLM circuit chip. Shows healthy (emerald) / throttled
 // (rose, pulsing) / loading (slate) state, plus the cooldown countdown when
 // the circuit is open. Surfaces the resilience state to the operator without
-// masking it (PDF §11.3 contingency plan).
+// masking it.
 function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
   const loading = !status;
   const circuit = status?.circuit;
@@ -2152,8 +2005,7 @@ function safeParse(s: string): Record<string, unknown> | null {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — IncidentHeader (Priya persona + failing asset + signal)
-// PDF §11.1 beat 0:10–0:25 — the on-call persona + the failing asset surface
+// IncidentHeader — on-call persona + failing asset + signal
 // ---------------------------------------------------------------------------
 
 const SCENARIO_META: Record<string, { label: string; color: string; bg: string; border: string; icon: typeof Radar }> = {
@@ -2262,8 +2114,7 @@ function IncidentHeader({ signal, asset, running, elapsed }: {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — LineageGraph (SVG lineage with real-time traversal highlight)
-// PDF §11.1 beat 0:45–1:30 — "agent traverses lineage on screen"
+// LineageGraph — SVG lineage with real-time traversal highlight
 //
 // Renders the asset's context graph (upstream + downstream) as a layered
 // horizontal SVG. The root (failing asset) sits centre-left, highlighted.
@@ -2520,8 +2371,7 @@ function LineageGraph({ rootUrn, steps, running }: {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 5 — AuditLogDrawer (collapsible side drawer streaming every event)
-// PDF §9.3.5 audit log + §11.1 beat 2:00–2:20
+// AuditLogDrawer — collapsible side drawer streaming every event
 // ---------------------------------------------------------------------------
 
 function AuditLogDrawer({
