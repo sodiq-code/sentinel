@@ -80,8 +80,10 @@ jobs:
       - name: Push to a throwaway SQLite db (proves the schema is buildable)
         run: |
           bunx prisma db push --accept-data-loss --skip-generate
-          test -f ci-check.db
-          rm ci-check.db
+          # Prisma creates the SQLite file relative to the schema file location
+          # (prisma/schema.prisma → prisma/ci-check.db), not the cwd.
+          test -f prisma/ci-check.db
+          rm -f prisma/ci-check.db
 
   integration-demo:
     name: Integration demo (PDF §10.3)
