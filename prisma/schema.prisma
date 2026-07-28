@@ -147,7 +147,7 @@ model SeedAsset {
   glossaryTermsJson String  @default("[]")  // JSON: [{urn, name}]
   governanceTagsJson String @default("[]") // JSON: [{name, level}]
   schemaFieldsJson String   @default("[]")  // JSON: [{name, type, nullable, ...}]
-  lastModifiedAt   Int?     // ms epoch — for freshness assertions
+  lastModifiedAt   BigInt?     // ms epoch — for freshness assertions (BigInt: ms overflows Int32)
   platformNativeName String?
   scenarioId       String   @default("nyc-taxi-freshness") // which scenario this asset belongs to
 }
