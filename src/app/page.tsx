@@ -222,9 +222,9 @@ const PHASES = [
   { id: 2, name: "Orchestrator + ReAct Loop", status: "DONE" as const },
   { id: 3, name: "Action Connectors + Guardrails", status: "DONE" as const },
   { id: 4, name: "Write-Back + Audit Log", status: "DONE" as const },
-  { id: 5, name: "Incident Console UI (demo surface)", status: "NEXT" as const },
-  { id: 6, name: "DataHub Skill + RFC + README", status: "PENDING" as const },
-  { id: 7, name: "CI+ Hardening + Submission", status: "PENDING" as const },
+  { id: 5, name: "Incident Console UI (demo surface)", status: "DONE" as const },
+  { id: 6, name: "DataHub Skill + RFC + README", status: "DONE" as const },
+  { id: 7, name: "CI+ Hardening + Submission", status: "NEXT" as const },
 ];
 
 const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; label: string; bg: string; border: string }> = {
@@ -574,7 +574,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 5 · Incident Console UI ✓
+            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 6 · DataHub Skill + RFC ✓
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
@@ -746,7 +746,7 @@ function Console() {
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 5 · Incident Console UI ✓
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 6 · DataHub Skill + RFC ✓
           </span>
           <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
