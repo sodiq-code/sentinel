@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sentinel-bot <noreply@sentinel.dev>
+Date: Fri, 1 Aug 2026 03:18:42 +0000
+Subject: [DRAFT] fix(nyc_taxi_ingestion_dag): dedicated pool + explicit SLA + on-failure callback
+
+Fixes sodiq-code/sentinel-demo-pipeline#42
+
+Sentinel — draft remediation for the nyc_taxi freshness SLA breach (incident 2026-08-01-0314).
+
+## What
+
+The `spark_nyc_taxi_clean` Airflow task has been in `queued` state for 5h 50m, causing the downstream dbt model `nyc_yellow_taxi_trips` to miss its 15-minute freshness SLA. The root cause is worker-pool saturation on the default Airflow pool (`default_pool`).
+
+## Proposed change
+
+1. Move `spark_nyc_taxi_clean` to a dedicated pool (`nyc_taxi_dedicated_pool`) to isolate it from default-pool contention.
+2. Add an explicit Airflow SLA of 15 minutes — matches the DataHub freshness assertion (`urn:li:assertion:nyc-taxi-freshness-15m`).
+3. Wire an `on_failure_callback` to page the on-call rotation (currently Priya Patel). Sentinel will consume this callback as a future signal source.
+
+## Why
+
+- 4 freshness breaches in the last 7 days on this asset (Sentinel audit, prior 30 days).
+- Each breach took >30 minutes to triage manually (per the on-call log).
+- The remediation removes the contention root cause and adds a fast feedback loop for Sentinel to consume.
+
+## Risk
+
+- LOW: the dedicated pool already exists (`nyc_taxi_dedicated_pool`, provisioned 2026-06-15).
+- LOW: the SLA callback already has a Slack webhook configured (`#sentinel-alerts`).
+- MEDIUM: the new SLA tightening (from 30m to 15m in DataHub) requires a separate human approval — Sentinel has proposed it via the DataHub Agent Context Kit; the approval is pending.
+
+## Tests
+
+- `tests/test_dag.py::test_nyc_taxi_ingestion_dag_runs_in_dedicated_pool` — new
+- `tests/test_dag.py::test_nyc_taxi_ingestion_dag_has_15m_sla` — new
+- `tests/test_dag.py::test_on_failure_callback_pages_oncall` — new
+
+The existing tests in `tests/test_dag.py` pass with the changes.
+
+## Sentinel audit
+
+- Reasoning trace: https://github.com/sodiq-code/sentinel-demo-pipeline/actions/runs/202608010314
+- Tool calls: 7
+- Guardrail checks: 1 passed, 0 pending
+- LLM: `nvidia/llama-3.3-nemotron-super-49b-v1` @ temperature 0
+- Tokens: 4,213 + 1,489
+
+---
+
+Sentinel opened this PR. It is a **DRAFT**. Sentinel NEVER merges — a human must review and merge. The companion DataHub write-backs (post-mortem doc, glossary proposal, ownership proposal, new SLA assertion) are tracked in the Sentinel audit log `urn:li:assertion:sentinel-audit-2026-08-01-0314`.

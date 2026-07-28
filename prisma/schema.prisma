@@ -1,0 +1,238 @@
+// =============================================================================
+// Sentinel — Prisma schema
+//
+// PDF §9.4.3 — SQLite schema (minimal):
+//   incidents, tool_calls, actions, writebacks, audit_log
+//   (5 tables) + demo seed tables.
+//
+// "The schema is intentionally tiny — the demo must run from a fresh clone in
+//  under a minute." (PDF §9.4.3)
+//
+// The only durable state is what is written back to DataHub (context docs,
+// assertions, glossary/ownership proposals) — by design, Sentinel is stateless
+// across incidents except for what lives in DataHub. (PDF §9.3.4)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// PDF §9.4.3 — the 5 incident-state tables
+// ---------------------------------------------------------------------------
+
+model Incident {
+  // PDF §9.4.3: incidents(urn, signal_type, asset_urn, status, created_at, resolved_at)
+  urn         String   @id
+  signalType  String   // freshness | schema | quality | pii
+  assetUrn    String
+  status      String   @default("open") // open | investigating | acting | awaiting_approval | resolved | failed | cancelled
+  createdAt   DateTime @default(now())
+  resolvedAt  DateTime?
+  updatedAt   DateTime @updatedAt
+
+  // Relations — cascade on incident delete (PDF §9.3.4: stateless across incidents)
+  toolCalls   ToolCall[]
+  actions     Action[]
+  writebacks  WriteBack[]
+  auditEvents AuditEvent[]
+  signals     SignalRecord[]
+
+  @@index([status, createdAt])
+  @@index([assetUrn])
+}
+
+/// PDF §9.4.3: tool_calls(id, incident_urn, tool, args_json, result_json, ts)
+model ToolCall {
+  id          String   @id @default(cuid())
+  incidentUrn String
+  incident    Incident @relation(fields: [incidentUrn], references: [urn], onDelete: Cascade)
+  tool        String   // mcp.search | mcp.get_lineage | guardrail.check | ...
+  argsJson    String   // JSON.stringify(args)
+  resultJson  String?  // JSON.stringify(result) — may be null on failure
+  status      String   @default("ok") // ok | error | retrying | skipped
+  durationMs  Int?
+  ts          DateTime @default(now())
+
+  @@index([incidentUrn, ts])
+  @@index([tool, ts])
+}
+
+/// PDF §9.4.3: actions(id, incident_urn, kind, target, payload, status, ts)
+model Action {
+  id          String   @id @default(cuid())
+  incidentUrn String
+  incident    Incident @relation(fields: [incidentUrn], references: [urn], onDelete: Cascade)
+  kind        String   // github.openIssue | github.openPR | slack.postMessage | guardrail.check
+  target      String   // repo | channel | assetUrn | ...
+  payload     String   // JSON.stringify(payload)
+  status      String   @default("proposed") // proposed | approved | executed | refused | failed
+  url         String?  // e.g. https://github.com/.../issues/42
+  ts          DateTime @default(now())
+
+  @@index([incidentUrn, ts])
+  @@index([kind, status])
+}
+
+/// PDF §9.4.3: writebacks(id, incident_urn, kind, datahub_urn, status, ts)
+model WriteBack {
+  id          String   @id @default(cuid())
+  incidentUrn String
+  incident    Incident @relation(fields: [incidentUrn], references: [urn], onDelete: Cascade)
+  kind        String   // context_doc | glossary_proposal | ownership_proposal | assertion
+  datahubUrn  String?  // the URN DataHub assigned (or null if failed)
+  status      String   @default("proposed") // proposed | succeeded | failed | pending_approval
+  path        String   @default("agent_context_kit") // agent_context_kit | rest_ingestion (PDF §12.2 dual path)
+  dataJson    String   // JSON.stringify(the write payload)
+  ts          DateTime @default(now())
+
+  @@index([incidentUrn, ts])
+  @@index([kind, status])
+}
+
+/// PDF §9.4.3: audit_log(id, incident_urn, event, ts) — mirror of DataHub Assertion/Event
+model AuditEvent {
+  id          String   @id @default(cuid())
+  incidentUrn String
+  incident    Incident @relation(fields: [incidentUrn], references: [urn], onDelete: Cascade)
+  kind        String   // signal_received | incident_created | tool_call | tool_result | action_proposed | action_approved | action_refused | action_executed | writeback_proposed | writeback_succeeded | writeback_failed | incident_resolved | incident_failed
+  summary     String
+  payloadJson  String? // JSON.stringify(payload) — structured
+  ts          DateTime @default(now())
+
+  @@index([incidentUrn, ts])
+  @@index([kind, ts])
+}
+
+// ---------------------------------------------------------------------------
+// Signals — the raw input from DataHub. Stored so a demo can replay them.
+// PDF §9.4.1: SignalListener "Subscribe to DataHub assertion failures (webhook or poll). Python async; idempotent."
+// ---------------------------------------------------------------------------
+
+model SignalRecord {
+  id          String   @id @default(cuid())
+  incidentUrn String?
+  incident    Incident? @relation(fields: [incidentUrn], references: [urn], onDelete: SetNull)
+  assertionUrn String
+  assetUrn    String
+  type        String   // freshness | schema | quality | pii
+  status      String   // passing | failing | error
+  firedAt     DateTime
+  receivedAt  DateTime @default(now())
+  rawPayload  String   // JSON.stringify(DataHub's raw signal)
+  processed   Boolean  @default(false)
+
+  @@index([processed, receivedAt])
+  @@index([assetUrn, firedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Demo seed — the seeded DataHub-equivalent fixtures used in DEMO mode
+// (PDF §9.3.3 — DataHub as RAG substrate, demo uses showcase-ecommerce for
+// cross-platform lineage and nyc-taxi for the freshness scenario)
+// ---------------------------------------------------------------------------
+
+model SeedAsset {
+  urn              String   @id
+  name             String
+  platform         String   // dbt | snowflake | spark | s3 | looker | airflow | postgres | ...
+  type             String   // dataset | chart | dashboard | dataFlow | dataJob | container | domain
+  description      String?
+  ownersJson       String   @default("[]")  // JSON: [{urn, name, type}]
+  glossaryTermsJson String  @default("[]")  // JSON: [{urn, name}]
+  governanceTagsJson String @default("[]") // JSON: [{name, level}]
+  schemaFieldsJson String   @default("[]")  // JSON: [{name, type, nullable, ...}]
+  lastModifiedAt   Int?     // ms epoch — for freshness assertions
+  platformNativeName String?
+  scenarioId       String   @default("nyc-taxi-freshness") // which scenario this asset belongs to
+}
+
+model SeedLineageEdge {
+  id           String   @id @default(cuid())
+  fromUrn      String
+  toUrn        String
+  via          String?  // the dataFlow or dataJob URN that produces this edge
+  scenarioId   String   @default("nyc-taxi-freshness")
+  @@unique([fromUrn, toUrn, via])
+  @@index([fromUrn])
+  @@index([toUrn])
+  @@index([scenarioId])
+}
+
+model SeedAssertion {
+  urn              String   @id
+  assetUrn         String
+  type             String   // freshness | schema | quality | custom
+  status           String   @default("passing") // passing | failing | error
+  description      String
+  slaSeconds       Int?
+  lastEvaluatedAt  DateTime
+  lastSuccessAt    DateTime?
+  failureReason    String?
+  scenarioId       String   @default("nyc-taxi-freshness")
+  @@index([assetUrn])
+  @@index([status])
+  @@index([scenarioId])
+}
+
+model SeedContextDoc {
+  urn            String   @id
+  assetUrn       String
+  title          String
+  content        String   // markdown
+  format         String   @default("markdown")
+  createdAt      DateTime
+  authorUrn      String
+  authorName     String
+  sentinelPostMortem Boolean @default(false)
+  scenarioId     String   @default("nyc-taxi-freshness")
+  @@index([assetUrn, createdAt])
+  @@index([scenarioId])
+}
+
+// ---------------------------------------------------------------------------
+// Pending approvals — surfaced by the guardrail for the human-approval gate
+// (PDF §9.3.5 — 'human-approval gate' / PDF §11.1 beat 2:00–2:20)
+// ---------------------------------------------------------------------------
+
+model PendingApproval {
+  id           String   @id @default(cuid())
+  incidentUrn  String?
+  kind         String   // github.openIssue | github.openPR | slack.postMessage | datahub.proposeGlossary | datahub.proposeOwnership
+  reason       String   // why it needs approval (e.g. 'PII tag detected on asset')
+  proposedActionJson String // JSON.stringify(ProposedAction)
+  approverUrn  String?
+  status       String   @default("pending") // pending | approved | denied
+  decidedAt    DateTime?
+  createdAt    DateTime @default(now())
+  @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Scaffolded scaffold models kept for compatibility — unused by Sentinel
+// (the original User/Post models from the Z.ai Next.js scaffold). Safe to
+// keep; not exercised by Sentinel code paths.
+// ---------------------------------------------------------------------------
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Post {
+  id        String   @id @default(cuid())
+  title     String
+  content   String?
+  published Boolean  @default(false)
+  authorId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

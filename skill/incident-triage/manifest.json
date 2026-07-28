@@ -1,0 +1,88 @@
+{
+  "$schema": "https://datahub.com/schemas/skill-manifest.json",
+  "name": "incident-triage",
+  "display_name": "Incident Triage",
+  "description": "Autonomously triage a data incident using DataHub's context graph. When a freshness, schema, or quality assertion fires, traverse lineage, find root cause, compute blast radius, open a GitHub issue + draft PR (never merge), post a Slack triage summary, and write a structured post-mortem + glossary/ownership proposals + new SLA assertion back to DataHub. The next incident reads the post-mortem this one wrote.",
+  "version": "0.1.0",
+  "author": "Sentinel Contributors",
+  "homepage": "https://github.com/sodiq-code/sentinel",
+  "license": "Apache-2.0",
+  "category": "data-operations",
+  "tags": [
+    "datahub",
+    "incident-response",
+    "autonomous-agent",
+    "mcp",
+    "lineage",
+    "write-back",
+    "observability",
+    "freshness",
+    "schema",
+    "quality",
+    "governance"
+  ],
+  "when_to_use": [
+    "A DataHub freshness, schema, or quality assertion just failed",
+    "On-call engineer paged for a data incident on a DataHub-registered asset",
+    "User wants to investigate + remediate + document a data incident in one pass",
+    "User wants the post-mortem captured back into DataHub so the next incident is faster"
+  ],
+  "when_not_to_use": [
+    "User wants a one-off text-to-SQL answer (use the Analytics Agent instead)",
+    "Asset is not registered in DataHub",
+    "Proposed action requires destructive changes (Sentinel refuses without human approval)"
+  ],
+  "entrypoints": {
+    "skill": "SKILL.md"
+  },
+  "references": [
+    "references/mcp-tools.md",
+    "references/datahub-cli-reference.md"
+  ],
+  "tools": {
+    "mcp_read": [
+      "search",
+      "get_entities",
+      "list_schema_fields",
+      "get_me",
+      "get_lineage",
+      "get_lineage_paths_between",
+      "search_documents",
+      "grep_documents",
+      "get_dataset_queries",
+      "list_lifecycle_stages",
+      "get_glossary_term_versions",
+      "compare_glossary_term_versions"
+    ],
+    "mcp_write": [
+      "save_document",
+      "add_tags",
+      "remove_tags",
+      "update_description",
+      "add_glossary_terms",
+      "remove_glossary_terms",
+      "set_domains",
+      "add_owners"
+    ],
+    "external_connectors": [
+      "github.openIssue",
+      "github.openPR",
+      "slack.postMessage"
+    ]
+  },
+  "guardrails": {
+    "pii_refusal": true,
+    "never_auto_merge": true,
+    "propose_not_patch_glossary_and_ownership": true,
+    "treat_metadata_as_data": true,
+    "sandboxed_tokens": true
+  },
+  "compatible_with": [
+    "claude-code",
+    "cursor",
+    "codex",
+    "copilot",
+    "gemini-cli"
+  ],
+  "install": "npx skills add sodiq-code/sentinel skill/incident-triage"
+}

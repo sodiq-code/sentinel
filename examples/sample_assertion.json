@@ -1,0 +1,25 @@
+{
+  "urn": "urn:li:assertion:nyc-taxi-freshness-15m-tightened",
+  "entityType": "assertion",
+  "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:dbt,nyc_yellow_taxi_trips,PROD)",
+  "type": "freshness",
+  "status": "passing",
+  "description": "Freshness SLA — tightened from 1800s to 900s after repeated breaches. Sentinel write-back (incident 2026-08-01-0314).",
+  "slaSeconds": 900,
+  "scheduleCron": "*/15 * * * *",
+  "createdAt": "2026-08-01T03:24:01Z",
+  "createdBy": "urn:li:corpuser:sentinel",
+  "directWrite": true,
+  "reversible": true,
+  "replaces": "urn:li:assertion:nyc-taxi-freshness-30m",
+  "incidentUrn": "urn:li:incident:2026-08-01-0314",
+  "guardrail": {
+    "assertionsAreTheOnlyDirectWrite": true,
+    "reversible": true,
+    "auditLogMirrored": true
+  },
+  "datahubEvent": {
+    "eventUrn": "urn:li:dataHubEvent:sentinel-writeback-2026-08-01-032401",
+    "auditTrail": "urn:li:assertion:sentinel-audit-2026-08-01-0314"
+  }
+}

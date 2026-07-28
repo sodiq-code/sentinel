@@ -1,0 +1,121 @@
+# =============================================================================
+# Sentinel — CI
+#
+# PDF §10.3: ".github/workflows/ci.yml (lint + integration demo)"
+# PDF §10.2:  "Tests for the load-bearing parts. Guardrail refusal logic,
+#             write-back composer, and the integration test that runs the demo.
+#             Skip tests for glue code."
+# PDF §12.2:  gitleaks secret scan in CI (token leakage mitigation).
+# PDF §13.5:  "If it passes in CI, the demo will run on the judge's laptop."
+# =============================================================================
+#
+# Phase 0 (this file): the workflow structure with the lint job enabled. The
+# integration-demo job is a stub that becomes the load-bearing test in
+# Phase 7. gitleaks is enabled from Phase 0 to protect against accidental
+# token commits.
+# =============================================================================
+
+name: Sentinel CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint (ESLint + TypeScript)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run ESLint
+        run: bun run lint
+
+      - name: TypeScript type-check (sentinel/ contracts)
+        run: bunx tsc --noEmit -p tsconfig.json || true
+        continue-on-error: true
+        # ^ Phase 0: tsc is best-effort because the sentinel/ contracts
+        #   are not yet imported anywhere. Phase 7 makes this strict.
+
+  prisma-validate:
+    name: Prisma schema valid
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Validate Prisma schema (5 tables + seed models)
+        run: |
+          bunx prisma validate --schema prisma/schema.prisma
+      - name: Push to a throwaway SQLite db (proves the schema is buildable)
+        env:
+          DATABASE_URL: "file:./ci-check.db"
+        run: |
+          bunx prisma db push --accept-data-loss --skip-generate
+          test -f ci-check.db
+          rm ci-check.db
+
+  integration-demo:
+    name: Integration demo (PDF §10.3)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Phase 0: this is a stub. Phase 7 turns it into the real end-to-end demo
+    # that asserts a context doc + an assertion are created by the agent.
+    if: ${{ false }}  # disabled until Phase 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Push Prisma schema
+        env:
+          DATABASE_URL: "file:./ci-demo.db"
+        run: bunx prisma db push --accept-data-loss
+      - name: Build (production)
+        run: bun run build
+        continue-on-error: true  # Phase 5: the build is part of the integration test
+      - name: Start server (background)
+        env:
+          DATABASE_URL: "file:./ci-demo.db"
+        run: |
+          (bun run start &) && sleep 5
+          curl -fsS http://localhost:3000/ | head -1
+      - name: Run the demo (Phase 7 will assert context doc + assertion created)
+        run: |
+          echo "Phase 7: this step calls the DemoDriver via the API and asserts"
+          echo "         a context doc + an assertion are created in the seeded Prisma."
+          echo "         For Phase 0 this job is disabled."
+
+  secret-scan:
+    name: gitleaks (PDF §12.2 token leakage mitigation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No additional config — uses the default ruleset.
+          # .env is gitignored; .env.example has no real secrets.
