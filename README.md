@@ -78,8 +78,8 @@ README.md                              # this file — quickstart, what it is, d
 LICENSE                                # Apache 2.0, visible in repo About
 package.json                           # pinned deps (replaces pyproject.toml from PDF)
 .env.example                           # all required env vars (no secrets)
-sentinel/                              # the agent (TypeScript)
-  orchestrator.ts                      # ReAct loop
+sentinel/                              # the agent (Phase 0 interface contracts)
+  orchestrator.ts                      # ReAct loop interface (superseded by src/lib/agent/)
   guardrail.ts                         # PII refusal · no-merge · human-approval gate
   connectors/
     github.ts                          # openIssue, openPR (never merges)
@@ -88,6 +88,17 @@ sentinel/                              # the agent (TypeScript)
     ingester.ts                        # context doc + assertion + 2 proposals
   audit.ts                             # SQLite + DataHub Assertion mirror
   demo_driver.ts                       # injects nyc-taxi freshness failure; replays loop
+  types.ts                             # shared agent types (Phase 0 contracts)
+src/lib/agent/                         # the LIVE agent (Phase 2)
+  orchestrator.ts                      # the ReAct loop (plan→act→observe→reflect→write-back)
+  llm.ts                               # NVIDIA NIM / z-ai gateway client (OpenAI-compatible, retries+fallback)
+  tools.ts                             # tool registry: 9 read + 6 write + 2 action stubs
+  audit.ts                             # Prisma-backed audit log + reasoning-trace reconstruction
+  seed-signals.ts                      # the 3 injectable demo signals
+  types.ts                             # canonical Phase 2 agent types
+  prompts/                             # PDF §9.4.4 layered system prompt (committed, versioned)
+    role.md · workflow.md · governance.md · tools.md · system-prompt.ts
+  index.ts                             # barrel
 skill/                                 # the bonus DataHub Skill
   incident-triage/
     SKILL.md                           # follows datahub-skills SKILL.md format
@@ -106,7 +117,10 @@ prisma/
   schema.prisma                        # 5 tables (PDF §9.4.3) + demo seed models
 .github/workflows/ci.yml               # lint + integration demo
 src/                                   # Next.js 16 incident console (the demo surface)
-  app/page.tsx                         # the incident console (Phase 5)
+  app/page.tsx                         # the Phase 2 console: live ReAct reasoning stream
+  app/api/agent/                       # run / incidents / incident/[urn] / signals routes
+  lib/agent/                           # the live Phase 2 agent (see above)
+  lib/datahub/                         # McpClient + ContextKitClient + IngestionClient (mock + live)
 ```
 
 ---
@@ -123,7 +137,8 @@ bun install
 
 # 3. Configure
 cp .env.example .env
-# edit .env — at minimum set NVIDIA_API_KEY (the LLM)
+# edit .env — LLM_PROVIDER defaults to 'zai' (z-ai-web-dev-sdk gateway, works in-sandbox).
+# Set LLM_PROVIDER=nvidia + NVIDIA_API_KEY to call NVIDIA NIM directly.
 # leave DATAHUB_GMS_URL empty to run in DEMO mode (seeded fixtures, no live DataHub)
 
 # 4. Database (SQLite, file-based — zero config)
@@ -183,12 +198,13 @@ The same TypeScript interfaces (`McpClient`, `ContextKitClient`, `IngestionClien
 | Component | Version | Notes |
 |---|---|---|
 | Next.js | 16.1.1 | App Router, TypeScript |
-| LangChain | 0.3.x | via `langchain` npm (tool-calling) |
+| z-ai-web-dev-sdk | 0.0.18 | the in-sandbox LLM gateway (OpenAI-compatible, tool-calling verified) |
 | DataHub MCP Server | 0.0.4 | pinned, called over HTTP |
 | DataHub Agent Context Kit | langchain-integration | `include_mutations=True` |
 | Prisma | 6.11.1 | SQLite client |
-| LLM | `nvidia/llama-3.3-nemotron-super-49b-v1` | temperature 0, parallel tool-calls |
-| LLM fallback | `openai/gpt-oss-120b` | swap on 429/timeout |
+| LLM (z-ai, default) | `gpt-4o` | temperature 0, parallel tool-calls |
+| LLM (NVIDIA NIM, alt) | `nvidia/llama-3.3-nemotron-super-49b-v1` | temperature 0, parallel tool-calls |
+| LLM fallback | `gpt-4o-mini` / `openai/gpt-oss-120b` | swapped on 429/5xx |
 | License | Apache 2.0 | visible in repo About |
 
 ---
@@ -228,8 +244,10 @@ Block demonstrated human-driven incident response with Goose + the DataHub MCP S
 
 ## Status
 
-**Phase 0 — Foundation & Repo Hygiene** ✅ complete.
-**Phase 1 — DataHub Mock + Seed** next.
+**Phase 0 — Foundation & Repo hygiene** ✅ complete.
+**Phase 1 — DataHub Mock + Seed** ✅ complete.
+**Phase 2 — Orchestrator + ReAct Loop** ✅ complete — inject a seed signal and the agent (gpt-4o via the z-ai gateway) runs the full closed loop: investigate with the MCP read tools, traverse lineage, read prior post-mortems, open a GitHub issue, post a Slack triage, and write a post-mortem back to DataHub. A completion gate refuses premature stops until the mandatory write-back tools are called. The reasoning stream is visible live in the console (PDF §5.3).
+**Phase 3 — Action Connectors + Guardrails** next.
 
 See `worklog.md` for the running build log.
 

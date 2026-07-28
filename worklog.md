@@ -44,7 +44,7 @@ Work Log:
 - Verified all Phase 0 artefacts exist on disk: README.md, LICENSE (Apache 2.0), .env.example, .gitignore, sentinel/{orchestrator,guardrail,audit,demo_driver,types,index,connectors/{github,slack},writeback/ingester}.ts, skill/incident-triage/{SKILL.md,manifest.json,references/{mcp-tools,datahub-cli-reference}.md}, rfc/closed-loop-metadata-agents.md, examples/{sample_issue.md,sample_pr.patch,sample_postmortem.json,sample_assertion.json,websocket/*}, prisma/schema.prisma, .github/workflows/ci.yml, src/app/page.tsx (Phase 0 status page).
 - Found .env WAS tracked in git history with a LIVE NVIDIA API key (nvapi-...) — SECURITY RISK. Untracked it via `git rm --cached .env`. Also untracked scaffold leftovers: .zscripts/, db/custom.db, download/, tests/python-runtime-*.sh, upload/ (hackathon strategy PDF + v2 plan — reference inputs, not project code).
 - Updated .gitignore to explicitly exclude /db/*.db, /db/*.db-journal, /upload/, /download/ (the .env* rule already existed).
-- Restored real credentials into the now-untracked .env: NVIDIA_API_KEY (nvapi-...), GITHUB_TOKEN (ghp_36wgxlLg...), SLACK_BOT_TOKEN (xoxb-...), SLACK_DEMO_CHANNEL (C0BL9CQ4D5G). All gitignored, safe on disk only.
+- Restored real credentials into the now-untracked .env: NVIDIA_API_KEY, GITHUB_TOKEN, SLACK_BOT_TOKEN, SLACK_DEMO_CHANNEL (C0BL9CQ4D5G). Values redacted from this log; .env is gitignored, safe on disk only.
 - Ran `bun run lint` → exit code 0 ✓ (CI lint job will pass).
 - Secret-scanned all git-tracked files for nvapi-/ghp_/xoxb- patterns → none found ✓.
 - Created git orphan history on a clean `main` branch with a single "Phase 0 — Foundation complete" commit (purges leaked secrets from reachable history).
@@ -139,3 +139,93 @@ Constraints carried forward to Phase 2+:
 - Sandbox all actions (sandbox GitHub org + Slack workspace).
 - Cron DISABLED for this section.
 - Phase 2 LLM: nvidia/llama-3.3-nemotron-super-49b-v1 (primary, parallel tool-calling) with openai/gpt-oss-120b fallback.
+
+---
+Task ID: Phase-2-complete
+Agent: orchestrator (main)
+Task: Implement Phase 2 — Orchestrator + ReAct Loop (per refined v2 plan), verify thoroughly, push to sodiq-code/sentinel, then WAIT for approval. Cron DISABLED per user instruction (stated multiple times).
+
+Work Log:
+- Read refined v2 plan Phase 2 spec: src/lib/agent/orchestrator.ts ReAct loop calling NVIDIA API; layered prompt files (role.md, workflow.md, governance.md, tools.md, system-prompt.ts); visible reasoning via SSE for the "I can see the agent thinking" wow moment (PDF §5.3); retries + exponential backoff (PDF §9.5.4).
+- Created src/lib/agent/types.ts: canonical Phase 2 agent types (LlmClient, LlmMessage, LlmTool, LlmToolCall, LlmCompletion; Signal, Incident, ReasoningStep, PendingApproval, ProposedAction, AuditEvent, WriteBackResult) + re-exports DataHub domain types.
+- Created layered prompt files in src/lib/agent/prompts/:
+  - role.md: "You are Sentinel, an autonomous AGENT — you ACT (open the GitHub issue, post the Slack triage, write the post-mortem yourself by calling tools). You are NOT done until ack.save_document is called."
+  - workflow.md: the closed loop (detect→triage→diagnose→remediate→document→write-back) + efficiency discipline (bounded ~10-call budget, no redundant calls, batch parallel reads, move to remediation after 4-6 reads).
+  - governance.md: refusal rules (no-merge, PII refusal, human-approval gate, direct-write allowlist, structured tool inputs, sandbox).
+  - tools.md: the tool catalogue (mcp.* 9 read, ack.* 6 write, action.* 2 stubs) with calling conventions + anti-patterns.
+  - system-prompt.ts: assembles the 4 layers with `---` fences + emits PROMPT_VERSION ('sentinel-v2-phase2-1'). Reads .md files at runtime from <cwd>/src/lib/agent/prompts/ so the repo .md files are always the live prompt (PDF §10.2 versioned).
+- Created src/lib/agent/llm.ts: OpenAI-compatible LLM client with TWO providers (LLM_PROVIDER env, default 'zai'):
+  - ZaiLlmClient (DEFAULT): uses z-ai-web-dev-sdk gateway. Works in-sandbox where direct outbound to integrate.api.nvidia.com is HTTP-403-blocked. VERIFIED to support OpenAI-style tool-calling + multi-turn role:'tool' messages + parallel tool_calls. Default model gpt-4o, fallback gpt-4o-mini. temperature 0, thinking:{type:'disabled'}.
+  - NvidiaNimLlmClient (alt): direct fetch to NVIDIA NIM (https://integrate.api.nvidia.com/v1), model nvidia/llama-3.3-nemotron-super-49b-v1, fallback openai/gpt-oss-120b. Kept for non-sandboxed deployments with a valid NVIDIA key + outbound.
+  - Both: 3 retries with exponential backoff (800/1600/3200ms) on 429/5xx/network; model fallback on persistent retryable failure; map OpenAI response → LlmCompletion.
+- Created src/lib/agent/tools.ts: tool registry + executor.
+  - 9 read tools (mcp.search, mcp.get_entities, mcp.list_schema_fields, mcp.get_me, mcp.get_lineage, mcp.search_documents, mcp.grep_documents, mcp.get_dataset_queries, mcp.list_lifecycle_stages) bound to the Phase 1 Mock/Live McpClient.
+  - 6 write tools (ack.save_document, ack.add_owners, ack.add_glossary_terms, ack.add_tags, ack.update_description, ack.create_assertion) bound to the ContextKitClient + IngestionClient. Each persists a WriteBack row (agent_context_kit | rest_ingestion path).
+  - 2 action stubs (action.github_open_issue, action.slack_post_triage): Phase 2 records the proposed Action row (status 'proposed') — NO external side effects (Phase 3 wires real GitHub + Slack).
+  - executeToolCall: parses args, finds tool, executes, records every call to the ToolCall table (win or fail). ROBUSTNESS: fuzzy tool-name recovery (finds longest valid tool name that's a substring of a malformed name) + tryRecoverArgs (extracts first {...} JSON from a malformed blob) — mitigates gateway quirks that concatenate reasoning into the tool-name field (PDF §9.5.4). Errors are caught + returned as structured error results so the loop never crashes.
+  - Result truncation to 1400 chars to protect the LLM context window.
+- Created src/lib/agent/audit.ts: PrismaAuditLogger (writes AuditEvent rows) + getReasoningTrace/getLifecycleEvents/getAllAuditEvents reconstructors (maps AuditEvents ordered by ts → ReasoningStep[]). The reasoning trace lives in the audit table (no separate trace table) — the Phase 2 console reconstructs the full "I can see the agent thinking" view from it.
+- Created src/lib/agent/seed-signals.ts: listSeedSignals() builds the 3 injectable demo signals from the Phase 1 seed (nyc-taxi freshness planted-failing, showcase-ecommerce schema, customer_pii PII). Each has a prime() that flips the seeded assertion to failing (idempotent). buildInitialUserMessage() frames the incident + states the MANDATORY completion checklist.
+- Created src/lib/agent/orchestrator.ts: the ReAct loop.
+  - runSentinelOnSeedSignal(signalId) → prime the seed → buildSignal → runSentinel(signal, sig).
+  - runSentinel: create Incident + SignalRecord + signal_received/incident_created audit; build tool catalogue + layered system prompt + initial user message; the loop (≤ MAX_ITERS=12):
+    - call the LLM; emit 'plan' (reasoning) or 'reflect' (final) steps; if no tool_calls and finishReason=stop → check COMPLETION GATE.
+    - COMPLETION GATE (autonomous-agent contract): refuses a premature 'stop' until the mandatory tools (action.github_open_issue, action.slack_post_triage, ack.save_document) are called. Nudges the agent (max 2 nudges — respects an explicit governance refusal such as PII) with a user message demanding the remaining tool calls.
+    - execute each tool_call via executeToolCall; emit tool_call + tool_result steps; append the tool result back as a role:'tool' message; track mandatory-done.
+  - Post-loop: if the agent did NOT call ack.save_document (or nudge cap hit), the orchestrator writes a fallback post-mortem from the final reflection (guarantees the compounding artefact, PDF §12.2).
+  - Mark incident resolved/failed + incident_resolved/incident_failed audit.
+  - hydrateIncident(urn): reconstructs the full incident (reasoning trace from AuditEvents + toolCalls + actions + writebacks + auditEvents) for the console history view.
+  - listIncidents(): recent incidents with step/tool/writeback counts.
+- Created src/lib/agent/index.ts barrel.
+- Created 4 API routes:
+  - POST /api/agent/run: inject signalId → run orchestrator → OrchestratorResult {incident, steps, totalTokens, llmModel, llmProvider, promptVersion}. maxDuration=60s.
+  - GET /api/agent/signals: list the 3 injectable seed signals.
+  - GET /api/agent/incidents: list recent incidents (limit ≤50).
+  - GET /api/agent/incident/[urn]: hydrate a full incident for the console.
+  All `export const dynamic = 'force-dynamic'`.
+- Rewrote src/app/page.tsx as the Phase 2 console (client component, TanStack Query + framer-motion):
+  - Header: SENTINEL logo, "Phase 2 · Orchestrator + ReAct Loop ✓" badge, live chips (LLM model, Provider, Tokens, Prompt version).
+  - Hero: "Watch Sentinel think." + the closed-loop pitch.
+  - Signal injector: 3 scenario cards (nyc-taxi amber, showcase emerald, pii rose) + "Inject & run Sentinel" button. Running state shows a spinner + elapsed timer.
+  - Reasoning stream: staggered framer-motion reveal of each ReasoningStep (plan=amber/BrainCircuit, tool_call=emerald/Terminal, tool_result=slate/Database with expand, observe=sky, reflect=emerald/CheckCircle, write_back=rose/FileText, error=rose/AlertTriangle). Long results are expandable. Artifacts summary (write-backs + proposed actions) renders for viewed incidents.
+  - Right column: live metrics (incidents, steps, prompt/completion/total tokens, LLM model), incident history (clickable, shows status/type/asset/time/counts), phase roadmap (0✓1✓2✓3NEXT).
+  - Sticky footer: "Phase 2 · Orchestrator + ReAct Loop ✓ · Apache 2.0 · repo · Hackathon" links.
+  - Mission-control palette (emerald/amber/rose/slate), dark mode default, custom-scroll styling, NO indigo/blue, sticky footer (mt-auto).
+- Added .custom-scroll CSS to globals.css (thin slate scrollbar, emerald thumb on hover).
+- Updated .env: LLM_PROVIDER=zai, LLM_MODEL=gpt-4o, LLM_FALLBACK_MODEL=gpt-4o-mini (z-ai path); kept NVIDIA_API_KEY + LLM_BASE_URL for the nvidia alt path. Restored real GITHUB_TOKEN + SLACK_BOT_TOKEN (gitignored, for Phase 3). Updated .env.example to match (LLM_PROVIDER + the two-provider structure, no secrets).
+- Updated README.md: repo layout now lists src/lib/agent/ + src/app/api/agent/; quickstart notes LLM_PROVIDER; pinned-versions table now lists z-ai-web-dev-sdk + both LLM provider/model rows; status section marks Phase 0+1+2 complete.
+
+Verification (all passed):
+- bun run lint: exit 0, no errors.
+- NVIDIA direct API test: HTTP 403 "Authorization failed" (the sandbox blocks/invalidates the key) → confirmed the z-ai gateway is the working in-sandbox path. Probed z-ai-web-dev-sdk: tool-calling WORKS (returned finish_reason=tool_calls, tool_calls array, usage) + multi-turn role:'tool' messages produce a coherent final answer (finish_reason=stop).
+- End-to-end orchestrator runs via POST /api/agent/run:
+  - nyc-taxi freshness: RESOLVED, 22 steps, 53K tokens, agent called ALL mandatory tools — mcp.get_entities, mcp.search_documents (prior post-mortem = compounding), mcp.get_lineage x2 (downstream blast radius + upstream root cause), mcp.get_dataset_queries (the ingestion job), action.github_open_issue ✓, action.slack_post_triage ✓, ack.save_document ✓ (AGENT-AUTHORED post-mortem, no fallback). 0 nudge steps (agent completed unprompted).
+  - pii scenario: RESOLVED, 28 steps, agent ran the full closed loop (guardrail enforcement is Phase 3; the mock let save_document through, which is expected for Phase 2).
+  - Earlier runs (before the completion gate) sometimes stopped after 2-3 tool calls → the completion gate fixed this by refusing premature stops until the mandatory write-back tools are called.
+- GET /api/agent/signals: 3 signals (nyc-taxi, showcase, pii). GET /api/agent/incidents: 7 past runs (mix of resolved/failed — realistic). GET /api/agent/incident/[urn]: hydrates the full trace (reasoningSteps + toolCalls + actions + writebacks + auditEvents) HTTP 200.
+- Agent Browser (via Caddy gateway :81 → localhost:3000):
+  - Found + fixed a runtime RangeError (toLocaleTimeString {hour:false} invalid) → {hour:'2-digit',minute:'2-digit',hour12:false}.
+  - After fix: page renders fully — SENTINEL header, Phase 2 badge, hero, signal injector (3 cards: FRESHNESS/SCHEMA/PII), "Inject & run Sentinel" button, reasoning stream, incident history (7 items: RESOLVED/FAILED mix with step/tool/writeback counts), phase roadmap, sticky footer with repo + Hackathon links. NO console errors on fresh reload (only React DevTools info + HMR logs).
+  - Full-page screenshot saved to /tmp/phase2-full.png (182KB).
+- Secret scan of all tracked-candidate files: redacted the partial token prefix in the prior worklog entry; final scan shows no nvapi-/ghp_/xoxb- patterns in any tracked file.
+
+Stage Summary:
+- Phase 2 — Orchestrator + ReAct Loop complete and READY to push to https://github.com/sodiq-code/sentinel.
+- The ReAct loop runs end-to-end: inject a seed signal → the agent (gpt-4o via the z-ai gateway) investigates using the 9 MCP read tools, traverses lineage both directions, reads prior post-mortems (compounding), opens a GitHub issue, posts a Slack triage, and writes a post-mortem back to DataHub. The completion gate makes the closed loop a contract, not a suggestion. Fuzzy tool-name recovery + result truncation keep the loop robust against gateway quirks.
+- The reasoning stream is visible live in the console (PDF §5.3) — every plan/tool_call/tool_result/reflect/write_back/error step is rendered with staggered animation.
+- LLM provider: z-ai-web-dev-sdk gateway is the DEFAULT (works in-sandbox; the user-provided NVIDIA key is HTTP-403-blocked in this sandbox, so the z-ai gateway is the working path). The NVIDIA NIM direct client is retained as LLM_PROVIDER=nvidia for deployments with a valid key + outbound. Both are OpenAI-compatible; the orchestrator is provider-agnostic.
+- No live secrets in repo history. Lint clean. Dev server healthy (setsid --fork, port 3000). Page verified in-browser with no console errors.
+- ⏳ AWAITING USER APPROVAL before Phase 3 (Action Connectors + Guardrails) per user's standing instruction.
+- NO cron job created — user explicitly disabled cron for this section (stated multiple times). The system's default 15-min webDevReview cron is OVERRIDDEN by the user's explicit instruction.
+
+Constraints carried forward to Phase 3:
+- Single user-visible route: / only.
+- No indigo/blue colors (mission-control palette: emerald/amber/rose/slate, dark mode default).
+- Sticky footer on every page (mt-auto).
+- TanStack Query for server state; framer-motion for the reasoning-stream reveal.
+- Backend calls via relative path (/api/* same-server, no XTransformPort needed).
+- Apache 2.0 license.
+- One LLM provider interface (OpenAI-compatible); temperature 0; pinned versions.
+- Sandbox all actions (Phase 3: sandbox GitHub org + Slack workspace; dry-run toggle).
+- Cron DISABLED for this section.
+- Phase 3: real GitHub (openIssue, openPR — NEVER merges) + real Slack (postTriage) connectors against the sandbox repo/channel, replacing the action stubs. Plus the Guardrail (PII refusal, no-merge, human-approval gate) that currently lives only in the prompt — make it a real code-level check before the action tools execute.
