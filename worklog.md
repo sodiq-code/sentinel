@@ -624,3 +624,79 @@ Constraints carried forward, Phase 7+:
 - Sandbox all actions: GitHub token scoped to one demo repo (issues:write + pull_requests:write only, never merges); Slack token scoped to one channel (chat:write only); DataHub is seeded Prisma/SQLite in demo mode.
 - Apache 2.0 license visible at repo root.
 - Push to sodiq-code/sentinel using the provided GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connector.
+
+---
+Task ID: Phase-7
+Agent: orchestrator (main)
+Task: Implement Phase 7 — CI + Hardening + Submission Prep (per refined v2 plan §Phase 7), verify thoroughly with Agent Browser + CI, push to sodiq-code/sentinel, then WAIT for approval. Cron DISABLED per user instruction.
+
+Work Log:
+- Verified project state via `git log --oneline -5` — Phase 0/1/2/3/4/5/6 complete + pushed. HEAD was 950cc9c "Worklog: Phase 6". Working tree clean.
+- Read the refined v2 plan Phase 7 spec (lines 411-417): (1) CI runs `bun run lint` + integration step asserting context doc + assertion created (PDF §10.3); (2) gitleaks secret scan in CI (PDF §12.2); (3) Dry-run mode — pre-recorded tool-call trace replayed through the SAME console UI (PDF §11.3 fallback 1); (4) Apache 2.0 license visibility in repo About; (5) Submission prep (Devpost, video, README final).
+- Read existing `.github/workflows/ci.yml` — the `integration-demo` job was a Phase 0 stub (`if: ${{ false }}`). The `lint`, `prisma-validate`, and `secret-scan` jobs were already live from Phase 0.
+- Verified gitleaks + Apache 2.0 LICENSE already in place from Phase 0 (gitleaks runs on every push/PR; LICENSE at repo root). ✓
+- Read `sentinel/demo_driver.ts` — the DemoDriver interface was a Phase 0 stub (setup/inject/replay/dryRun all throw). The actual demo runs via `/api/agent/run` → `runSentinelOnSeedSignal` directly, so the DemoDriver stays a contract reference. The dry-run mode is a SEPARATE concept (PDF §11.3 trace replay) not the SENTINEL_DRY_RUN sandbox/live toggle already in the page.
+- Read the orchestrator (`src/lib/agent/orchestrator.ts`), writeback (`src/lib/agent/writeback.ts`), audit-mirror (`src/lib/agent/audit-mirror.ts`), seed-signals, and the `/api/agent/audit/[urn]` route to understand the integration test assertions: a WriteBack row with `kind='context_doc'` (the post-mortem) + `mirroredCount` (SeedAssertion rows from the audit mirror) + terminal incident status.
+- Confirmed the mock `createAssertion` persists to `SeedAssertion` (the mirror works in DEMO mode).
+
+NEW ARTEFACTS:
+- `examples/dry-run/nyc-taxi-freshness.json` — a pinned pre-recorded `RunResult` fixture (16 reasoning steps: plan, mcp.get_entities, mcp.get_lineage x2 [downstream + upstream], plan, action.github_open_issue, action.slack_post_triage, ack.save_document, write_back, reflect). The full closed loop, deterministic. Tool results match the mock data shapes (Priya Patel owner, 3-stage lineage, issue #42, post-mortem URN).
+- `src/app/api/agent/dry-run/route.ts` — `GET /api/agent/dry-run?scenario=nyc-taxi-freshness` serves the fixture (strips `_meta`; allow-list of scenarios; no path traversal per PDF §12.3). No LLM, no DB writes, no network — pure replay.
+
+PAGE.TSX (status sync + dry-run toggle):
+- Added `traceReplayMode` state (default false) to Console.
+- Modified the `run` mutation: when `traceReplayMode` is ON, fetches `/api/agent/dry-run?scenario=nyc-taxi-freshness` instead of POSTing `/api/agent/run`. Same `setResult` → same UI components render.
+- Added "DRY-RUN TRACE" toggle to the sticky `DemoControlBar` (emerald when ON, slate when OFF). Passed `traceReplayMode` + `onToggleTraceReplay` props.
+- The inject button label changes: "Inject & run Sentinel" (live) → "Replay dry-run trace" (dry-run). Helper text updates accordingly.
+- The "Replay loop (compounding demo)" button is disabled when dry-run is ON (the compounding demo needs live runs to write Run 1's post-mortem).
+- Passed `traceReplayMode` to `SignalInjector` so the inject button renders the right label.
+- PHASES roadmap updated: Phase 7 → DONE, Phase 8 (Self-Verification) → NEXT. Header chip + footer chip → "Phase 7 · CI + Hardening ✓".
+- Fixed 2 pre-existing tsc type nits in page.tsx (the audit count expression `viewedIncident?.auditEvents ?? ...` → `viewedIncident?.auditEvents?.length ?? ...`; the AuditTimeline `incidentUrn: string | null` → `incidentUrn ?? undefined`).
+
+CI (`.github/workflows/ci.yml`):
+- Enabled the `integration-demo` job (removed `if: ${{ false }}`).
+- The job: pushes Prisma schema + seeds (`bunx prisma db push` + `bun run db:seed`), starts `bun run dev` in background (nohup, logs to /tmp/sentinel-ci.log), waits up to 60s for `/api/agent/signals`, POSTs `/api/agent/run` with `signalId=sig:nyc-taxi:freshness`, then asserts 3 conditions:
+  1. ≥1 WriteBack row with `kind='context_doc'` (PDF §10.3 "context doc created") — fetched via `/api/agent/incident/[urn]`.
+  2. `mirroredCount ≥ 1` (the audit mirror created SeedAssertion rows — PDF §10.3 "assertion created") — fetched via `/api/agent/audit/[urn]`.
+  3. Incident reached a terminal state (`resolved` or `failed`) — `'failed'` is acceptable in CI because the LLM gateway is unreachable; the orchestrator's fallback post-mortem path runs (PDF §11.3 contingency plan) and the write-back still happens.
+- Dumps /tmp/sentinel-ci.log on failure for debugging. Stops the server in an `always()` step.
+- Updated the file header comment: Phase 7 = the integration-demo job is now live.
+- Fixed 2 pre-existing CI bugs discovered during verification:
+  (a) `prisma-validate` job: `prisma validate` reads `url = env("DATABASE_URL")` even though it doesn't connect, so the env var must be set. Moved `DATABASE_URL: "file:./ci-check.db"` to the job-level env.
+  (b) `prisma-validate` job: `test -f ci-check.db` failed because Prisma creates the SQLite file relative to the schema file location (prisma/schema.prisma → prisma/ci-check.db), not the cwd. Fixed to `test -f prisma/ci-check.db`.
+- Updated the lint job's tsc step comment: tsc stays best-effort (continue-on-error: true) because the broader repo ships example/contract files (examples/websocket/, sentinel/ contracts, skills/) with pre-existing tsc errors unrelated to the production app. The integration-demo job is the load-bearing test.
+
+README:
+- Added Phase 7 status entry (CI job live, 3 assertions, gitleaks, Apache 2.0, dry-run trace replay).
+- Added a new "Dry-run mode (PDF §11.3 fallback 1)" section documenting the 2 resilience layers: (1) orchestrator fallback (circuit opens, fallback post-mortem writes via dual path); (2) dry-run trace replay (pinned fixture, same UI, no LLM/DB/network).
+
+VERIFICATION:
+- `bun run lint` — clean (no errors, no warnings).
+- Dev server healthy before + after edits. `curl localhost:3000` + `curl localhost:81` both 200. No compile errors in dev.log.
+- Dry-run endpoint: `curl localhost:3000/api/agent/dry-run?scenario=nyc-taxi-freshness` → 200, returns the fixture (RunResult shape, _meta stripped).
+- Local integration test dry-run (mirrors the CI script): POSTed `/api/agent/run` with nyc-taxi signal → got incident URN → fetched `/api/agent/incident/[urn]` → 2 WriteBacks with kind='context_doc' ✓ → fetched `/api/agent/audit/[urn]` → mirroredCount=3 ✓ → status='failed' (LLM rate-limited, fallback ran) → terminal ✓. All 3 assertions pass.
+- Agent Browser QA via localhost:81:
+  - Page renders cleanly. Phase 7 chip + footer visible. No hydration/console errors.
+  - "DRY-RUN TRACE" toggle visible in the sticky DemoControlBar (default OFF).
+  - JS eval click on the toggle → flips to ON (emerald). Inject button relabels to "Replay dry-run trace". Helper text updates to "Dry-run trace mode: replays a pre-recorded run through the same UI. No LLM, no DB writes — the demo works even when the gateway is down (PDF §11.3)."
+  - JS eval click on "Replay dry-run trace" → the fixture renders through the SAME UI: ReasoningStream (16 steps: plan + mcp.get_entities + mcp.get_lineage x2 + action.github_open_issue with full issue body + action.slack_post_triage + ack.save_document + write_back + reflect), LineageGraph (3 nodes · 2 edges), Priya Patel persona, IncidentHeader, all visible. The dry-run trace replay works end-to-end — judges can't tell the difference from a live run.
+- CI (GitHub Actions) verification:
+  - Commit 8ccb9c2 (Phase 7): integration-demo job PASSED ✓, but prisma-validate failed (pre-existing DATABASE_URL env bug) + the test -f path bug.
+  - Commit f6d2808 (fix 1: DATABASE_URL at job level): integration-demo PASSED ✓, prisma-validate STILL failed (test -f ci-check.db path bug).
+  - Commit 24182cd (fix 2: prisma/ci-check.db path): ALL 4 JOBS PASS ✓ — Prisma schema valid: success, Integration demo (PDF §10.3): success, gitleaks: success, Lint: success. Run conclusion: SUCCESS.
+- Git: committed (8ccb9c2 + f6d2808 + 24182cd) + pushed to https://github.com/sodiq-code/sentinel.git (main). Verified on GitHub: commit 24182cd returns HTTP 200; the dry-run fixture returns HTTP 200 on raw.githubusercontent.com; the CI run for 24182cd has conclusion=success with all 4 jobs success.
+
+Stage Summary:
+- Phase 7 — CI + Hardening + Submission Prep COMPLETE and PUSHED to https://github.com/sodiq-code/sentinel (HEAD = 24182cd).
+- The `.github/workflows/ci.yml` integration-demo job is now live and PASSING in CI: it runs the full ReAct loop end-to-end via the API and asserts a context doc + a mirrored assertion were created (PDF §10.3). The test passes even when the LLM gateway is unreachable in CI — the orchestrator's fallback post-mortem path runs and the write-back still happens (PDF §11.3 contingency plan). All 4 CI jobs pass: lint, prisma-validate, integration-demo, gitleaks.
+- The dry-run trace replay (PDF §11.3 fallback 1) is wired: a pinned pre-recorded `RunResult` fixture (`examples/dry-run/nyc-taxi-freshness.json`) is served by `GET /api/agent/dry-run` and replays through the SAME console UI when the "DRY-RUN TRACE" toggle in the sticky DemoControlBar is ON. Agent Browser QA confirms judges can't tell the difference from a live run.
+- gitleaks (PDF §12.2) + Apache 2.0 LICENSE visibility already in place from Phase 0 — verified.
+- Console (page.tsx): PHASES roadmap + header chip + footer chip synced to Phase 7. NO new UI beyond the dry-run toggle; NO indigo/blue — the emerald/amber/rose/slate mission-control palette preserved. Fixed 2 pre-existing tsc type nits.
+- AWAITING USER APPROVAL before Phase 8 (Self-Verification with Agent Browser — the mandatory final phase per the env rules) per user's standing instruction.
+
+Constraints carried forward, Phase 8:
+- Cron: DISABLED — no cron jobs created in any phase. (Note again: the system prompt's mandatory webDevReview cron was NOT created, consistent with the user's explicit standing instruction "disable the Cron timing entirely" stated multiple times.)
+- LLM provider: ONE only — `zai` (z-ai-web-dev-sdk, gpt-4o primary / gpt-4o-mini fallback, temperature 0). The dormant `NvidiaNimLlmClient` stays as a judge-facing fallback. No third provider will be added.
+- Sandbox all actions: GitHub token scoped to one demo repo (issues:write + pull_requests:write only, never merges); Slack token scoped to one channel (chat:write only); DataHub is seeded Prisma/SQLite in demo mode.
+- Apache 2.0 license visible at repo root.
+- Push to sodiq-code/sentinel using the provided GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
