@@ -1,0 +1,22 @@
+{
+  "dryRun": true,
+  "demoMode": true,
+  "github": {
+    "mode": "sandbox",
+    "repo": "sodiq-code/sentinel-demo-pipeline",
+    "dryRun": true,
+    "tokenPresent": true,
+    "reachable": true,
+    "defaultBranch": "main",
+    "error": null
+  },
+  "slack": {
+    "mode": "sandbox",
+    "channel": "C0BL9CQ4D5G",
+    "tokenPresent": true,
+    "reachable": true,
+    "botUser": "sentinel",
+    "team": "Build with DataHub",
+    "error": null
+  }
+}

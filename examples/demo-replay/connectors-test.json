@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "demoMode": true,
+  "mode": "sandbox",
+  "github": {
+    "repo": "sodiq-code/sentinel-demo-pipeline",
+    "number": 42,
+    "url": "https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42",
+    "sandbox": true
+  },
+  "slack": {
+    "channel": "C0BL9CQ4D5G",
+    "ts": "1753685655.000123",
+    "sandbox": true
+  },
+  "note": "Vercel preview — connector test is a no-op replay of the dry-run fixture."
+}

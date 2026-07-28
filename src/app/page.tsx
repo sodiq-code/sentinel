@@ -307,6 +307,11 @@ export default function Page() {
 function Console() {
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
+  // Vercel Demo Replay mode (build-time flag). When true, the dashboard
+  // auto-loads a pinned closed-loop trace so judges land on a fully
+  // populated incident console without the live LLM gateway (which is
+  // sandbox-internal to z.ai). See src/lib/demo-mode.ts + examples/demo-replay/.
+  const DEMO_MODE = process.env.NEXT_PUBLIC_VERCEL_DEMO_MODE === 'true';
   const [revealedCount, setRevealedCount] = useState(0);
   const [runError, setRunError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -323,7 +328,7 @@ function Console() {
   // /api/agent/dry-run and replays it through the SAME console UI — judges
   // can't tell the difference from a live run. Used when the live LLM
   // gateway is down (429/5xx). No DB writes, no LLM calls, no network.
-  const [traceReplayMode, setTraceReplayMode] = useState(false);
+  const [traceReplayMode, setTraceReplayMode] = useState(DEMO_MODE);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
 
@@ -409,6 +414,27 @@ function Console() {
     const t = setInterval(() => setElapsed((Date.now() - runStartRef.current) / 1000), 100);
     return () => clearInterval(t);
   }, [runStartRef.current === 0]);
+
+  // Vercel Demo Mode: auto-populate the dashboard on load with the pinned
+  // dry-run trace so judges land on a fully populated incident console —
+  // reasoning stream, lineage graph, persona, actions, write-backs all
+  // visible before the judge clicks anything (PDF §11.3 fallback 1).
+  useEffect(() => {
+    if (!DEMO_MODE || result) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/agent/dry-run?scenario=nyc-taxi-freshness');
+        const j = await r.json();
+        if (cancelled || !r.ok) return;
+        setResult(j as RunResult);
+        setRevealedCount((j as RunResult).steps.length);
+      } catch {
+        // silent — the run button still works as a manual replay
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [DEMO_MODE, result]);
 
   const run = useMutation({
     mutationFn: async (signalId: string) => {
@@ -616,6 +642,21 @@ function Console() {
         </div>
       </header>
 
+      {/* Vercel Demo Mode banner — PDF §11.3 fallback 1. The public Vercel
+          deployment replays a pinned closed-loop trace through the SAME
+          console UI because the z-ai LLM gateway is sandbox-internal + SQLite
+          cannot persist on Vercel's ephemeral filesystem. The live agent
+          demo (with the real LLM) runs on the sandbox link. */}
+      {DEMO_MODE && (
+        <div className="border-b border-emerald-500/30 bg-emerald-500/10">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex items-center gap-2 text-xs">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="font-mono text-emerald-300 font-semibold whitespace-nowrap">VERCEL PREVIEW · DRY-RUN MODE</span>
+            <span className="text-emerald-200/70 hidden sm:inline truncate">— this public deployment replays a pinned closed-loop trace (no live LLM, no DB writes). The live agent demo runs on the sandbox link. PDF §11.3 fallback 1.</span>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-28">
         {/* Hero */}
         <section className="mb-6">
@@ -745,6 +786,7 @@ function Console() {
         running={running}
         replayRun={replayRun}
         traceReplayMode={traceReplayMode}
+        demoMode={DEMO_MODE}
         onToggleTraceReplay={() => setTraceReplayMode((v) => !v)}
         onReplayLoop={runReplayLoop}
         onTestConnectors={async (dryRun) => {
@@ -1828,6 +1870,7 @@ function DemoControlBar({
   running,
   replayRun,
   traceReplayMode,
+  demoMode,
   onToggleTraceReplay,
   onReplayLoop,
   onTestConnectors,
@@ -1836,6 +1879,7 @@ function DemoControlBar({
   running: boolean;
   replayRun: 0 | 1 | 2;
   traceReplayMode: boolean;
+  demoMode?: boolean;
   onToggleTraceReplay: () => void;
   onReplayLoop: () => void;
   onTestConnectors: (dryRun: boolean) => Promise<unknown>;
@@ -1861,16 +1905,17 @@ function DemoControlBar({
             runs even when the live LLM gateway is down. */}
         <button
           onClick={onToggleTraceReplay}
-          title="PDF §11.3 fallback 1: replay a pre-recorded tool-call trace through the same console UI. Use when the live LLM gateway is down — judges can't tell the difference."
+          disabled={demoMode}
+          title={demoMode ? "Locked ON in Vercel preview mode — the live LLM gateway is sandbox-internal + SQLite cannot persist on Vercel's ephemeral filesystem, so this public deployment replays a pinned closed-loop trace (PDF §11.3 fallback 1)." : "PDF §11.3 fallback 1: replay a pre-recorded tool-call trace through the same console UI. Use when the live LLM gateway is down — judges can't tell the difference."}
           className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 transition-colors ${
             traceReplayMode
               ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/25"
               : "border-slate-700 bg-slate-900/60 text-slate-400 hover:bg-slate-800/60"
-          }`}
+          } ${demoMode ? "cursor-not-allowed opacity-80" : ""}`}
         >
           <span className={`h-2 w-2 rounded-full ${traceReplayMode ? "bg-emerald-400 animate-pulse" : "bg-slate-600"}`} />
           <span className="font-mono text-[11px]">DRY-RUN TRACE</span>
-          <span className="text-[10px] text-slate-500">{traceReplayMode ? "ON" : "OFF"}</span>
+          <span className="text-[10px] text-slate-500">{traceReplayMode ? "ON" : "OFF"}{demoMode ? " · LOCKED" : ""}</span>
         </button>
         {/* Phase 5 — Replay loop (compounding demo) */}
         <button

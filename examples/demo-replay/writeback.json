@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "demoMode": true,
+  "outcome": {
+    "urn": "urn:li:document:sentinel:postmortem:dryrun:0001",
+    "kind": "context_doc",
+    "path": "agent_context_kit",
+    "status": "succeeded",
+    "fallback": false
+  },
+  "note": "Vercel preview — writeback is a no-op replay of the dry-run fixture."
+}

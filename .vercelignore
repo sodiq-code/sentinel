@@ -1,0 +1,30 @@
+# Vercel deploy exclusions — Sandbox-only artifacts.
+#
+# The Vercel deployment runs in Demo Replay mode (VERCEL_DEMO_MODE=true):
+# every API route returns a pinned fixture derived from the Phase 7 dry-run
+# trace (examples/demo-replay/*). No DB, no live LLM, no websocket
+# mini-service. These sandbox-only artifacts are excluded to keep the
+# serverless build lean + avoid shipping the sandbox SQLite DB.
+#
+# The live agent demo (with the real z-ai LLM gateway) runs on the sandbox
+# link — both are documented in the README.
+
+# Sandbox SQLite database (Prisma + SQLite, file-based — cannot persist on
+# Vercel's ephemeral filesystem anyway).
+*.db
+*.db-journal
+
+# WebSocket mini-service — runs on its own port in the sandbox; Vercel
+# uses serverless functions, not long-running services.
+mini-services/
+
+# Authoring artifacts not needed in the deployed build.
+uploads/
+agent-ctx/
+
+# CI is GitHub Actions — not part of the Vercel build.
+.github/
+
+# Local dev logs.
+dev.log
+server.log

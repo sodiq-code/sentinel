@@ -9,10 +9,12 @@
 // reason, proposedAction, approver } object that surfaces in the UI".
 import { NextResponse } from 'next/server'
 import { listApprovals } from '@/lib/guardrail/approval-gate'
+import { isDemoMode, demoFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
+  if (isDemoMode()) return NextResponse.json(demoFixture('guardrail-pending'))
   const url = new URL(req.url)
   const incidentUrn = url.searchParams.get('incidentUrn') || undefined
   const statusParam = url.searchParams.get('status')

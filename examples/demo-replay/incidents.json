@@ -1,0 +1,15 @@
+{
+  "incidents": [
+    {
+      "urn": "urn:li:incident:sentinel:dryrun:0001",
+      "signalType": "freshness",
+      "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)",
+      "status": "resolved",
+      "createdAt": "2026-07-28T03:14:02.000Z",
+      "resolvedAt": "2026-07-28T03:14:47.000Z",
+      "stepCount": 16,
+      "toolCallCount": 6,
+      "writebackCount": 1
+    }
+  ]
+}
