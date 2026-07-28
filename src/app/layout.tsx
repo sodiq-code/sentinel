@@ -42,7 +42,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Sentinel — Autonomous Data Incident Response Agent for DataHub",
     description:
-      "An autonomous agent that turns DataHub into the substrate for autonomous data incident response. Built for Build with DataHub: The Agent Hackathon.",
+      "An autonomous agent that turns DataHub into the substrate for autonomous data incident response — reads signals, triages incidents, traverses lineage, takes actions, and writes post-mortems back to the context graph.",
   },
 };
 
