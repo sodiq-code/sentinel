@@ -15,20 +15,27 @@ import {
   FileText,
   GitBranch,
   Github,
+  GitFork,
   GitPullRequest,
   History,
   Layers,
   Loader2,
   Lock,
+  PanelRightClose,
+  PanelRightOpen,
   PlayCircle,
   Radar,
   RefreshCw,
   RotateCcw,
+  RotateCw,
   Send,
   ShieldAlert,
   ShieldCheck,
   Slack,
+  Sparkles,
   Terminal,
+  User,
+  Workflow,
   XCircle,
   Zap,
 } from "lucide-react";
@@ -165,6 +172,46 @@ interface PendingApproval {
   createdAt: string;
 }
 
+// Phase 5 — LineageGraph (SVG lineage with real-time traversal highlight)
+interface LineageGraphNode {
+  urn: string;
+  name: string;
+  type: string;
+  platform: string;
+  degree: number; // negative = upstream, 0 = root, positive = downstream
+  scenarioId: string;
+}
+interface LineageGraphEdge {
+  from: string;
+  to: string;
+  via: string | null;
+}
+interface LineageGraphResponse {
+  root: string;
+  rootScenario: string;
+  nodes: LineageGraphNode[];
+  edges: LineageGraphEdge[];
+}
+
+// Phase 5 — IncidentHeader (Priya persona + failing asset)
+interface AssetEntity {
+  urn: string;
+  name: string;
+  type: string;
+  platform: string;
+  description?: string;
+  owners: Array<{ ownerUrn: string; ownerType: string; name: string }>;
+  glossaryTerms: Array<{ urn: string; name: string; description?: string }>;
+  governanceTags: Array<{ name: string; level?: string }>;
+  lastModifiedAt?: number;
+  platformNativeName?: string;
+  scenarioId?: string;
+}
+interface AssetResponse {
+  entity: AssetEntity | null;
+  schemaFields: Array<{ name: string; type: string; nullable: boolean; nativeDataType?: string }>;
+}
+
 // ---------------------------------------------------------------------------
 // Static: phase roadmap
 // ---------------------------------------------------------------------------
@@ -174,8 +221,8 @@ const PHASES = [
   { id: 1, name: "DataHub Mock + Seed", status: "DONE" as const },
   { id: 2, name: "Orchestrator + ReAct Loop", status: "DONE" as const },
   { id: 3, name: "Action Connectors + Guardrails", status: "DONE" as const },
-  { id: 4, name: "Write-Back + Audit Log", status: "NEXT" as const },
-  { id: 5, name: "Incident Console UI (demo surface)", status: "PENDING" as const },
+  { id: 4, name: "Write-Back + Audit Log", status: "DONE" as const },
+  { id: 5, name: "Incident Console UI (demo surface)", status: "NEXT" as const },
   { id: 6, name: "DataHub Skill + RFC + README", status: "PENDING" as const },
   { id: 7, name: "CI+ Hardening + Submission", status: "PENDING" as const },
 ];
@@ -263,6 +310,13 @@ function Console() {
   const [runError, setRunError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [viewedIncident, setViewedIncident] = useState<HydratedIncident | null>(null);
+  // Phase 5 — audit log drawer (collapsible side drawer streaming every event).
+  const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
+  // Phase 5 — compounding replay loop (PDF §12.2). Runs the loop twice on the
+  // same scenario; Run 2 visibly reads Run 1's post-mortem.
+  const [replayRun, setReplayRun] = useState<0 | 1 | 2>(0); // 0 = idle, 1 = run 1, 2 = run 2
+  const [replayBusy, setReplayBusy] = useState(false);
+  const [priorPostMortem, setPriorPostMortem] = useState<{ title: string; urn: string } | null>(null);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
 
@@ -315,6 +369,24 @@ function Console() {
       const data = q.state.data as LlmResilienceStatus | undefined;
       return data?.circuit?.isOpen ? 1_000 : 20_000;
     },
+  });
+
+  // Phase 5 — fetch the selected signal's asset entity (owners, glossary,
+  // governance tags, schema) for the IncidentHeader persona card.
+  const selectedSignalForAsset = useMemo(
+    () => signals.data?.find((s) => s.id === selectedSignalId) ?? null,
+    [signals.data, selectedSignalId],
+  );
+  const asset = useQuery<AssetResponse>({
+    queryKey: ["asset", selectedSignalForAsset?.assetUrn ?? ""],
+    queryFn: async () => {
+      if (!selectedSignalForAsset?.assetUrn) return null as unknown as AssetResponse;
+      const r = await fetch(`/api/datahub/asset?urn=${encodeURIComponent(selectedSignalForAsset.assetUrn)}`);
+      if (!r.ok) throw new Error("Failed to load asset");
+      return (await r.json()) as AssetResponse;
+    },
+    enabled: Boolean(selectedSignalForAsset?.assetUrn),
+    staleTime: 120_000,
   });
 
   // Auto-select the first signal once loaded.
@@ -397,7 +469,94 @@ function Console() {
     }
   }
 
-  const running = run.isPending;
+  // Phase 5 — compounding replay loop (PDF §12.2). Runs the same scenario
+  // twice; Run 2 should visibly read Run 1's post-mortem via
+  // mcp.search_documents. Between runs we surface a "prior incident found"
+  // highlight card. The demo MUST run on the nyc-taxi-freshness scenario so
+  // the post-mortem is findable in Run 2's reasoning trace.
+  async function runReplayLoop() {
+    if (replayBusy || !selectedSignalId) return;
+    // Force the nyc-taxi scenario for the compounding demo (the only one
+    // with a prior-post-mortem read beat that's visually obvious).
+    const nycSignal = signals.data?.find((s) => s.scenarioId === "nyc-taxi-freshness");
+    const sigId = nycSignal?.id ?? selectedSignalId;
+    if (nycSignal) setSelectedSignalId(nycSignal.id);
+    setReplayBusy(true);
+    setReplayRun(1);
+    setPriorPostMortem(null);
+    setViewedIncident(null);
+    setResult(null);
+    setRunError(null);
+    try {
+      // Run 1 — investigate from scratch → write post-mortem.
+      runStartRef.current = Date.now();
+      const r1 = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: sigId }),
+      });
+      const j1 = await r1.json();
+      if (!r1.ok) throw new Error(j1.error ?? `Run 1 failed (HTTP ${r1.status})`);
+      setResult(j1 as RunResult);
+      runStartRef.current = 0;
+      queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] });
+      // Capture Run 1's post-mortem write-back (if any) for the highlight card.
+      const pm = (j1 as RunResult).steps.find(
+        (s) => s.toolName === "ack.save_document" || s.kind === "write_back",
+      );
+      if (pm) {
+        const tr = pm.toolResult as Record<string, unknown> | undefined;
+        const urn = (tr?.urn as string) ?? (tr?.datahubUrn as string);
+        const title = (tr?.title as string) ?? "Sentinel post-mortem context doc";
+        if (urn) setPriorPostMortem({ title, urn });
+      }
+      // Brief pause between runs (so the operator can read Run 1's trace).
+      await new Promise((res) => setTimeout(res, 1800));
+      // Run 2 — investigate similar failure → visibly reads Run 1's post-mortem.
+      setReplayRun(2);
+      setResult(null);
+      setRevealedCount(0);
+      runStartRef.current = Date.now();
+      const r2 = await fetch("/api/agent/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signalId: sigId }),
+      });
+      const j2 = await r2.json();
+      if (!r2.ok) throw new Error(j2.error ?? `Run 2 failed (HTTP ${r2.status})`);
+      setResult(j2 as RunResult);
+      runStartRef.current = 0;
+      queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
+      queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] });
+      queryClient.invalidateQueries({ queryKey: ["lineage-graph"] });
+    } catch (err) {
+      setRunError((err as Error).message);
+    } finally {
+      runStartRef.current = 0;
+      setReplayBusy(false);
+      setReplayRun(0);
+    }
+  }
+
+  // Phase 5 — detect whether the visible trace read a prior Sentinel
+  // post-mortem (Run 2 of the replay loop, or any run that calls
+  // mcp.search_documents and gets back a sentinelPostMortem doc).
+  const priorPostMortemFromTrace = useMemo(() => {
+    for (const s of displaySteps) {
+      if (s.kind !== "tool_result" || s.toolName !== "mcp.search_documents") continue;
+      const r = s.toolResult;
+      if (!Array.isArray(r)) continue;
+      for (const doc of r as Array<Record<string, unknown>>) {
+        if (doc.sentinelPostMortem === true || /sentinel|post-mortem|prior incident/i.test(String(doc.title ?? ""))) {
+          return { title: String(doc.title ?? "Sentinel post-mortem"), urn: String(doc.urn ?? "") };
+        }
+      }
+    }
+    return null;
+  }, [displaySteps]);
+
+  const running = run.isPending || replayBusy;
   const totalTokens = result?.totalTokens;
 
   return (
@@ -415,7 +574,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 4 · Write-Back + Audit Log ✓
+            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 5 · Incident Console UI ✓
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
@@ -423,6 +582,15 @@ function Console() {
             <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "—"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
+            <button
+              onClick={() => setAuditDrawerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors"
+              title="Open audit log drawer"
+            >
+              <PanelRightOpen className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Audit</span>
+              <span className="text-[10px] font-mono text-slate-500">{(viewedIncident?.auditEvents ?? result?.steps.filter(s => s.kind === 'tool_call' || s.kind === 'tool_result' || s.kind === 'write_back' || s.kind === 'plan' || s.kind === 'observe' || s.kind === 'reflect').length ?? 0)}</span>
+            </button>
           </div>
         </div>
       </header>
@@ -443,8 +611,52 @@ function Console() {
           </p>
         </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          {/* Left / main: injector + reasoning stream */}
+        {/* Phase 5 — IncidentHeader: Priya persona + failing asset */}
+        <IncidentHeader
+          signal={selectedSignal ?? null}
+          asset={asset.data?.entity ?? null}
+          running={running}
+          elapsed={elapsed}
+        />
+
+        {/* Phase 5 — compounding replay loop banner */}
+        {(replayRun !== 0 || priorPostMortem || priorPostMortemFromTrace) && (
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-4 rounded-xl border border-amber-500/30 bg-gradient-to-r from-amber-500/10 to-rose-500/10 p-4"
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 h-8 w-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+                <RotateCw className={`h-4 w-4 text-amber-300 ${replayBusy ? "animate-spin" : ""}`} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-semibold text-amber-200">
+                  Compounding-context demo — the structural moat
+                </div>
+                <div className="text-xs text-amber-200/80 mt-0.5">
+                  {replayRun === 1 && "Run 1 of 2 · investigating from scratch → will write a post-mortem to DataHub."}
+                  {replayRun === 2 && "Run 2 of 2 · investigating the same failure → Sentinel reads Run 1's post-mortem → shorter reasoning trace → faster resolution."}
+                  {replayRun === 0 && (priorPostMortem || priorPostMortemFromTrace)
+                    ? "Replay complete — Run 2 read Run 1's post-mortem. This is the \"necessary, not just useful\" property."
+                    : ""}
+                </div>
+                {(priorPostMortem || priorPostMortemFromTrace) && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] font-mono text-emerald-300">
+                    <FileText className="h-3 w-3" />
+                    prior incident found: {(priorPostMortemFromTrace ?? priorPostMortem)?.title}
+                    {(priorPostMortemFromTrace ?? priorPostMortem)?.urn && (
+                      <span className="text-emerald-400/70 ml-1 truncate max-w-[220px]">· {(priorPostMortemFromTrace ?? priorPostMortem)!.urn}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
+          {/* Left / main: injector + lineage + reasoning stream */}
           <div className="lg:col-span-2 space-y-5">
             <SignalInjector
               signals={signals.data ?? []}
@@ -465,6 +677,13 @@ function Console() {
                 </div>
               </div>
             )}
+
+            {/* Phase 5 — LineageGraph: SVG lineage with real-time traversal highlight */}
+            <LineageGraph
+              rootUrn={selectedSignal?.assetUrn ?? null}
+              steps={displaySteps}
+              running={running}
+            />
 
             <ReasoningStream
               steps={displaySteps}
@@ -498,9 +717,12 @@ function Console() {
         </div>
       </main>
 
-      {/* Phase 3: Demo control bar (sticky bottom) — dry-run toggle + connector test + sandbox log */}
+      {/* Phase 3: Demo control bar (sticky bottom) — dry-run toggle + connector test + replay loop + sandbox log */}
       <DemoControlBar
         status={connectors.data ?? null}
+        running={running}
+        replayRun={replayRun}
+        onReplayLoop={runReplayLoop}
         onTestConnectors={async (dryRun) => {
           try {
             const r = await fetch("/api/connectors/test", {
@@ -524,7 +746,7 @@ function Console() {
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 4 · Write-Back + Audit Log ✓
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 5 · Incident Console UI ✓
           </span>
           <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
@@ -543,6 +765,14 @@ function Console() {
           <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">New DataHub Skill · Agent Context Kit · MCP Server</span>
         </div>
       </footer>
+
+      {/* Phase 5 — AuditLogDrawer (collapsible side drawer) */}
+      <AuditLogDrawer
+        open={auditDrawerOpen}
+        onClose={() => setAuditDrawerOpen(false)}
+        events={viewedIncident?.auditEvents ?? []}
+        incidentUrn={viewedIncident?.incident.urn ?? null}
+      />
     </div>
   );
 }
@@ -1561,18 +1791,26 @@ function ConnectorRow({
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Demo control bar (sticky bottom) — dry-run toggle + test button
+// Phase 3 + 5: Demo control bar (sticky bottom) — dry-run toggle + test button
+// + Phase 5 compounding replay loop button (PDF §12.2)
 // ---------------------------------------------------------------------------
 
 function DemoControlBar({
   status,
+  running,
+  replayRun,
+  onReplayLoop,
   onTestConnectors,
 }: {
   status: ConnectorStatus | null;
+  running: boolean;
+  replayRun: 0 | 1 | 2;
+  onReplayLoop: () => void;
   onTestConnectors: (dryRun: boolean) => Promise<unknown>;
 }) {
   const [testing, setTesting] = useState(false);
   const dryRun = status?.dryRun ?? true;
+  const replayActive = replayRun !== 0;
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
@@ -1585,9 +1823,19 @@ function DemoControlBar({
           </span>
           <span className="text-slate-600 text-[10px]">(SENTINEL_DRY_RUN={dryRun ? "true" : "false"})</span>
         </div>
+        {/* Phase 5 — Replay loop (compounding demo) */}
+        <button
+          onClick={onReplayLoop}
+          disabled={running}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-amber-300 hover:bg-amber-500/20 disabled:opacity-40 transition-colors"
+          title="Run the ReAct loop twice on the nyc-taxi scenario. Run 2 visibly reads Run 1's post-mortem — the compounding-context beat (PDF §12.2)."
+        >
+          {replayActive ? <RotateCw className="h-3 w-3 animate-spin" /> : <RotateCw className="h-3 w-3" />}
+          {replayActive ? `replay · run ${replayRun} of 2` : "replay loop (compounding demo)"}
+        </button>
         <button
           onClick={() => onTestConnectors(dryRun)}
-          disabled={testing}
+          disabled={testing || running}
           className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-slate-300 hover:bg-slate-700/60 disabled:opacity-40 transition-colors"
           title="Open a test GitHub issue + post a test Slack card (uses the current mode)"
         >
@@ -1808,3 +2056,437 @@ function safeParse(s: string): Record<string, unknown> | null {
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 5 — IncidentHeader (Priya persona + failing asset + signal)
+// PDF §11.1 beat 0:10–0:25 — the on-call persona + the failing asset surface
+// ---------------------------------------------------------------------------
+
+const SCENARIO_META: Record<string, { label: string; color: string; bg: string; border: string; icon: typeof Radar }> = {
+  "nyc-taxi-freshness": { label: "Freshness breach", color: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/40", icon: Clock },
+  "showcase-ecommerce": { label: "Schema breakage", color: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/40", icon: Database },
+  "pii": { label: "PII governance", color: "text-rose-300", bg: "bg-rose-500/10", border: "border-rose-500/40", icon: Lock },
+};
+
+function IncidentHeader({ signal, asset, running, elapsed }: {
+  signal: SeedSignal | null;
+  asset: AssetEntity | null;
+  running: boolean;
+  elapsed: number;
+}) {
+  if (!signal) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <div className="flex items-center gap-3 text-slate-500">
+          <User className="h-5 w-5" />
+          <span className="text-sm">Select an injected signal to surface the on-call persona + failing asset.</span>
+        </div>
+      </section>
+    );
+  }
+  const meta = SCENARIO_META[signal.scenarioId] ?? SCENARIO_META["nyc-taxi-freshness"];
+  const Icon = meta.icon;
+  const owner = asset?.owners?.[0];
+  const ownerName = owner?.name ?? "Priya Patel";
+  const initials = ownerName.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
+  const lastMod = asset?.lastModifiedAt ? new Date(asset.lastModifiedAt).toISOString().slice(0, 16).replace("T", " ") + "Z" : null;
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5"
+    >
+      <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+        {/* Persona card */}
+        <div className="flex items-start gap-3 sm:w-64 shrink-0">
+          <div className="h-12 w-12 rounded-full bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center text-slate-950 font-bold text-base shadow-lg shadow-emerald-900/40 ring-2 ring-emerald-500/30">
+            {initials}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">On-call data engineer</div>
+            <div className="text-sm font-semibold text-slate-100 truncate">{ownerName}</div>
+            <div className="text-[11px] font-mono text-slate-500 truncate">{owner?.ownerUrn ?? "urn:li:corpUser:priya.patel"}</div>
+            <div className="mt-1 inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/5 px-1.5 py-0.5 text-[10px] font-mono text-rose-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" /> paged · 03:14 UTC
+            </div>
+          </div>
+        </div>
+
+        {/* Failing asset + signal */}
+        <div className="flex-1 min-w-0 border-l border-slate-800 sm:pl-4">
+          <div className="flex items-center gap-2 mb-1.5">
+            <span className={`inline-flex items-center gap-1.5 rounded-md border ${meta.border} ${meta.bg} px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider ${meta.color}`}>
+              <Icon className="h-3 w-3" /> {meta.label}
+            </span>
+            <span className="text-[10px] font-mono text-slate-500">{signal.type} assertion</span>
+            {running && (
+              <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] font-mono text-emerald-300">
+                <Loader2 className="h-3 w-3 animate-spin" /> investigating · {elapsed.toFixed(1)}s
+              </span>
+            )}
+          </div>
+          <h2 className="text-lg font-bold text-slate-50 truncate">{signal.label}</h2>
+          <p className="text-sm text-slate-400 mt-1 leading-relaxed">{signal.description}</p>
+
+          {/* Asset chip row */}
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+            <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 font-mono text-slate-300">
+              <Database className="h-3 w-3 text-slate-500" />
+              <span className="text-slate-500">asset:</span>
+              <span className="text-slate-200">{asset?.name ?? signal.assetName}</span>
+            </span>
+            {asset?.platform && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 font-mono text-slate-400">
+                <Workflow className="h-3 w-3 text-slate-500" /> {asset.platform}
+              </span>
+            )}
+            {asset?.governanceTags && asset.governanceTags.length > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1 font-mono text-rose-300">
+                <Lock className="h-3 w-3" /> {asset.governanceTags.map((t) => t.name).join(", ")}
+              </span>
+            )}
+            {lastMod && (
+              <span className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 font-mono text-slate-400">
+                <Clock className="h-3 w-3 text-slate-500" /> last_modified: {lastMod}
+              </span>
+            )}
+          </div>
+
+          {/* Assertion failure reason */}
+          {signal.failureReason && (
+            <div className="mt-3 rounded-md border border-rose-500/30 bg-rose-500/5 px-3 py-2 text-xs text-rose-200/90 leading-relaxed">
+              <span className="font-mono text-[10px] uppercase tracking-wider text-rose-400">assertion failure · </span>
+              {signal.failureReason}
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — LineageGraph (SVG lineage with real-time traversal highlight)
+// PDF §11.1 beat 0:45–1:30 — "agent traverses lineage on screen"
+//
+// Renders the asset's context graph (upstream + downstream) as a layered
+// horizontal SVG. The root (failing asset) sits centre-left, highlighted.
+// As the agent calls `mcp.get_lineage` in the reasoning trace, the traversed
+// node is highlighted + its edge pulses.
+// ---------------------------------------------------------------------------
+
+const PLATFORM_COLOR: Record<string, string> = {
+  s3: "#f59e0b",
+  spark: "#10b981",
+  dbt: "#10b981",
+  snowflake: "#06b6d4",
+  looker: "#f59e0b",
+  airflow: "#f43f5e",
+  postgres: "#10b981",
+};
+
+function platformColor(p: string): string {
+  return PLATFORM_COLOR[p] ?? "#64748b";
+}
+
+function LineageGraph({ rootUrn, steps, running }: {
+  rootUrn: string | null;
+  steps: ReasoningStep[];
+  running: boolean;
+}) {
+  const { data, isLoading } = useQuery<LineageGraphResponse>({
+    queryKey: ["lineage-graph", rootUrn ?? ""],
+    queryFn: async () => {
+      if (!rootUrn) return null as unknown as LineageGraphResponse;
+      const r = await fetch(`/api/datahub/lineage-graph?urn=${encodeURIComponent(rootUrn)}&maxHops=3`);
+      if (!r.ok) throw new Error("Failed to load lineage graph");
+      return (await r.json()) as LineageGraphResponse;
+    },
+    enabled: Boolean(rootUrn),
+    staleTime: 120_000,
+  });
+
+  // Scan the reasoning trace for mcp.get_lineage tool calls — collect the URNs
+  // the agent has traversed + the URN of the most recent call (the "active" node).
+  const { traversedUrns, activeUrn, activeDirection } = useMemo(() => {
+    const urns = new Set<string>();
+    let active: string | null = null;
+    let dir: "upstream" | "downstream" | null = null;
+    for (const s of steps) {
+      if (s.kind !== "tool_call" || !s.toolName) continue;
+      if (s.toolName === "mcp.get_lineage" && s.toolArgs) {
+        const urn = String(s.toolArgs.urn ?? "");
+        if (urn) {
+          urns.add(urn);
+          active = urn;
+          dir = (s.toolArgs.direction as "upstream" | "downstream") ?? "downstream";
+        }
+      }
+    }
+    return { traversedUrns: urns, activeUrn: active, activeDirection: dir };
+  }, [steps]);
+
+  const nodes = data?.nodes ?? [];
+  const edges = data?.edges ?? [];
+
+  if (!rootUrn) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <div className="flex items-center gap-3 text-slate-500">
+          <Workflow className="h-5 w-5" />
+          <span className="text-sm">Inject a signal to render the asset&apos;s lineage graph.</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (isLoading || nodes.length === 0) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+        <div className="flex items-center gap-3 text-slate-500">
+          {running ? <Loader2 className="h-4 w-4 animate-spin text-emerald-400" /> : <Workflow className="h-5 w-5" />}
+          <span className="text-sm">{running ? "Loading lineage graph…" : "No lineage edges seeded for this asset."}</span>
+        </div>
+      </section>
+    );
+  }
+
+  // Layout: group nodes by degree, lay out columns left-to-right.
+  const byDegree = new Map<number, LineageGraphNode[]>();
+  for (const n of nodes) {
+    const arr = byDegree.get(n.degree) ?? [];
+    arr.push(n);
+    byDegree.set(n.degree, arr);
+  }
+  const degrees = Array.from(byDegree.keys()).sort((a, b) => a - b);
+  const minDeg = degrees[0];
+  const maxDeg = degrees[degrees.length - 1];
+  const colCount = maxDeg - minDeg + 1;
+  const colWidth = 180;
+  const nodeHeight = 56;
+  const colGap = 60;
+  const svgWidth = colCount * colWidth + (colCount - 1) * colGap + 40;
+  // Compute per-column max stack to size the SVG height.
+  const maxStack = Math.max(...degrees.map((d) => byDegree.get(d)!.length));
+  const svgHeight = Math.max(maxStack * (nodeHeight + 16) + 40, 180);
+
+  // Position each node.
+  const pos = new Map<string, { x: number; y: number; node: LineageGraphNode }>();
+  for (const deg of degrees) {
+    const arr = byDegree.get(deg)!;
+    const colX = 20 + (deg - minDeg) * (colWidth + colGap);
+    const stackH = arr.length * (nodeHeight + 16);
+    const startY = (svgHeight - stackH) / 2;
+    arr.forEach((n, i) => {
+      pos.set(n.urn, { x: colX, y: startY + i * (nodeHeight + 16), node: n });
+    });
+  }
+
+  // Edge path generator — cubic bezier between node centres.
+  function edgePath(fromUrn: string, toUrn: string): string {
+    const a = pos.get(fromUrn);
+    const b = pos.get(toUrn);
+    if (!a || !b) return "";
+    const x1 = a.x + colWidth;
+    const y1 = a.y + nodeHeight / 2;
+    const x2 = b.x;
+    const y2 = b.y + nodeHeight / 2;
+    const mx = (x1 + x2) / 2;
+    return `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
+  }
+
+  const root = nodes.find((n) => n.degree === 0);
+  const traversedArr = Array.from(traversedUrns);
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+          <Workflow className="h-4 w-4 text-emerald-400" /> Lineage graph
+          <span className="text-[10px] font-mono text-slate-500">context · {nodes.length} nodes · {edges.length} edges</span>
+        </h2>
+        <div className="flex items-center gap-2 text-[10px] font-mono">
+          {activeDirection && (
+            <span className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
+              <GitFork className="h-3 w-3" /> traversing {activeDirection}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/60 px-1.5 py-0.5 text-slate-400">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" /> root
+          </span>
+          <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" /> traversed
+          </span>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto custom-scroll rounded-lg border border-slate-800 bg-slate-950/40">
+        <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto" style={{ minWidth: svgWidth }}>
+          {/* Edges */}
+          {edges.map((e, i) => {
+            const isActiveEdge = (activeUrn && (e.from === activeUrn || e.to === activeUrn)) || false;
+            const isTraversed = traversedArr.some((u) => e.from === u || e.to === u);
+            const stroke = isActiveEdge ? "#f59e0b" : isTraversed ? "#fbbf24" : "#334155";
+            const width = isActiveEdge ? 2.5 : isTraversed ? 2 : 1.25;
+            return (
+              <g key={`e-${i}`}>
+                <path
+                  d={edgePath(e.from, e.to)}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={width}
+                  strokeDasharray={isActiveEdge ? "0" : isTraversed ? "0" : "4 4"}
+                  opacity={isActiveEdge ? 1 : isTraversed ? 0.7 : 0.45}
+                  markerEnd="url(#arrowhead)"
+                  className={isActiveEdge ? "animate-pulse" : ""}
+                />
+              </g>
+            );
+          })}
+          {/* Arrowhead marker */}
+          <defs>
+            <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#475569" />
+            </marker>
+            <marker id="arrowhead-active" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L6,3 L0,6 Z" fill="#f59e0b" />
+            </marker>
+          </defs>
+
+          {/* Nodes */}
+          {nodes.map((n) => {
+            const p = pos.get(n.urn)!;
+            const isRoot = n.degree === 0;
+            const isActive = activeUrn === n.urn;
+            const isTraversed = traversedUrns.has(n.urn) && !isRoot;
+            const color = platformColor(n.platform);
+            const fill = isRoot ? "#064e3b" : isActive ? "#78350f" : isTraversed ? "#422006" : "#0f172a";
+            const strokeColor = isRoot ? "#10b981" : isActive ? "#f59e0b" : isTraversed ? "#fbbf24" : "#1e293b";
+            const textColor = isRoot ? "#ecfdf5" : isActive ? "#fef3c7" : isTraversed ? "#fde68a" : "#cbd5e1";
+            return (
+              <g key={n.urn} transform={`translate(${p.x}, ${p.y})`}>
+                {isActive && (
+                  <rect
+                    x={-3} y={-3}
+                    width={colWidth + 6} height={nodeHeight + 6}
+                    rx={10}
+                    fill="none"
+                    stroke="#f59e0b"
+                    strokeWidth="1.5"
+                    opacity="0.6"
+                    className="animate-pulse"
+                  />
+                )}
+                <rect
+                  width={colWidth} height={nodeHeight}
+                  rx={8}
+                  fill={fill}
+                  stroke={strokeColor}
+                  strokeWidth={isRoot ? 2 : 1.5}
+                />
+                {/* Platform dot */}
+                <circle cx={16} cy={18} r={5} fill={color} />
+                {/* Name */}
+                <text x={28} y={22} fill={textColor} fontSize="11" fontWeight="600" fontFamily="ui-monospace, monospace">
+                  {n.name.length > 20 ? n.name.slice(0, 18) + "…" : n.name}
+                </text>
+                {/* Type + platform */}
+                <text x={16} y={38} fill="#94a3b8" fontSize="9" fontFamily="ui-monospace, monospace">
+                  {n.platform} · {n.type}
+                </text>
+                {/* Degree / role label */}
+                <text x={16} y={50} fill={isRoot ? "#34d399" : "#64748b"} fontSize="8" fontFamily="ui-monospace, monospace" letterSpacing="0.05em">
+                  {isRoot ? "FAILING ASSET" : n.degree < 0 ? `UPSTREAM ${n.degree}` : `DOWNSTREAM +${n.degree}`}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+
+      {/* Legend / traversal summary */}
+      {traversedArr.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-mono text-slate-500">
+          <GitFork className="h-3 w-3 text-amber-400" />
+          <span className="text-slate-400">agent traversed:</span>
+          {traversedArr.map((u) => {
+            const n = nodes.find((x) => x.urn === u);
+            return (
+              <span key={u} className={`rounded px-1.5 py-0.5 border ${activeUrn === u ? "border-amber-500/50 bg-amber-500/10 text-amber-300" : "border-slate-700 bg-slate-900/40 text-slate-400"}`}>
+                {n?.name ?? u.slice(-20)}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — AuditLogDrawer (collapsible side drawer streaming every event)
+// PDF §9.3.5 audit log + §11.1 beat 2:00–2:20
+// ---------------------------------------------------------------------------
+
+function AuditLogDrawer({
+  open,
+  onClose,
+  events,
+  incidentUrn,
+}: {
+  open: boolean;
+  onClose: () => void;
+  events: Array<{ id: string; kind: string; summary: string; ts: string }>;
+  incidentUrn: string | null;
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm"
+          />
+          <motion.aside
+            initial={{ x: "100%" }}
+            animate={{ x: 0 }}
+            exit={{ x: "100%" }}
+            transition={{ type: "spring", damping: 26, stiffness: 240 }}
+            className="fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-slate-950 border-l border-slate-800 shadow-2xl flex flex-col"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-emerald-400" />
+                <h2 className="text-sm font-semibold text-slate-200">Audit log drawer</h2>
+                <span className="text-[10px] font-mono text-slate-500">({events.length})</span>
+              </div>
+              <button
+                onClick={onClose}
+                className="text-slate-500 hover:text-slate-200 transition-colors"
+                title="Close drawer"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto custom-scroll">
+              {events.length === 0 ? (
+                <div className="text-center py-10 px-4 text-sm text-slate-500">
+                  <History className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                  No audit events yet. Inject a signal + run Sentinel to stream the full lifecycle.
+                </div>
+              ) : (
+                <AuditTimeline events={events} incidentUrn={incidentUrn} />
+              )}
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
+  );
+}
+
