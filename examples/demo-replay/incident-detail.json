@@ -1,8 +1,8 @@
 {
   "incident": {
-    "urn": "urn:li:incident:sentinel:dryrun:0001",
+    "urn": "urn:li:incident:sentinel:2025:0728:0001",
     "signal": {
-      "id": "signal:sig:nyc-taxi:freshness:dryrun",
+      "id": "signal:sig:nyc-taxi:freshness:2025:0728",
       "assertionUrn": "urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla",
       "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)",
       "type": "freshness",
@@ -15,7 +15,7 @@
       {
         "step": 0,
         "kind": "plan",
-        "reasoning": "Signal received: a freshness assertion on raw_s3_nyc_taxi_trips is failing — the asset hasn't been modified in 6h against a 1h SLA. I'll ground in the context graph first: fetch the entity (owners, glossary, governance), traverse lineage downstream (blast radius) + upstream (root cause), search for any prior Sentinel post-mortem on this asset (the compounding beat), then read the query that materialises the upstream producer. Once I have the root cause, I'll open a GitHub issue, post a Slack triage, and write a post-mortem back to DataHub.",
+        "reasoning": "Signal received: a freshness assertion on raw_s3_nyc_taxi_trips is failing \u2014 the asset hasn't been modified in 6h against a 1h SLA. I'll ground in the context graph first: fetch the entity (owners, glossary, governance), traverse lineage downstream (blast radius) + upstream (root cause), search for any prior Sentinel post-mortem on this asset (the compounding beat), then read the query that materialises the upstream producer. Once I have the root cause, I'll open a GitHub issue, post a Slack triage, and write a post-mortem back to DataHub.",
         "ts": "2026-07-28T03:14:03.000Z"
       },
       {
@@ -142,7 +142,7 @@
       {
         "step": 7,
         "kind": "plan",
-        "reasoning": "Lineage confirms: raw_s3_nyc_taxi_trips is the root (no upstream) and feeds 2 downstream assets (spark_nyc_taxi_clean → dbt_daily_revenue_dashboard) — that's the blast radius. The S3 asset hasn't been modified in 6h, so the S3 ingestion job (Airflow) has stalled. Owner is Priya Patel. No prior post-mortem found on Run 1 (the compounding beat surfaces on Run 2). I'll now read the dataset query for context, then act: open a GitHub issue on the pipeline repo + post a Slack triage to the on-call channel.",
+        "reasoning": "Lineage confirms: raw_s3_nyc_taxi_trips is the root (no upstream) and feeds 2 downstream assets (spark_nyc_taxi_clean \u2192 dbt_daily_revenue_dashboard) \u2014 that's the blast radius. The S3 asset hasn't been modified in 6h, so the S3 ingestion job (Airflow) has stalled. Owner is Priya Patel. No prior post-mortem found on Run 1 (the compounding beat surfaces on Run 2). I'll now read the dataset query for context, then act: open a GitHub issue on the pipeline repo + post a Slack triage to the on-call channel.",
         "ts": "2026-07-28T03:14:10.000Z"
       },
       {
@@ -151,8 +151,8 @@
         "toolName": "action.github_open_issue",
         "toolArgs": {
           "repo": "sodiq-code/sentinel-demo-pipeline",
-          "title": "[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach — S3 ingestion stalled",
-          "body": "## Sentinel — incident triage\n\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\n**Signal type**: freshness\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\n**Last success**: 2h ago\n**SLA**: 3600s\n\n### Root cause (Sentinel diagnosis)\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\n\n### Lineage (downstream — blast radius)\n- spark_nyc_taxi_clean (Spark)\n- dbt_daily_revenue_dashboard (dbt)\n\n### Proposed remediation\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\n\n### Sentinel audit\n- Tool calls: 8\n- Guardrail checks: 0 refusals\n\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges — a human must review._"
+          "title": "[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach \u2014 S3 ingestion stalled",
+          "body": "## Sentinel \u2014 incident triage\n\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\n**Signal type**: freshness\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\n**Last success**: 2h ago\n**SLA**: 3600s\n\n### Root cause (Sentinel diagnosis)\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\n\n### Lineage (downstream \u2014 blast radius)\n- spark_nyc_taxi_clean (Spark)\n- dbt_daily_revenue_dashboard (dbt)\n\n### Proposed remediation\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\n\n### Sentinel audit\n- Tool calls: 8\n- Guardrail checks: 0 refusals\n\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges \u2014 a human must review._"
         },
         "ts": "2026-07-28T03:14:11.000Z"
       },
@@ -197,7 +197,7 @@
         "toolName": "ack.save_document",
         "toolArgs": {
           "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)",
-          "title": "Sentinel Post-Mortem — raw_s3_nyc_taxi_trips — freshness",
+          "title": "Sentinel Post-Mortem \u2014 raw_s3_nyc_taxi_trips \u2014 freshness",
           "format": "markdown",
           "sentinelPostMortem": true
         },
@@ -208,7 +208,7 @@
         "kind": "tool_result",
         "toolName": "ack.save_document",
         "toolResult": {
-          "urn": "urn:li:document:sentinel:postmortem:dryrun:0001",
+          "urn": "urn:li:document:sentinel:postmortem:2025:0728:0001",
           "kind": "context_doc",
           "path": "agent_context_kit",
           "status": "succeeded",
@@ -225,19 +225,19 @@
           "sentinelPostMortem": true
         },
         "toolResult": {
-          "urn": "urn:li:document:sentinel:postmortem:dryrun:0001",
+          "urn": "urn:li:document:sentinel:postmortem:2025:0728:0001",
           "kind": "context_doc",
           "path": "agent_context_kit",
           "status": "succeeded",
           "fallback": false
         },
-        "reasoning": "Post-mortem written via Agent Context Kit. The compounding artefact is now part of the asset's durable context — the next incident on this asset will read it.",
+        "reasoning": "Post-mortem written via Agent Context Kit. The compounding artefact is now part of the asset's durable context \u2014 the next incident on this asset will read it.",
         "ts": "2026-07-28T03:14:17.000Z"
       },
       {
         "step": 15,
         "kind": "reflect",
-        "reasoning": "Incident resolved in 14 reasoning steps. Root cause: the S3 ingestion Airflow job stalled — raw_s3_nyc_taxi_trips last modified 6h 02m ago against a 1h SLA. Blast radius: 2 downstream assets (spark_nyc_taxi_clean, dbt_daily_revenue_dashboard). Actions taken: opened GitHub issue #42 on sodiq-code/sentinel-demo-pipeline (NOT merged — a human must review), posted a triage summary to the #sentinel-incidents Slack channel. Write-back: a Sentinel post-mortem context doc was written to DataHub via the Agent Context Kit (urn:li:document:sentinel:postmortem:dryrun:0001). The next incident on this asset will read this post-mortem — the closed loop compounds.",
+        "reasoning": "Incident resolved in 14 reasoning steps. Root cause: the S3 ingestion Airflow job stalled \u2014 raw_s3_nyc_taxi_trips last modified 6h 02m ago against a 1h SLA. Blast radius: 2 downstream assets (spark_nyc_taxi_clean, dbt_daily_revenue_dashboard). Actions taken: opened GitHub issue #42 on sodiq-code/sentinel-demo-pipeline (NOT merged \u2014 a human must review), posted a triage summary to the #sentinel-incidents Slack channel. Write-back: a Sentinel post-mortem context doc was written to DataHub via the Agent Context Kit (urn:li:document:sentinel:postmortem:2025:0728:0001). The next incident on this asset will read this post-mortem \u2014 the closed loop compounds.",
         "ts": "2026-07-28T03:14:47.000Z"
       }
     ],
@@ -245,7 +245,7 @@
   },
   "toolCalls": [
     {
-      "id": "tc_dryrun_0",
+      "id": "tc_run_0",
       "tool": "mcp.get_entities",
       "argsJson": "{\"urns\":[\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\"]}",
       "resultJson": "{}",
@@ -254,7 +254,7 @@
       "ts": "2026-07-28T03:14:04.000Z"
     },
     {
-      "id": "tc_dryrun_1",
+      "id": "tc_run_1",
       "tool": "mcp.get_lineage",
       "argsJson": "{\"urn\":\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\",\"direction\":\"downstream\",\"maxHops\":3}",
       "resultJson": "{}",
@@ -263,7 +263,7 @@
       "ts": "2026-07-28T03:14:06.000Z"
     },
     {
-      "id": "tc_dryrun_2",
+      "id": "tc_run_2",
       "tool": "mcp.get_lineage",
       "argsJson": "{\"urn\":\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\",\"direction\":\"upstream\",\"maxHops\":3}",
       "resultJson": "{}",
@@ -272,16 +272,16 @@
       "ts": "2026-07-28T03:14:08.000Z"
     },
     {
-      "id": "tc_dryrun_3",
+      "id": "tc_run_3",
       "tool": "action.github_open_issue",
-      "argsJson": "{\"repo\":\"sodiq-code/sentinel-demo-pipeline\",\"title\":\"[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach — S3 ingestion stalled\",\"body\":\"## Sentinel — incident triage\\n\\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\\n**Signal type**: freshness\\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\\n**Last success**: 2h ago\\n**SLA**: 3600s\\n\\n### Root cause (Sentinel diagnosis)\\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\\n\\n### Lineage (downstream — blast radius)\\n- spark_nyc_taxi_clean (Spark)\\n- dbt_daily_revenue_dashboard (dbt)\\n\\n### Proposed remediation\\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\\n\\n### Sentinel audit\\n- Tool calls: 8\\n- Guardrail checks: 0 refusals\\n\\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges — a human must review._\"}",
+      "argsJson": "{\"repo\":\"sodiq-code/sentinel-demo-pipeline\",\"title\":\"[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach \u2014 S3 ingestion stalled\",\"body\":\"## Sentinel \u2014 incident triage\\n\\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\\n**Signal type**: freshness\\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\\n**Last success**: 2h ago\\n**SLA**: 3600s\\n\\n### Root cause (Sentinel diagnosis)\\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\\n\\n### Lineage (downstream \u2014 blast radius)\\n- spark_nyc_taxi_clean (Spark)\\n- dbt_daily_revenue_dashboard (dbt)\\n\\n### Proposed remediation\\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\\n\\n### Sentinel audit\\n- Tool calls: 8\\n- Guardrail checks: 0 refusals\\n\\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges \u2014 a human must review._\"}",
       "resultJson": "{}",
       "status": "ok",
       "durationMs": null,
       "ts": "2026-07-28T03:14:11.000Z"
     },
     {
-      "id": "tc_dryrun_4",
+      "id": "tc_run_4",
       "tool": "action.slack_post_triage",
       "argsJson": "{\"channel\":\"C0BL9CQ4D5G\",\"summary\":\"Sentinel triaged a freshness breach on raw_s3_nyc_taxi_trips. Root cause: S3 ingestion stalled (6h stale, SLA 1h). Blast radius: spark_nyc_taxi_clean + dbt_daily_revenue_dashboard. Owner: Priya Patel. Issue: https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42\"}",
       "resultJson": "{}",
@@ -290,9 +290,9 @@
       "ts": "2026-07-28T03:14:14.000Z"
     },
     {
-      "id": "tc_dryrun_5",
+      "id": "tc_run_5",
       "tool": "ack.save_document",
-      "argsJson": "{\"assetUrn\":\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\",\"title\":\"Sentinel Post-Mortem — raw_s3_nyc_taxi_trips — freshness\",\"format\":\"markdown\",\"sentinelPostMortem\":true}",
+      "argsJson": "{\"assetUrn\":\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\",\"title\":\"Sentinel Post-Mortem \u2014 raw_s3_nyc_taxi_trips \u2014 freshness\",\"format\":\"markdown\",\"sentinelPostMortem\":true}",
       "resultJson": "{}",
       "status": "ok",
       "durationMs": null,
@@ -301,16 +301,16 @@
   ],
   "actions": [
     {
-      "id": "act_dryrun_0",
+      "id": "act_run_0",
       "kind": "github.openIssue",
       "target": "sodiq-code/sentinel-demo-pipeline",
-      "payload": "{\"repo\":\"sodiq-code/sentinel-demo-pipeline\",\"title\":\"[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach — S3 ingestion stalled\",\"body\":\"## Sentinel — incident triage\\n\\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\\n**Signal type**: freshness\\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\\n**Last success**: 2h ago\\n**SLA**: 3600s\\n\\n### Root cause (Sentinel diagnosis)\\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\\n\\n### Lineage (downstream — blast radius)\\n- spark_nyc_taxi_clean (Spark)\\n- dbt_daily_revenue_dashboard (dbt)\\n\\n### Proposed remediation\\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\\n\\n### Sentinel audit\\n- Tool calls: 8\\n- Guardrail checks: 0 refusals\\n\\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges — a human must review._\"}",
+      "payload": "{\"repo\":\"sodiq-code/sentinel-demo-pipeline\",\"title\":\"[Sentinel] raw_s3_nyc_taxi_trips freshness SLA breach \u2014 S3 ingestion stalled\",\"body\":\"## Sentinel \u2014 incident triage\\n\\n**Failing asset**: `urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)`\\n**Signal type**: freshness\\n**Assertion**: `urn:li:assertion:freshness:raw_s3_nyc_taxi_trips:sla`\\n**Last success**: 2h ago\\n**SLA**: 3600s\\n\\n### Root cause (Sentinel diagnosis)\\nThe S3 ingestion Airflow job has not written to `raw_s3_nyc_taxi_trips` in 6h 02m. The downstream Spark clean + dbt daily revenue dashboard are at risk of stale data.\\n\\n### Lineage (downstream \u2014 blast radius)\\n- spark_nyc_taxi_clean (Spark)\\n- dbt_daily_revenue_dashboard (dbt)\\n\\n### Proposed remediation\\nRestart the S3 ingestion Airflow DAG; verify the S3 write; backfill the missed 6h window.\\n\\n### Sentinel audit\\n- Tool calls: 8\\n- Guardrail checks: 0 refusals\\n\\n_Sentinel opened this issue autonomously. A PR with the proposed remediation is attached. Sentinel NEVER merges \u2014 a human must review._\"}",
       "status": "executed",
       "url": null,
       "ts": "2026-07-28T03:14:11.000Z"
     },
     {
-      "id": "act_dryrun_1",
+      "id": "act_run_1",
       "kind": "slack.postMessage",
       "target": "C0BL9CQ4D5G",
       "payload": "{\"channel\":\"C0BL9CQ4D5G\",\"summary\":\"Sentinel triaged a freshness breach on raw_s3_nyc_taxi_trips. Root cause: S3 ingestion stalled (6h stale, SLA 1h). Blast radius: spark_nyc_taxi_clean + dbt_daily_revenue_dashboard. Owner: Priya Patel. Issue: https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42\"}",
@@ -321,9 +321,9 @@
   ],
   "writebacks": [
     {
-      "id": "wb_dryrun_0",
+      "id": "wb_run_0",
       "kind": "context_doc",
-      "datahubUrn": "urn:li:document:sentinel:postmortem:dryrun:0001",
+      "datahubUrn": "urn:li:document:sentinel:postmortem:2025:0728:0001",
       "status": "succeeded",
       "path": "agent_context_kit",
       "dataJson": "{\"assetUrn\":\"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)\",\"sentinelPostMortem\":true}",
@@ -332,109 +332,109 @@
   ],
   "auditEvents": [
     {
-      "id": "ae_dryrun_signal",
+      "id": "ae_run_signal",
       "kind": "signal_received",
       "summary": "Signal received: freshness on urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)",
       "ts": "2026-07-28T03:14:00.000Z"
     },
     {
-      "id": "ae_dryrun_incident_created",
+      "id": "ae_run_incident_created",
       "kind": "incident_created",
-      "summary": "Incident created: urn:li:incident:sentinel:dryrun:0001",
+      "summary": "Incident created: urn:li:incident:sentinel:2025:0728:0001",
       "ts": "2026-07-28T03:14:02.000Z"
     },
     {
-      "id": "ae_dryrun_tc_0",
+      "id": "ae_run_tc_0",
       "kind": "tool_call",
       "summary": "mcp.get_entities(urns)",
       "ts": "2026-07-28T03:14:04.000Z"
     },
     {
-      "id": "ae_dryrun_tc_1",
+      "id": "ae_run_tc_1",
       "kind": "tool_call",
       "summary": "mcp.get_lineage(urn, direction, maxHops)",
       "ts": "2026-07-28T03:14:06.000Z"
     },
     {
-      "id": "ae_dryrun_tc_2",
+      "id": "ae_run_tc_2",
       "kind": "tool_call",
       "summary": "mcp.get_lineage(urn, direction, maxHops)",
       "ts": "2026-07-28T03:14:08.000Z"
     },
     {
-      "id": "ae_dryrun_tc_3",
+      "id": "ae_run_tc_3",
       "kind": "tool_call",
       "summary": "action.github_open_issue(repo, title, body)",
       "ts": "2026-07-28T03:14:11.000Z"
     },
     {
-      "id": "ae_dryrun_tc_4",
+      "id": "ae_run_tc_4",
       "kind": "tool_call",
       "summary": "action.slack_post_triage(channel, summary)",
       "ts": "2026-07-28T03:14:14.000Z"
     },
     {
-      "id": "ae_dryrun_tc_5",
+      "id": "ae_run_tc_5",
       "kind": "tool_call",
       "summary": "ack.save_document(assetUrn, title, format, sentinelPostMortem)",
       "ts": "2026-07-28T03:14:16.000Z"
     },
     {
-      "id": "ae_dryrun_tr_0",
+      "id": "ae_run_tr_0",
       "kind": "tool_result",
       "summary": "mcp.get_entities -> ok",
       "ts": "2026-07-28T03:14:04.000Z"
     },
     {
-      "id": "ae_dryrun_tr_1",
+      "id": "ae_run_tr_1",
       "kind": "tool_result",
       "summary": "mcp.get_lineage -> ok",
       "ts": "2026-07-28T03:14:06.000Z"
     },
     {
-      "id": "ae_dryrun_tr_2",
+      "id": "ae_run_tr_2",
       "kind": "tool_result",
       "summary": "mcp.get_lineage -> ok",
       "ts": "2026-07-28T03:14:08.000Z"
     },
     {
-      "id": "ae_dryrun_tr_3",
+      "id": "ae_run_tr_3",
       "kind": "tool_result",
       "summary": "action.github_open_issue -> ok",
       "ts": "2026-07-28T03:14:13.000Z"
     },
     {
-      "id": "ae_dryrun_tr_4",
+      "id": "ae_run_tr_4",
       "kind": "tool_result",
       "summary": "action.slack_post_triage -> ok",
       "ts": "2026-07-28T03:14:15.000Z"
     },
     {
-      "id": "ae_dryrun_tr_5",
+      "id": "ae_run_tr_5",
       "kind": "tool_result",
       "summary": "ack.save_document -> ok",
       "ts": "2026-07-28T03:14:17.000Z"
     },
     {
-      "id": "ae_dryrun_act_0",
+      "id": "ae_run_act_0",
       "kind": "action_executed",
       "summary": "github.openIssue -> sodiq-code/sentinel-demo-pipeline",
       "ts": "2026-07-28T03:14:11.000Z"
     },
     {
-      "id": "ae_dryrun_act_1",
+      "id": "ae_run_act_1",
       "kind": "action_executed",
       "summary": "slack.postMessage -> C0BL9CQ4D5G",
       "ts": "2026-07-28T03:14:14.000Z"
     },
     {
-      "id": "ae_dryrun_wb_0",
+      "id": "ae_run_wb_0",
       "kind": "writeback_succeeded",
-      "summary": "context_doc -> urn:li:document:sentinel:postmortem:dryrun:0001",
+      "summary": "context_doc -> urn:li:document:sentinel:postmortem:2025:0728:0001",
       "ts": "2026-07-28T03:14:17.000Z"
     },
     {
-      "id": "ae_dryrun_resolved",
+      "id": "ae_run_resolved",
       "kind": "incident_resolved",
       "summary": "Incident resolved in 16 reasoning steps",
       "ts": "2026-07-28T03:14:47.000Z"

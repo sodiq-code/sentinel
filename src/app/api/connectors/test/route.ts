@@ -11,10 +11,12 @@
 import { NextResponse } from 'next/server'
 import { openIssue } from '@/lib/connectors/github'
 import { postTriage } from '@/lib/connectors/slack'
+import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
+  if (isPreviewMode()) return NextResponse.json(previewFixture('connectors-test'))
   let body: { dryRun?: boolean } = {}
   try {
     body = (await req.json()) as { dryRun?: boolean }

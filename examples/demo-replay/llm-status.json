@@ -7,7 +7,5 @@
     "isOpen": false,
     "consecutiveFailures": 0,
     "msUntilReset": 0
-  },
-  "demoMode": true,
-  "note": "Vercel preview runs in dry-run mode — no live LLM calls. Live agent demo runs on the sandbox link."
+  }
 }

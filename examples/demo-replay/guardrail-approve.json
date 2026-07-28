@@ -4,6 +4,5 @@
     "status": "approved",
     "decidedAt": "2026-07-28T03:14:47.000Z",
     "approverUrn": "urn:li:corpUser:operator.demo"
-  },
-  "demoMode": true
+  }
 }

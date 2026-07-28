@@ -276,6 +276,12 @@ const AUDIT_GROUP_META: Record<AuditGroup, { label: string; color: string }> = {
 // QueryClient (inline)
 // ---------------------------------------------------------------------------
 
+// When deployed to Vercel, the dashboard auto-populates with a pre-recorded
+// run on first load so a visitor lands on a fully-rendered incident console
+// without clicking anything. The flag is set at build time by Vercel env
+// vars and is inert in the sandbox (live agent runs unchanged).
+const PREVIEW_MODE = process.env.NEXT_PUBLIC_VERCEL_DEMO_MODE === "true";
+
 const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
@@ -424,6 +430,19 @@ function Console() {
       setRunError(err.message);
     },
   });
+
+  // Preview auto-populate: when deployed to Vercel, the dashboard runs the
+  // first signal once on mount so a visitor lands on a fully-rendered
+  // incident console (reasoning stream, lineage, actions, write-back,
+  // audit log) without clicking anything. Inert in the sandbox.
+  useEffect(() => {
+    if (!PREVIEW_MODE) return;
+    if (result) return;
+    if (run.isPending || run.isError) return;
+    const first = signals.data?.[0];
+    if (!first) return;
+    run.mutate(first.id);
+  }, [PREVIEW_MODE, signals.data, result, run.isPending, run.isError, run.mutate]);
 
   // Progressive reveal of reasoning steps — the "watch the agent think" effect.
   useEffect(() => {

@@ -861,3 +861,51 @@ Stage Summary:
 - For the dashboard to actually call a real LLM and produce reasoning traces (instead of the fallback post-mortem), the user needs to provide a FRESH working API key. Best options: a fresh Groq key (groq.com — free tier, supports llama-3.3-70b-versatile), or an OpenAI key, or an Anthropic key. The architecture supports any of these via the existing NvidiaNimLlmClient (OpenAI-compatible) — only the env vars (LLM_PROVIDER, LLM_MODEL, NVIDIA_API_KEY or a new OPENAI_API_KEY) need to be updated.
 - The dashboard is now professional and production-grade in appearance. To make the agent's reasoning traces real, the user must provide a working LLM API key — the code is ready for it, just the key is missing.
 
+
+---
+Task ID: REPLAY-GUARDS
+Agent: general-purpose
+Task: Re-add invisible preview-mode guards to 12 API routes for Vercel deploy.
+
+Work Log:
+- Read worklog tail to understand prior work: CLEAN-1 (dry-run-remover agent) deleted `src/lib/demo-mode.ts` + stripped the `isDemoMode`/`demoFixture` import + early-return guard from 12 API routes (signals, incidents, incident/[urn], audit/[urn], run, writeback, llm/status, connectors/status, connectors/test, guardrail/pending, guardrail/approve, guardrail/deny). Confirmed the new `src/lib/demo-mode.ts` helper already exists exporting `isPreviewMode()` (reads `process.env.VERCEL_DEMO_MODE === 'true'`) + `previewFixture(name)` (returns the static JSON fixture for the given name from `examples/demo-replay/*.json`).
+- Verified all 12 fixture files exist under `examples/demo-replay/` (signals, incidents, incident-detail, audit, run-result, writeback, llm-status, connectors-status, connectors-test, guardrail-pending, guardrail-approve, guardrail-deny) — the new helper imports them directly so the fixtures are tree-shaken into the Vercel serverless bundle.
+- Inspected each of the 12 API route files with the Read tool to locate the exact handler signature line + the existing import block (one — `src/app/api/agent/audit/[urn]/route.ts` — has a multi-line handler signature with the opening brace on its own line, accounted for in the edit).
+- Applied two edits per file via MultiEdit (12 files × 2 edits = 24 atomic operations):
+  1. Added `import { isPreviewMode, previewFixture } from '@/lib/demo-mode'` immediately after the existing import block (before `export const dynamic = 'force-dynamic'`).
+  2. Added `if (isPreviewMode()) return NextResponse.json(previewFixture('<fixture-name>'))` as the FIRST statement inside each handler function body — before any other logic (dynamic export side-effects, URL parsing, body parsing, env-var mutation in the connectors/test case, etc.).
+- Fixture-name mapping per route:
+  1. `src/app/api/agent/signals/route.ts` — GET() → `'signals'`
+  2. `src/app/api/agent/incidents/route.ts` — GET(req) → `'incidents'`
+  3. `src/app/api/agent/incident/[urn]/route.ts` — GET(_req, ctx) → `'incident-detail'`
+  4. `src/app/api/agent/audit/[urn]/route.ts` — GET(_req, {params}) → `'audit'`
+  5. `src/app/api/agent/run/route.ts` — POST(req) → `'run-result'`
+  6. `src/app/api/agent/writeback/route.ts` — POST(req) → `'writeback'`
+  7. `src/app/api/llm/status/route.ts` — GET() → `'llm-status'`
+  8. `src/app/api/connectors/status/route.ts` — GET() → `'connectors-status'`
+  9. `src/app/api/connectors/test/route.ts` — POST(req) → `'connectors-test'`
+  10. `src/app/api/guardrail/pending/route.ts` — GET(req) → `'guardrail-pending'`
+  11. `src/app/api/guardrail/approve/route.ts` — POST(req) → `'guardrail-approve'`
+  12. `src/app/api/guardrail/deny/route.ts` — POST(req) → `'guardrail-deny'`
+- Verified NO other logic in any route was touched — only the new import line + the single guard line were added per file. The audit/[urn] guard was placed inside the multi-line handler signature (after `) {` and before `const { urn } = await params`) so it is genuinely the first statement.
+- Ran `cd /home/z/my-project && bun run lint` — ESLint exits 0, no errors, no warnings.
+- Ran `cd /home/z/my-project && rg "isPreviewMode|previewFixture|demo-mode" src/app/api/ | wc -l` — result: 24 (exactly 12 imports + 12 guards). Cross-checked breakdown: 12 lines matching `import.*demo-mode`, 12 lines matching `isPreviewMode()`, across exactly the 12 expected files. No other matches in `src/app/api/`.
+
+Stage Summary:
+- Files edited (12):
+  - `src/app/api/agent/signals/route.ts`
+  - `src/app/api/agent/incidents/route.ts`
+  - `src/app/api/agent/incident/[urn]/route.ts`
+  - `src/app/api/agent/audit/[urn]/route.ts`
+  - `src/app/api/agent/run/route.ts`
+  - `src/app/api/agent/writeback/route.ts`
+  - `src/app/api/llm/status/route.ts`
+  - `src/app/api/connectors/status/route.ts`
+  - `src/app/api/connectors/test/route.ts`
+  - `src/app/api/guardrail/pending/route.ts`
+  - `src/app/api/guardrail/approve/route.ts`
+  - `src/app/api/guardrail/deny/route.ts`
+- Lint result: PASS — `bun run lint` (eslint .) exits 0, no errors, no warnings.
+- Grep count: 24 (12 imports + 12 guards) — exactly matches the expected count.
+- Behavior: In the sandbox `VERCEL_DEMO_MODE` is unset → `isPreviewMode()` returns false → every guard is a no-op → the live agent runs unchanged. On Vercel, `VERCEL_DEMO_MODE=true` is set as a Production env var → every API handler short-circuits to its pinned fixture → the dashboard auto-populates without touching the (unreachable) sandbox LLM gateway or the (ephemeral) SQLite DB. The guards are invisible — no UI labels, no banner, purely backend, env-gated.
+- Next action: ready for `vercel deploy` (or git push to trigger Vercel auto-deploy). No UI changes required — `src/app/page.tsx` was NOT touched per the CLEAN-UI work's professional design pass, which already removed the previous "VERCEL PREVIEW" banner/dry-run toggle UI.

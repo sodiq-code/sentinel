@@ -6,10 +6,12 @@
 // they want); we just mark the decision so the audit trail is complete.
 import { NextResponse } from 'next/server'
 import { approveApproval } from '@/lib/guardrail/approval-gate'
+import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
+  if (isPreviewMode()) return NextResponse.json(previewFixture('guardrail-approve'))
   let body: { id?: string; approverUrn?: string }
   try {
     body = (await req.json()) as { id?: string; approverUrn?: string }

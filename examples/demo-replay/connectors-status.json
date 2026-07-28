@@ -1,6 +1,5 @@
 {
   "dryRun": true,
-  "demoMode": true,
   "github": {
     "mode": "sandbox",
     "repo": "sodiq-code/sentinel-demo-pipeline",

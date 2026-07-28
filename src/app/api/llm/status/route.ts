@@ -16,9 +16,11 @@
 // plan: surface throttle state to the operator, don't mask it).
 import { NextResponse } from 'next/server'
 import { getLlmResilienceStatus } from '@/lib/agent/llm'
+import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
+  if (isPreviewMode()) return NextResponse.json(previewFixture('llm-status'))
   return NextResponse.json(getLlmResilienceStatus())
 }

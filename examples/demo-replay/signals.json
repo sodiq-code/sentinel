@@ -1,1 +1,40 @@
-{"signals":[{"id":"sig:nyc-taxi:freshness","scenarioId":"nyc-taxi-freshness","label":"NYC Taxi — freshness breach","description":"Raw S3 landing `raw_s3_nyc_taxi_trips` is 6h stale vs a 1h freshness SLA. Downstream Spark clean + dbt daily model are at risk.","assetUrn":"urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)","assetName":"raw_s3_nyc_taxi_trips","type":"freshness","status":"failing","assertionDescription":"Freshness SLA: raw_s3_nyc_taxi_trips must be modified at least every 1h. Currently 6h stale — the S3 ingestion job has not written since 02:00.","failureReason":"Dataset not modified in 6h (SLA 1h). Last success 2h ago. Last evaluated at 08:00 UTC."},{"id":"sig:showcase:schema","scenarioId":"showcase-ecommerce","label":"Showcase eCommerce — schema breakage","description":"A column rename on the Snowflake source propagated downstream through Looker → dbt → Spark → S3. Schema assertion fails on the Looker chart.","assetUrn":"urn:li:dataset:(urn:li:dataPlatform:snowflake,raw_orders,PROD)","assetName":"raw_orders","type":"schema","status":"failing","assertionDescription":"Schema field count mismatch: Looker chart `revenue_by_region` expects 6 fields, source now exposes 5.","failureReason":"Field `region_name` dropped from upstream Snowflake view."},{"id":"sig:pii:refusal","scenarioId":"pii","label":"Customer PII — governance refusal","description":"A signal on `customer_pii` (tagged PII + Restricted). The guardrail must refuse write-back without explicit approval.","assetUrn":"urn:li:dataset:(urn:li:dataPlatform:postgres,customer_pii,PROD)","assetName":"customer_pii","type":"pii","status":"failing","assertionDescription":"PII exposure check: a downstream consumer requested unmasked fields.","failureReason":"Consumer requested masked PII columns in clear text."}]}
+{
+  "signals": [
+    {
+      "id": "sig:nyc-taxi:freshness",
+      "scenarioId": "nyc-taxi-freshness",
+      "label": "NYC Taxi \u2014 freshness breach",
+      "description": "Raw S3 landing `raw_s3_nyc_taxi_trips` is 6h stale vs a 1h freshness SLA. Downstream Spark clean + dbt daily model are at risk.",
+      "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:s3,raw_s3_nyc_taxi_trips,PROD)",
+      "assetName": "raw_s3_nyc_taxi_trips",
+      "type": "freshness",
+      "status": "failing",
+      "assertionDescription": "Freshness SLA: raw_s3_nyc_taxi_trips must be modified at least every 1h. Currently 6h stale \u2014 the S3 ingestion job has not written since 02:00.",
+      "failureReason": "Dataset not modified in 6h (SLA 1h). Last success 2h ago. Last evaluated at 08:00 UTC."
+    },
+    {
+      "id": "sig:showcase:schema",
+      "scenarioId": "showcase-ecommerce",
+      "label": "Showcase eCommerce \u2014 schema breakage",
+      "description": "A column rename on the Snowflake source propagated downstream through Looker \u2192 dbt \u2192 Spark \u2192 S3. Schema assertion fails on the Looker chart.",
+      "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,raw_orders,PROD)",
+      "assetName": "raw_orders",
+      "type": "schema",
+      "status": "failing",
+      "assertionDescription": "Schema field count mismatch: Looker chart `revenue_by_region` expects 6 fields, source now exposes 5.",
+      "failureReason": "Field `region_name` dropped from upstream Snowflake view."
+    },
+    {
+      "id": "sig:pii:refusal",
+      "scenarioId": "pii",
+      "label": "Customer PII \u2014 governance refusal",
+      "description": "A signal on `customer_pii` (tagged PII + Restricted). The guardrail must refuse write-back without explicit approval.",
+      "assetUrn": "urn:li:dataset:(urn:li:dataPlatform:postgres,customer_pii,PROD)",
+      "assetName": "customer_pii",
+      "type": "pii",
+      "status": "failing",
+      "assertionDescription": "PII exposure check: a downstream consumer requested unmasked fields.",
+      "failureReason": "Consumer requested masked PII columns in clear text."
+    }
+  ]
+}

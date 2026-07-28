@@ -3,10 +3,12 @@
 
 import { NextResponse } from 'next/server'
 import { hydrateIncident } from '@/lib/agent'
+import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(_req: Request, ctx: { params: Promise<{ urn: string }> }) {
+  if (isPreviewMode()) return NextResponse.json(previewFixture('incident-detail'))
   const { urn } = await ctx.params
   if (!urn) return NextResponse.json({ error: 'Missing urn' }, { status: 400 })
   // The urn arrives URL-encoded from the path; decode it.
