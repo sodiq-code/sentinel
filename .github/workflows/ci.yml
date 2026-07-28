@@ -49,16 +49,25 @@ jobs:
       - name: Run ESLint
         run: bun run lint
 
-      - name: TypeScript type-check (sentinel/ contracts)
+      - name: TypeScript type-check (best-effort)
         run: bunx tsc --noEmit -p tsconfig.json || true
         continue-on-error: true
-        # ^ Phase 0: tsc is best-effort because the sentinel/ contracts
-        #   are not yet imported anywhere. Phase 7 makes this strict.
+        # ^ Best-effort: the broader repo ships example/contract files
+        #   (examples/websocket/, sentinel/ contracts, skills/) that have
+        #   pre-existing tsc errors unrelated to the production app. The
+        #   production code (src/) is type-checked implicitly by Next.js
+        #   at build/dev time. The integration-demo job is the load-bearing
+        #   test (PDF §10.3) — it runs the real app end-to-end.
 
   prisma-validate:
     name: Prisma schema valid
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      # `prisma validate` reads the datasource `url = env("DATABASE_URL")`
+      # block even though it doesn't connect. Set a dummy value so the
+      # validate step passes. The real value is set in the db-push step below.
+      DATABASE_URL: "file:./ci-check.db"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -69,8 +78,6 @@ jobs:
         run: |
           bunx prisma validate --schema prisma/schema.prisma
       - name: Push to a throwaway SQLite db (proves the schema is buildable)
-        env:
-          DATABASE_URL: "file:./ci-check.db"
         run: |
           bunx prisma db push --accept-data-loss --skip-generate
           test -f ci-check.db
