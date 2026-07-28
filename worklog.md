@@ -563,3 +563,64 @@ Stage Summary:
 - Theatrical beats engineered in: (a) IncidentHeader surfaces the on-call persona + failing asset before the agent runs; (b) LineageGraph highlights traversed nodes in real-time as the agent calls mcp.get_lineage; (c) the replay loop visibly demonstrates the compounding-context property (Run 2 reads Run 1's post-mortem → "prior incident found" card).
 - The compounding demo works even when the LLM is throttled (z-ai 404/429) — the orchestrator's fallback post-mortem path + the trace-based detection mean the "prior incident found" card still surfaces. This is the PDF §11.3 contingency plan working as designed.
 - Phase 5 → 6 handoff: Phase 6 is the DataHub Skill (skill/incident-triage/SKILL.md + manifest.json + references/mcp-tools.md) + the RFC (rfc/closed-loop-metadata-agents.md) + the README. These are pure-Markdown/JSON artefacts (no UI changes). Waiting for user approval before Phase 6.
+
+---
+Task ID: Phase-6
+Agent: orchestrator (main)
+Task: Implement Phase 6 — DataHub Skill + RFC + README (per refined v2 plan §Phase 6), verify thoroughly with Agent Browser, push to sodiq-code/sentinel, then WAIT for approval. Cron DISABLED per user instruction.
+
+Work Log:
+- Verified project state via `git log --oneline -12` — Phase 0/1/2/3 complete + Phase 3 LLM resilience patch (Option A) + Phase 4 (Write-Back + Audit Log) + Phase 5 (Incident Console UI) all complete and pushed. HEAD was c878c18 "Worklog: Phase 5 — Incident Console UI complete". Working tree clean. (The prior session summary was outdated — it said Phase 4 was NOT implemented, but git log confirmed both Phase 4 AND Phase 5 are complete and pushed.)
+- Read the refined v2 plan Phase 6 spec (lines 376-409 of the uploaded plan): the deliverables are skill/incident-triage/ (SKILL.md + manifest.json + references/mcp-tools.md + references/datahub-cli-reference.md) + rfc/closed-loop-metadata-agents.md + README.md with 10 specific sections (value prop, persona+pain opener, architecture Mermaid, quickstart <1 min, live sandbox links, Block/Goose acknowledgement, roadmap, business model, why-this-wins beat-by-beat mapping, threat model, reproducibility).
+- Verified the skill/ and rfc/ artefacts ALREADY EXIST as full content (not stubs):
+  - skill/incident-triage/SKILL.md (293 lines) — full datahub-skills SKILL.md format: frontmatter (name/description/version/author/license/homepage/tags/when_to_use/when_not_to_use) + "Why this Skill exists" + "The closed loop" + "Workflow (step-by-step)" 8 steps + "Templates" (GitHub issue, PR description, post-mortem doc, glossary proposal JSON, ownership proposal JSON, SLA assertion JSON) + "Guardrail rules (mandatory)" (5 rules) + "Tool inventory" + "Acknowledgements" + "License". All Phase 6 spec content present.
+  - skill/incident-triage/manifest.json (88 lines) — installable via `npx skills add sodiq-code/sentinel skill/incident-triage`; lists 12 mcp_read + 8 mcp_write + 3 external_connectors; guardrails block; compatible_with Claude Code/Cursor/Codex/Copilot/Gemini.
+  - skill/incident-triage/references/mcp-tools.md (253 lines) — documents all 19 MCP tools (12 read + 7 write) with usage examples + 3 action connectors + REST ingestion fallback. The "incident-triage is the missing one" Skill.
+  - skill/incident-triage/references/datahub-cli-reference.md (115 lines) — the CLI form of the read/write tools + DemoDriver CLI + pinned versions.
+  - rfc/closed-loop-metadata-agents.md (194 lines) — full RFC: abstract + background + motivation + specification (6 phases) + "The pattern, generalised" table (incidents/ML audit/compliance/code generation) + 5 properties (Grounded/Governed/Audited/Compounding/Reproducible) + threat model + reference implementation + open questions + acknowledgements. The second bonus artefact.
+  - Confirmed all are tracked in git (`git ls-files skill/ rfc/`) — committed in earlier phases. No changes needed to the skill/RFC content.
+- Identified the README.md gaps vs the Phase 6 spec (the README existed but its Status section only marked Phase 0-3 complete; and 5 Phase-6-specified sections were missing or buried):
+  1. Persona + pain narrative opener — missing (the theatrical arc table had it, but the README top opened with the value prop directly).
+  2. "Why this wins — beat by beat" — missing (the "Why Sentinel wins" table mapped criteria→how, but didn't map the 11 UI beats→criteria as the plan specifies).
+  3. Live sandbox links — missing (the plan says "sandbox GitHub repo + read-only Slack channel invites (PDF §12.2 mitigates judge-discounts-sandbox risk)").
+  4. Business model slide — buried in the Roadmap (the plan says "Business model slide (10 sec read): open-core Apache 2.0; managed cloud + enterprise governance pack").
+  5. Reproducibility section — partial (the README had a Pinned versions table + Demo Mode section, but no consolidated "Reproducibility" section with "pinned versions, deterministic seed, integration demo, dry-run fallback").
+  6. Status section — only Phase 0-3 marked complete; Phase 4, 5, 6 missing.
+- Applied 6 README.md edits via MultiEdit:
+  a. Added "## The pain" narrative section after the hackathon line, before "Why Sentinel wins" — the Priya, 03:14 UTC, nyc_yellow_taxi_trips freshness SLA breach opening (PDF §11.1 beat 0:10–0:25).
+  b. Added "## Why this wins — beat by beat (PDF §11.4 judge Q&A)" — an 11-row table mapping each UI beat to its judging criterion + where it lives in the console (IncidentHeader→Real-World Usefulness; LineageGraph→Use of DataHub+Technical Execution; ReasoningStream→Technical Execution+Submission Quality; ActionsPanel GitHub→Technical Execution+Real-World Usefulness; ActionsPanel Slack→Real-World Usefulness; GuardrailPanel PII refusal→Real-World Usefulness+Technical Execution; WriteBackPanel→Use of DataHub+Originality; Replay loop compounding→Originality; AuditLogDrawer→Technical Execution+Submission Quality; DemoControlBar reproducibility→Submission Quality; skill/+rfc/→Bonus).
+  c. Added "## Live sandbox" section after Demo Mode — a 4-row table (sandbox GitHub repo sodiq-code/sentinel-demo-pipeline + scoped token + no-merge; sandbox Slack channel C0BL9CQ4D5G + read-only invites; sandbox DataHub seeded Prisma/SQLite + deterministic; audit log prisma/dev.db + mirrored to SeedAssertion/SeedEvent) + a "why this matters for judging" callout.
+  d. Added "## Business model (10-second read)" before Roadmap — "Open-core, Apache 2.0" + a 3-tier table (Community free / Managed Cloud subscription / Enterprise Governance Pack per-seat) + the compounding-context-graph moat statement.
+  e. Added "## Reproducibility (PDF §10.2 + §11.3 fallback)" after Threat model — a 6-row table (pinned versions; deterministic seed; deterministic LLM temperature 0; integration demo bun run sentinel:demo; dry-run fallback orchestrator fallback path; dual write-back path Agent Context Kit + REST ingestion).
+  f. Updated the Status section: added Phase 4, 5, 6 ✅ complete entries (Phase 4 dual write-back + audit mirror + /api/agent/audit/[urn] + WriteBackPanel + AuditTimeline; Phase 5 all 9 console components + LineageGraph real-time traversal + replay loop compounding beat; Phase 6 the two bonus artefacts + this README).
+  Also refined the Roadmap bullets to reference the Skill PR + RFC explicitly.
+- Updated src/app/page.tsx (status sync, NOT new UI):
+  - PHASES roadmap: Phase 5 → DONE, Phase 6 → DONE, Phase 7 → NEXT.
+  - Header chip: "Phase 5 · Incident Console UI ✓" → "Phase 6 · DataHub Skill + RFC ✓".
+  - Footer chip: same update.
+  No logic changes — only the status markers + 2 chip strings.
+- Lint: `bun run lint` — passes clean (no errors, no warnings).
+- Dev server: confirmed healthy before + after edits. `curl localhost:3000` + `curl localhost:81` both 200. No compile errors in dev.log during the visit.
+- Agent Browser QA (via localhost:81 Caddy gateway):
+  - `agent-browser open http://localhost:81/` — page loads. Title "Sentinel — Autonomous Data Incident Response Agent for DataHub".
+  - `agent-browser read` — confirms: header chip "Phase 6 · DataHub Skill + RFC ✓" ✓; LLM gpt-4o, Provider zai, Circuit Healthy ✓; Priya persona card (PP, On-call data engineer, Priya Patel, urn:li:corpUser:priya.patel, paged · 03:14 UTC) ✓; failing asset (NYC Taxi — freshness breach, raw_s3_nyc_taxi_trips, s3, last_modified 2026-07-28 02:00Z) ✓; LineageGraph (3 nodes · 2 edges, root traversed) ✓; 3 signal injector cards (freshness/schema/pii) ✓; Guardrail — approval gates (3 events) ✓; DemoControlBar (Inject & run Sentinel, replay loop (compounding demo), test connectors, Sandbox writes to examples/sandbox/*.log) ✓.
+  - Roadmap card: Foundation & Repo Hygiene + DataHub Mock + Seed + Orchestrator + ReAct Loop + Action Connectors + Guardrails + Write-Back + Audit Log + Incident Console UI + DataHub Skill + RFC + README all listed; Phase 7 "CI+ Hardening + Submission" shows as NEXT ✓.
+  - Footer chip: "Phase 6 · DataHub Skill + RFC ✓ · Apache 2.0 · Open source · sodiq-code/sentinel · sandbox repo · Build with DataHub Hackathon · New DataHub Skill · Agent Context Kit · MCP Server" ✓.
+  - dev.log during the visit: all 200 responses, no errors, no warnings, no hydration mismatches, no 404s.
+- Git: committed (5e82f7e) + pushed to https://github.com/sodiq-code/sentinel.git (main). c878c18..5e82f7e.
+- Verified on GitHub: commit 5e82f7e returns HTTP 200 via the GitHub API; the remote README.md (raw.githubusercontent.com) contains all 5 Phase 6 section markers (Phase 6, Live sandbox, Business model, Reproducibility, beat by beat).
+
+Stage Summary:
+- Phase 6 — DataHub Skill + RFC + README COMPLETE and PUSHED to https://github.com/sodiq-code/sentinel (HEAD = 5e82f7e).
+- The two bonus artefacts (skill/incident-triage/ + rfc/closed-loop-metadata-agents.md) were already complete from earlier phases and verified against the Phase 6 spec — no content changes needed.
+- The README is now the third Phase 6 deliverable: persona+pain opener, 11-beat→criterion judge mapping, Live Sandbox section, Business model (open-core 3-tier), Reproducibility section, and full Phase 0-6 status. This is the PDF §11.4 "judge Q&A preparation baked in" deliverable.
+- Console (page.tsx): PHASES roadmap + header chip + footer chip synced to Phase 6. NO new UI, NO logic changes, NO indigo/blue — the emerald/amber/rose/slate mission-control palette is preserved.
+- The skill/incident-triage/ Skill is installable via `npx skills add sodiq-code/sentinel skill/incident-triage` and compatible with Claude Code / Cursor / Codex / Copilot / Gemini. The PR target is `datahub-project/datahub-skills` (filed post-hackathon per the roadmap).
+- AWAITING USER APPROVAL before Phase 7 (CI + Hardening + Submission Prep) per user's standing instruction.
+
+Constraints carried forward, Phase 7+:
+- Cron: DISABLED — no cron jobs created in any phase. The hackathon project has no scheduled signal injection. (Note: the system prompt's mandatory webDevReview cron was NOT created, consistent with the user's explicit standing instruction "disable the Cron timing entirely" stated multiple times. If the user wants the dev-environment QA cron, they can request it.)
+- LLM provider: ONE only — `zai` (z-ai-web-dev-sdk, gpt-4o primary / gpt-4o-mini fallback, temperature 0). The dormant `NvidiaNimLlmClient` stays as a judge-facing fallback. No third provider will be added.
+- Sandbox all actions: GitHub token scoped to one demo repo (issues:write + pull_requests:write only, never merges); Slack token scoped to one channel (chat:write only); DataHub is seeded Prisma/SQLite in demo mode.
+- Apache 2.0 license visible at repo root.
+- Push to sodiq-code/sentinel using the provided GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connector.
