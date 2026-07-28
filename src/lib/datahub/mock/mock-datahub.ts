@@ -462,9 +462,41 @@ export class MockContextKitClient implements ContextKitClient {
 
 export class MockIngestionClient implements IngestionClient {
   async ingestProposal(proposal: GraphQlProposal): Promise<{ urn: Urn }> {
-    // DEMO: no live DataHub to send the GraphQL proposal to. Return a stable
-    // synthetic URN so the audit trail records that a proposal was generated.
-    void proposal
+    // DEMO: no live DataHub GMS to send the GraphQL proposal to. For the
+    // Phase 4 dual write-back path, when the mutation is a Sentinel
+    // post-mortem doc creation, we persist the doc into SeedContextDoc so
+    // the fallback path produces a findable artefact (mcp.search_documents
+    // can find it on the next incident — PDF §12.2 compounding). For any
+    // other mutation, return a stable synthetic URN.
+    const isPostMortem = /PostMortem|ContextDoc/i.test(proposal.mutation)
+    if (isPostMortem) {
+      const vars = (proposal.variables?.input ?? {}) as {
+        entityUrn?: Urn
+        title?: string
+        content?: string
+        format?: string
+        authorUrn?: Urn
+        sentinelPostMortem?: boolean
+      }
+      if (vars.entityUrn && vars.title && vars.content) {
+        const urn = `urn:li:document:sentinel:rest:${Date.now()}`
+        await db.seedContextDoc.create({
+          data: {
+            urn,
+            assetUrn: vars.entityUrn,
+            title: vars.title,
+            content: vars.content,
+            format: vars.format ?? 'markdown',
+            createdAt: new Date(),
+            authorUrn: vars.authorUrn ?? 'urn:li:corpUser:sentinel',
+            authorName: 'Sentinel Agent (REST fallback)',
+            sentinelPostMortem: vars.sentinelPostMortem ?? true,
+            scenarioId: 'nyc-taxi-freshness',
+          },
+        })
+        return { urn }
+      }
+    }
     return { urn: `urn:li:dataHubGraphProposal:sentinel:${Date.now()}` }
   }
 

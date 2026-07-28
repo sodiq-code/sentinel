@@ -10,14 +10,19 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Copy,
   Database,
   FileText,
+  GitBranch,
   Github,
   GitPullRequest,
+  History,
+  Layers,
   Loader2,
   Lock,
   PlayCircle,
   Radar,
+  RefreshCw,
   RotateCcw,
   Send,
   ShieldAlert,
@@ -168,8 +173,8 @@ const PHASES = [
   { id: 0, name: "Foundation & Repo Hygiene", status: "DONE" as const },
   { id: 1, name: "DataHub Mock + Seed", status: "DONE" as const },
   { id: 2, name: "Orchestrator + ReAct Loop", status: "DONE" as const },
-  { id: 3, name: "Action Connectors + Guardrails", status: "NEXT" as const },
-  { id: 4, name: "Write-Back + Audit Log", status: "PENDING" as const },
+  { id: 3, name: "Action Connectors + Guardrails", status: "DONE" as const },
+  { id: 4, name: "Write-Back + Audit Log", status: "NEXT" as const },
   { id: 5, name: "Incident Console UI (demo surface)", status: "PENDING" as const },
   { id: 6, name: "DataHub Skill + RFC + README", status: "PENDING" as const },
   { id: 7, name: "CI+ Hardening + Submission", status: "PENDING" as const },
@@ -183,6 +188,52 @@ const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; la
   reflect: { icon: CheckCircle2, color: "text-emerald-300", label: "REFLECT", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
   write_back: { icon: FileText, color: "text-rose-300", label: "WRITE-BACK", bg: "bg-rose-500/10", border: "border-rose-500/30" },
   error: { icon: AlertTriangle, color: "text-rose-400", label: "ERROR", bg: "bg-rose-500/15", border: "border-rose-500/40" },
+};
+
+// ---------------------------------------------------------------------------
+// Phase 4: audit-event metadata — the full audit log (lifecycle + reasoning
+// trace) is rendered as a vertical timeline. Each kind gets an icon, a
+// group (for the filter tabs), and a color. NO indigo/blue — mission-control
+// palette only (emerald/amber/rose/slate).
+// ---------------------------------------------------------------------------
+
+type AuditGroup = "lifecycle" | "reasoning" | "tool" | "action" | "writeback" | "error";
+
+const AUDIT_KIND_META: Record<string, { icon: typeof Activity; group: AuditGroup; label: string; color: string; dot: string }> = {
+  // lifecycle — emerald (the milestones a DataHub operator sees mirrored as Assertions)
+  signal_received: { icon: Radar, group: "lifecycle", label: "SIGNAL RECEIVED", color: "text-emerald-300", dot: "bg-emerald-400" },
+  incident_created: { icon: ShieldCheck, group: "lifecycle", label: "INCIDENT CREATED", color: "text-emerald-300", dot: "bg-emerald-400" },
+  incident_resolved: { icon: CheckCircle2, group: "lifecycle", label: "INCIDENT RESOLVED", color: "text-emerald-300", dot: "bg-emerald-400" },
+  incident_failed: { icon: XCircle, group: "error", label: "INCIDENT FAILED", color: "text-rose-400", dot: "bg-rose-500" },
+  // reasoning — amber (the "watch the agent think" trace)
+  plan: { icon: BrainCircuit, group: "reasoning", label: "PLAN", color: "text-amber-300", dot: "bg-amber-400" },
+  observe: { icon: Activity, group: "reasoning", label: "OBSERVE", color: "text-amber-300", dot: "bg-amber-400" },
+  reflect: { icon: CheckCircle2, group: "reasoning", label: "REFLECT", color: "text-amber-300", dot: "bg-amber-400" },
+  // tool — slate (the DataHub MCP / ACK read+write calls)
+  tool_call: { icon: Terminal, group: "tool", label: "TOOL CALL", color: "text-slate-300", dot: "bg-slate-400" },
+  tool_result: { icon: Database, group: "tool", label: "TOOL RESULT", color: "text-slate-300", dot: "bg-slate-400" },
+  // action — amber/orange (the Phase 3 GitHub + Slack connectors)
+  action_proposed: { icon: Send, group: "action", label: "ACTION PROPOSED", color: "text-amber-300", dot: "bg-amber-400" },
+  action_approved: { icon: ShieldCheck, group: "action", label: "ACTION APPROVED", color: "text-emerald-300", dot: "bg-emerald-400" },
+  action_refused: { icon: Lock, group: "action", label: "ACTION REFUSED", color: "text-rose-300", dot: "bg-rose-400" },
+  action_executed: { icon: Send, group: "action", label: "ACTION EXECUTED", color: "text-amber-300", dot: "bg-amber-400" },
+  // writeback — rose (the Phase 4 dual-path compounding artefact)
+  writeback_proposed: { icon: GitBranch, group: "writeback", label: "WRITEBACK PROPOSED", color: "text-rose-300", dot: "bg-rose-400" },
+  writeback_succeeded: { icon: FileText, group: "writeback", label: "WRITEBACK SUCCEEDED", color: "text-rose-300", dot: "bg-rose-400" },
+  writeback_failed: { icon: AlertTriangle, group: "writeback", label: "WRITEBACK FAILED", color: "text-rose-400", dot: "bg-rose-500" },
+  write_back: { icon: FileText, group: "writeback", label: "WRITE-BACK", color: "text-rose-300", dot: "bg-rose-400" },
+  write_back_succeeded: { icon: FileText, group: "writeback", label: "WRITE-BACK SUCCEEDED", color: "text-rose-300", dot: "bg-rose-400" },
+  // error
+  error: { icon: AlertTriangle, group: "error", label: "ERROR", color: "text-rose-400", dot: "bg-rose-500" },
+};
+
+const AUDIT_GROUP_META: Record<AuditGroup, { label: string; color: string }> = {
+  lifecycle: { label: "Lifecycle", color: "text-emerald-300" },
+  reasoning: { label: "Reasoning", color: "text-amber-300" },
+  tool: { label: "Tools", color: "text-slate-300" },
+  action: { label: "Actions", color: "text-amber-300" },
+  writeback: { label: "Write-backs", color: "text-rose-300" },
+  error: { label: "Errors", color: "text-rose-400" },
 };
 
 // ---------------------------------------------------------------------------
@@ -364,7 +415,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 3 · Connectors + Guardrails ✓
+            <CheckCircle2 className="h-3.5 w-3.5" /> Phase 4 · Write-Back + Audit Log ✓
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
@@ -473,7 +524,7 @@ function Console() {
       <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 3 · Connectors + Guardrails ✓
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" /> Phase 4 · Write-Back + Audit Log ✓
           </span>
           <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
@@ -647,9 +698,14 @@ function ReasoningStream({
             <Loader2 className="h-3 w-3 animate-spin" /> revealing trace…
           </div>
         )}
-        {/* Phase 3: artifacts + actions + guardrail events (for viewed incidents) */}
-        {(writebacks.length > 0 || actions.length > 0) && revealed >= steps.length && (
-          <ArtifactsSummary writebacks={writebacks} actions={actions} auditEvents={auditEvents} />
+        {/* Phase 4: artifacts + actions + write-backs + audit log (for viewed incidents) */}
+        {(writebacks.length > 0 || actions.length > 0 || auditEvents.length > 0) && revealed >= steps.length && (
+          <ArtifactsSummary
+            writebacks={writebacks}
+            actions={actions}
+            auditEvents={auditEvents}
+            incidentUrn={viewedIncidentUrn}
+          />
         )}
       </div>
     </section>
@@ -749,58 +805,373 @@ function ArtifactsSummary({
   writebacks,
   actions,
   auditEvents,
+  incidentUrn,
 }: {
   writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string }>;
   actions: Array<{ id: string; kind: string; target: string; payload: string; status: string; url: string | null; ts: string }>;
   auditEvents: Array<{ id: string; kind: string; summary: string; ts: string }>;
+  incidentUrn?: string;
 }) {
-  // Phase 3: render actions as cards (GitHub issue / PR / Slack post) with URLs
+  // Phase 4: actions (Phase 3) + write-backs (dual path) + audit log (timeline).
   return (
     <div className="mt-4 space-y-3">
       {actions.length > 0 && <ActionsPanel actions={actions} />}
       {writebacks.length > 0 && (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3">
-          <div className="flex items-center gap-2 mb-2 text-xs font-semibold text-rose-300">
-            <FileText className="h-3.5 w-3.5" /> Write-backs ({writebacks.length})
-          </div>
-          <ul className="space-y-1.5 text-xs text-slate-300">
-            {writebacks.map((w) => {
-              const data = safeParse(w.dataJson);
-              return (
-                <li key={w.id} className="font-mono">
-                  <span className="text-rose-300">●</span> {w.kind}{" "}
-                  <span className="text-slate-500">via {w.path}</span>{" "}
-                  <span className={`text-[10px] ${w.status === "succeeded" ? "text-emerald-400" : "text-amber-400"}`}>
-                    {w.status}
-                  </span>
-                  {w.datahubUrn && <div className="text-slate-500 text-[10px] pl-3">{w.datahubUrn}</div>}
-                  {data?.title && <div className="text-slate-400 pl-3">{String(data.title)}</div>}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        <WriteBackPanel writebacks={writebacks} incidentUrn={incidentUrn} />
       )}
-      {/* Audit events (compact timeline) */}
       {auditEvents.length > 0 && (
-        <details className="rounded-lg border border-slate-800 bg-slate-900/40">
-          <summary className="px-3 py-2 text-xs font-semibold text-slate-300 cursor-pointer hover:bg-slate-800/40 rounded-lg">
-            Audit log ({auditEvents.length} events)
-          </summary>
-          <ul className="px-3 py-2 space-y-1 text-[11px] font-mono text-slate-400 max-h-48 overflow-y-auto custom-scroll">
-            {auditEvents.map((e) => (
-              <li key={e.id} className="flex gap-2">
-                <span className="text-slate-600 shrink-0">
-                  {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
-                </span>
-                <span className="text-slate-500 uppercase tracking-wider shrink-0">{e.kind}</span>
-                <span className="text-slate-300 truncate">{e.summary}</span>
-              </li>
-            ))}
-          </ul>
-        </details>
+        <AuditTimeline events={auditEvents} incidentUrn={incidentUrn} />
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: WriteBackPanel — the dual write-back path (PDF §12.2).
+// Each write-back card shows the path used (Agent Context Kit / REST
+// ingestion), the fallback chain, the DataHub URN, and a re-attempt button
+// for failed writes. The compounding artefact is the post-mortem context doc.
+// ---------------------------------------------------------------------------
+
+function WriteBackPanel({
+  writebacks,
+  incidentUrn,
+}: {
+  writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string }>;
+  incidentUrn?: string;
+}) {
+  const succeeded = writebacks.filter((w) => w.status === "succeeded").length;
+  const failed = writebacks.filter((w) => w.status === "failed").length;
+  const viaAck = writebacks.filter((w) => w.path === "agent_context_kit").length;
+  const viaRest = writebacks.filter((w) => w.path === "rest_ingestion").length;
+
+  return (
+    <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3.5">
+      <div className="flex items-center justify-between mb-2.5">
+        <h3 className="text-xs font-semibold text-rose-300 flex items-center gap-1.5">
+          <FileText className="h-3.5 w-3.5" /> Write-backs
+          <span className="text-slate-500 font-normal">({writebacks.length})</span>
+        </h3>
+        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+          {succeeded > 0 && <span className="text-emerald-400">{succeeded} ok</span>}
+          {failed > 0 && <span className="text-rose-400">{failed} failed</span>}
+        </div>
+      </div>
+      {/* Dual-path indicator */}
+      <div className="mb-3 flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/5 px-2.5 py-1.5 text-[10px] text-slate-400">
+        <GitBranch className="h-3 w-3 text-rose-300 shrink-0" />
+        <span className="font-mono">
+          <span className="text-emerald-300">Agent Context Kit</span>
+          <span className="text-slate-600 mx-1">→</span>
+          <span className="text-amber-300">REST ingestion</span>
+        </span>
+        <span className="text-slate-600 mx-1">·</span>
+        <span className="font-mono">
+          {viaAck} ACK
+          {viaRest > 0 && <span className="text-amber-300"> · {viaRest} fallback</span>}
+        </span>
+      </div>
+      <div className="space-y-2">
+        {writebacks.map((w) => (
+          <WriteBackCard key={w.id} writeback={w} incidentUrn={incidentUrn} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WriteBackCard({
+  writeback,
+  incidentUrn,
+}: {
+  writeback: { id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string };
+  incidentUrn?: string;
+}) {
+  const data = safeParse(writeback.dataJson);
+  const title = data?.title ? String(data.title) : "";
+  const fallback = data?.fallback === true;
+  const primaryError = data?.primaryError ? String(data.primaryError) : "";
+  const isAck = writeback.path === "agent_context_kit";
+  const isRest = writeback.path === "rest_ingestion";
+  const succeeded = writeback.status === "succeeded";
+  const failed = writeback.status === "failed";
+  const [expanded, setExpanded] = useState(false);
+  const [reattempting, setReattempting] = useState(false);
+  const [reattemptError, setReattemptError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const queryClient = useQueryClient();
+
+  async function reattempt() {
+    setReattempting(true);
+    setReattemptError(null);
+    try {
+      const r = await fetch("/api/agent/writeback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ writeBackId: writeback.id, incidentUrn }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? `Re-attempt failed (HTTP ${r.status})`);
+      // Invalidate the incident view so the new write-back appears.
+      if (incidentUrn) queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
+    } catch (err) {
+      setReattemptError((err as Error).message);
+    } finally {
+      setReattempting(false);
+    }
+  }
+
+  function copyUrn() {
+    if (!writeback.datahubUrn) return;
+    navigator.clipboard?.writeText(writeback.datahubUrn).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  }
+
+  return (
+    <div
+      className={`rounded-md border p-2.5 ${
+        failed
+          ? "border-rose-500/40 bg-rose-500/5"
+          : isRest
+            ? "border-amber-500/30 bg-amber-500/5"
+            : "border-emerald-500/20 bg-emerald-500/5"
+      }`}
+    >
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        {/* Path badge */}
+        <span
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+            isAck
+              ? "bg-emerald-500/15 text-emerald-300"
+              : isRest
+                ? "bg-amber-500/15 text-amber-300"
+                : "bg-slate-700/40 text-slate-300"
+          }`}
+        >
+          {isAck ? <ShieldCheck className="h-2.5 w-2.5" /> : <GitBranch className="h-2.5 w-2.5" />}
+          {isAck ? "Agent Context Kit" : "REST ingestion"}
+        </span>
+        {fallback && (
+          <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider text-amber-300">
+            <RefreshCw className="h-2.5 w-2.5" /> fallback
+          </span>
+        )}
+        {/* Status badge */}
+        <span
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+            succeeded
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-rose-500/15 text-rose-300"
+          }`}
+        >
+          {succeeded ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+          {writeback.status}
+        </span>
+        <span className="ml-auto text-[10px] text-slate-500 font-mono">{writeback.kind}</span>
+      </div>
+
+      {title && <div className="text-xs text-slate-200 font-medium truncate mb-1" title={title}>{title}</div>}
+
+      {writeback.datahubUrn ? (
+        <button
+          onClick={copyUrn}
+          className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono hover:text-slate-200 transition-colors w-full text-left"
+          title="Click to copy"
+        >
+          <span className="truncate">{writeback.datahubUrn}</span>
+          {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-50" />}
+        </button>
+      ) : (
+        failed && <div className="text-[10px] text-rose-400 font-mono">no URN (write failed on both paths)</div>
+      )}
+
+      {fallback && primaryError && (
+        <div className="mt-1.5 text-[10px] text-amber-300/80 font-mono bg-amber-950/30 rounded px-1.5 py-1">
+          <span className="text-amber-400">ACK failed:</span> {primaryError}
+        </div>
+      )}
+
+      {/* Expandable data payload */}
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300"
+      >
+        {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        {expanded ? "collapse" : "payload"}
+      </button>
+      {expanded && (
+        <pre className="mt-1 text-[10px] text-slate-400 bg-slate-950/60 rounded p-2 overflow-x-auto font-mono max-h-32 overflow-y-auto custom-scroll">
+          {JSON.stringify(data, null, 2)}
+        </pre>
+      )}
+
+      {/* Re-attempt for failed write-backs */}
+      {failed && (
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            onClick={reattempt}
+            disabled={reattempting}
+            className="inline-flex items-center gap-1.5 rounded border border-rose-500/40 bg-rose-500/10 px-2 py-1 text-[10px] font-semibold text-rose-200 hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            {reattempting ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            {reattempting ? "Re-attempting…" : "Re-attempt"}
+          </button>
+          {reattemptError && <span className="text-[10px] text-rose-400 font-mono truncate">{reattemptError}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: AuditTimeline — the full audit log as a vertical timeline.
+// Lifecycle milestones (signal/incident/writeback/resolution) are mirrored to
+// DataHub Assertions in LIVE mode (seed in DEMO). The filter tabs let the
+// operator focus on one phase of the incident.
+// ---------------------------------------------------------------------------
+
+function AuditTimeline({
+  events,
+  incidentUrn,
+}: {
+  events: Array<{ id: string; kind: string; summary: string; ts: string }>;
+  incidentUrn?: string;
+}) {
+  const [filter, setFilter] = useState<AuditGroup | "all">("all");
+  // Fetch the mirror mode + count from the dedicated audit endpoint.
+  const mirrorInfo = useQuery<{ mode: "demo" | "live"; mirroredCount: number } | null>({
+    queryKey: ["audit-mirror", incidentUrn ?? ""],
+    queryFn: async () => {
+      if (!incidentUrn) return null;
+      const r = await fetch(`/api/agent/audit/${encodeURIComponent(incidentUrn)}`);
+      if (!r.ok) return null;
+      const j = await r.json();
+      return { mode: j.mode as "demo" | "live", mirroredCount: j.mirroredCount as number };
+    },
+    staleTime: 10_000,
+    enabled: Boolean(incidentUrn),
+  });
+
+  const filtered = filter === "all" ? events : events.filter((e) => AUDIT_KIND_META[e.kind]?.group === filter);
+  const groups: AuditGroup[] = ["lifecycle", "reasoning", "tool", "action", "writeback", "error"];
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const e of events) {
+      const g = AUDIT_KIND_META[e.kind]?.group;
+      if (g) counts[g] = (counts[g] ?? 0) + 1;
+    }
+    return counts;
+  }, [events]);
+
+  const mode = mirrorInfo.data?.mode;
+  const mirroredCount = mirrorInfo.data?.mirroredCount ?? 0;
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-900/40">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-slate-800">
+        <h3 className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+          <History className="h-3.5 w-3.5 text-slate-400" /> Audit log
+          <span className="text-slate-500 font-normal">({events.length})</span>
+        </h3>
+        {/* Mirror badge */}
+        <span
+          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+            mode === "live"
+              ? "bg-emerald-500/15 text-emerald-300"
+              : "bg-slate-700/40 text-slate-300"
+          }`}
+          title={
+            mode === "live"
+              ? "Lifecycle events are mirrored as DataHub Assertions on the asset (LIVE DataHub)"
+              : "Lifecycle events are mirrored into the SeedAssertion table (DEMO mode)"
+          }
+        >
+          <Layers className="h-2.5 w-2.5" />
+          {mode === "live" ? "Mirrored → DataHub" : "Mirrored → seed"}
+          {mirroredCount > 0 && <span className="text-slate-500">·{mirroredCount}</span>}
+        </span>
+      </div>
+
+      {/* Filter tabs */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-800 overflow-x-auto custom-scroll">
+        <FilterTab active={filter === "all"} onClick={() => setFilter("all")} label="All" count={events.length} />
+        {groups.map((g) => {
+          const c = groupCounts[g] ?? 0;
+          if (c === 0) return null;
+          return (
+            <FilterTab
+              key={g}
+              active={filter === g}
+              onClick={() => setFilter(g)}
+              label={AUDIT_GROUP_META[g].label}
+              count={c}
+              color={AUDIT_GROUP_META[g].color}
+            />
+          );
+        })}
+      </div>
+
+      {/* Timeline */}
+      <ul className="px-3.5 py-3 space-y-2.5 max-h-80 overflow-y-auto custom-scroll">
+        {filtered.map((e, i) => {
+          const meta = AUDIT_KIND_META[e.kind] ?? { icon: Activity, group: "reasoning" as AuditGroup, label: e.kind.toUpperCase(), color: "text-slate-400", dot: "bg-slate-500" };
+          const Icon = meta.icon;
+          const isLast = i === filtered.length - 1;
+          return (
+            <li key={e.id} className="flex gap-2.5">
+              {/* Timeline rail */}
+              <div className="flex flex-col items-center pt-0.5">
+                <span className={`h-2 w-2 rounded-full ${meta.dot} ring-2 ring-slate-950 shrink-0`} />
+                {!isLast && <span className="w-px flex-1 bg-slate-800 mt-1" />}
+              </div>
+              {/* Content */}
+              <div className="flex-1 min-w-0 pb-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Icon className={`h-3 w-3 ${meta.color} shrink-0`} />
+                  <span className={`text-[10px] font-mono uppercase tracking-wider ${meta.color}`}>{meta.label}</span>
+                  <span className="ml-auto text-[10px] text-slate-600 font-mono shrink-0">
+                    {new Date(e.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-xs text-slate-300 break-words leading-relaxed">{e.summary}</div>
+              </div>
+            </li>
+          );
+        })}
+        {filtered.length === 0 && (
+          <li className="text-center py-4 text-xs text-slate-500">No events in this group.</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function FilterTab({
+  active,
+  onClick,
+  label,
+  count,
+  color,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  color?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1 rounded px-2 py-1 text-[10px] font-mono whitespace-nowrap transition-colors ${
+        active ? "bg-slate-700/60 text-slate-100" : "text-slate-500 hover:text-slate-300 hover:bg-slate-800/40"
+      }`}
+    >
+      <span className={color}>{label}</span>
+      <span className="text-slate-600">{count}</span>
+    </button>
   );
 }
 

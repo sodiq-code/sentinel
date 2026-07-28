@@ -12,6 +12,10 @@ export { listSeedSignals, buildSignal, buildInitialUserMessage } from './seed-si
 export type { InjectableSignal } from './seed-signals'
 export { runSentinel, runSentinelOnSeedSignal, hydrateIncident, listIncidents } from './orchestrator'
 export type { OrchestratorResult, RunOptions } from './orchestrator'
+export { writeBackDocument } from './writeback'
+export type { WriteBackDocumentInput, WriteBackDocumentOutcome, WriteBackPath, WriteBackStatus } from './writeback'
+export { getAuditMirror, getAuditMirrorMode, countMirroredForIncident, MIRRORED_KINDS } from './audit-mirror'
+export type { AuditMirror, AuditMirrorMode, MirrorInput, MirrorResult } from './audit-mirror'
 export type {
   LlmClient,
   LlmMessage,

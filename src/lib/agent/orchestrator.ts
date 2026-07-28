@@ -36,6 +36,8 @@ import {
 import { checkBeforeExecute, recordGuardrailCheck } from '@/lib/guardrail/pre-exec'
 import { checkPiiForAsset as checkPiiForAssetInline } from '@/lib/guardrail/pii-check'
 import { getAudit } from './audit'
+import { writeBackDocument } from './writeback'
+import { getAuditMirror, getAuditMirrorMode, type AuditMirrorMode } from './audit-mirror'
 import {
   buildInitialUserMessage,
   buildSignal,
@@ -58,6 +60,8 @@ export interface OrchestratorResult {
   llmModel: string
   llmProvider: 'zai' | 'nvidia'
   promptVersion: string
+  /** Phase 4: where the audit log is mirrored (DataHub Assertions or seed). */
+  auditMirrorMode: AuditMirrorMode
 }
 
 export interface RunOptions {
@@ -131,6 +135,14 @@ export async function runSentinel(
     kind: 'incident_created',
     summary: `Incident created: ${incidentUrn}`,
     payload: { incidentUrn, signalType: signal.type },
+  })
+  // Phase 4: mirror incident_created to DataHub Assertions (best-effort,
+  // non-fatal — the mirror must never block the incident).
+  void getAuditMirror().mirror({
+    incidentUrn,
+    kind: 'incident_created',
+    summary: `${signal.type} on ${signal.assetUrn}`,
+    assetUrn: signal.assetUrn,
   })
 
   const ctx: ToolContext = { clients, incidentUrn, dryRun }
@@ -378,30 +390,39 @@ export async function runSentinel(
       } else {
         const me = await clients.mcp.get_me()
         const postMortemContent = buildFallbackPostMortem(sig, signal, steps, finalReflection, lastError)
-        const res = await clients.contextKit.save_document({
+        // Phase 4: dual write-back path (PDF §12.2). The orchestrator's
+        // post-loop fallback now goes through the same helper as the agent's
+        // ack.save_document tool: try Agent Context Kit → fall back to REST
+        // ingestion on a 5xx/network error. A 4xx is a hard failure (no
+        // fallback). Both paths record a WriteBack row + audit events.
+        const wb = await writeBackDocument({
+          clients,
+          incidentUrn,
           assetUrn: signal.assetUrn,
           title: `Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`,
           content: postMortemContent,
           format: 'markdown',
           authorUrn: me.urn,
           sentinelPostMortem: true,
-        })
-        await db.writeBack.create({
-          data: {
-            incidentUrn,
-            kind: 'context_doc',
-            datahubUrn: res.urn,
-            status: 'succeeded',
-            path: 'agent_context_kit',
-            dataJson: JSON.stringify({ title: `Sentinel Post-Mortem — ${sig.assetName}` }),
-            ts: new Date(),
-          },
+          audit,
         })
         emit('write_back', {
           toolName: 'ack.save_document',
           toolArgs: { assetUrn: signal.assetUrn, sentinelPostMortem: true },
-          toolResult: { urn: res.urn, kind: 'context_doc', fallback: true },
-          reasoning: 'Orchestrator wrote a fallback post-mortem (agent did not call ack.save_document).',
+          toolResult: {
+            urn: wb.urn,
+            kind: 'context_doc',
+            path: wb.path,
+            status: wb.status,
+            fallback: wb.fallback,
+            primaryError: wb.primaryError,
+          },
+          reasoning:
+            wb.status === 'succeeded'
+              ? wb.fallback
+                ? `Orchestrator wrote a fallback post-mortem via REST ingestion (ACK failed: ${wb.primaryError}). The compounding artefact is preserved.`
+                : `Orchestrator wrote a fallback post-mortem via Agent Context Kit (agent did not call ack.save_document).`
+              : `Orchestrator fallback post-mortem FAILED on both paths (ACK: ${wb.primaryError} → REST: ${wb.error}). The compounding artefact could not be written.`,
         })
       }
     } catch (err) {
@@ -431,6 +452,17 @@ export async function runSentinel(
       : `Incident resolved in ${steps.length} reasoning steps`,
     payload: { steps: steps.length, totalPromptTokens, totalCompletionTokens },
   })
+  // Phase 4: mirror the resolution milestone to DataHub Assertions (best-effort,
+  // non-fatal). This is the assertion a DataHub operator sees on the asset page:
+  // "Sentinel incident resolved / failed on {asset}". (PDF §13.4)
+  void getAuditMirror().mirror({
+    incidentUrn,
+    kind: failed ? 'incident_failed' : 'incident_resolved',
+    summary: failed
+      ? `Incident failed: ${lastError}`
+      : `Incident resolved in ${steps.length} reasoning steps`,
+    assetUrn: signal.assetUrn,
+  })
 
   const incident: Incident = {
     urn: incidentUrn,
@@ -449,6 +481,7 @@ export async function runSentinel(
     llmModel: getLlmModel(),
     llmProvider: getLlmProvider(),
     promptVersion: PROMPT_VERSION,
+    auditMirrorMode: getAuditMirrorMode(),
   }
 }
 

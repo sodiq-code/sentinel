@@ -31,6 +31,8 @@ import type { DataHubClients } from '@/lib/datahub/types'
 import { openIssue as ghOpenIssue, openPR as ghOpenPR } from '@/lib/connectors/github'
 import { postTriage as slackPostTriage } from '@/lib/connectors/slack'
 import type { LlmTool, LlmToolCall } from './types'
+import { getAudit } from './audit'
+import { writeBackDocument } from './writeback'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -339,23 +341,32 @@ const WRITE_TOOLS: ToolDefinition[] = [
       const content = asString(args.content)
       const isPostMortem = args.sentinelPostMortem !== false
       const me = await ctx.clients.mcp.get_me()
-      const res = await ctx.clients.contextKit.save_document({
+      // Phase 4: dual write-back path (PDF §12.2). The agent's explicit
+      // ack.save_document call now goes through the same helper as the
+      // orchestrator's post-loop fallback: try Agent Context Kit → fall back
+      // to REST ingestion on a 5xx/network error. A 4xx is a hard failure.
+      const wb = await writeBackDocument({
+        clients: ctx.clients,
+        incidentUrn: ctx.incidentUrn,
         assetUrn,
         title,
         content,
         format: 'markdown',
         authorUrn: me.urn,
         sentinelPostMortem: isPostMortem,
+        audit: getAudit(),
       })
-      await recordWriteBack({
-        incidentUrn: ctx.incidentUrn,
+      return {
+        urn: wb.urn,
         kind: 'context_doc',
-        datahubUrn: res.urn,
-        status: 'succeeded',
-        path: 'agent_context_kit',
-        data: { assetUrn, title, sentinelPostMortem: isPostMortem },
-      })
-      return { urn: res.urn, kind: 'context_doc', title, assetUrn, path: 'agent_context_kit' }
+        title,
+        assetUrn,
+        path: wb.path,
+        status: wb.status,
+        fallback: wb.fallback,
+        primaryError: wb.primaryError,
+        error: wb.error,
+      }
     },
   },
   {
