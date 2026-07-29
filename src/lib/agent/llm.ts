@@ -629,6 +629,24 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1'
 
+/**
+ * Rough prompt-token estimator — 4 chars/token is the standard OpenAI-style
+ * approximation. Used only to decide whether the 8b fallback's 6,000 TPM
+ * limit would be exceeded (avoiding a guaranteed 413). The estimate does
+ * not need to be exact — we leave a 500-token headroom.
+ */
+function estimatePromptTokens(body: Record<string, unknown>): number {
+  const messages = (body.messages as Array<{ content?: string | null; tool_calls?: Array<unknown> }> | undefined) ?? []
+  const tools = (body.tools as Array<unknown> | undefined) ?? []
+  let chars = 0
+  for (const m of messages) {
+    if (typeof m.content === 'string') chars += m.content.length
+    if (m.tool_calls) chars += JSON.stringify(m.tool_calls).length
+  }
+  chars += JSON.stringify(tools).length
+  return Math.ceil(chars / 4)
+}
+
 class GroqLlmClient implements ResilientLlmClient {
   private readonly rateLimiter = new TokenBucket(1, RATE_LIMIT_INTERVAL_MS)
   private readonly circuit = new CircuitBreaker(CIRCUIT_THRESHOLD, CIRCUIT_COOLDOWN_MS)
@@ -763,6 +781,13 @@ class GroqLlmClient implements ResilientLlmClient {
     // fallback model has its own, much higher per-minute budget on Groq's
     // free tier, so the request almost always still succeeds. Only when
     // BOTH models 429 do we count one failure against the circuit breaker.
+    //
+    // CAVEAT: the 8b model has a 6,000 tokens-per-minute TPM limit (vs 70b's
+    // higher tier). If the scratchpad has grown large after several tool
+    // calls, the request may exceed 8b's TPM and return 413 "Request too
+    // large". We estimate the prompt token count and SKIP the 8b fallback
+    // when it would obviously 413 — counting it as a real 429 against the
+    // circuit instead, so the graceful-degradation path runs.
     const primary = await this.callModel(primaryModel, body, apiKey)
     if (primary.ok) {
       this.circuit.recordSuccess()
@@ -771,43 +796,65 @@ class GroqLlmClient implements ResilientLlmClient {
 
     // Primary failed. If it was a rate limit (429) and we have a different
     // fallback model, try it transparently — do NOT touch the circuit yet.
+    // But first check the prompt would fit 8b's 6,000 TPM limit.
     if (primary.rateLimited && fallbackModel !== primaryModel) {
-      const secondary = await this.callModel(fallbackModel, body, apiKey)
-      if (secondary.ok) {
-        // The fallback model served the request — treat as success and
-        // RESET the circuit's failure counter (the heavy model's 429 was
-        // a transient rate-limit, not a hard outage).
-        this.circuit.recordSuccess()
-        return secondary.completion
-      }
-      // Both models failed. If BOTH were rate-limited, this is a genuine
-      // shared-gateway throttle — record ONE failure (not two).
-      if (secondary.rateLimited) {
-        const openedNow = this.circuit.recordFailure(429)
+      const estTokens = estimatePromptTokens(body)
+      const FALLBACK_TPM_LIMIT = Number(process.env.GROQ_FALLBACK_TPM ?? 6000)
+      // Leave 500-token headroom for the completion + JSON framing.
+      const fitsFallback = estTokens + 500 < FALLBACK_TPM_LIMIT
+      if (fitsFallback) {
+        const secondary = await this.callModel(fallbackModel, body, apiKey)
+        if (secondary.ok) {
+          // The fallback model served the request — treat as success and
+          // RESET the circuit's failure counter (the heavy model's 429 was
+          // a transient rate-limit, not a hard outage).
+          this.circuit.recordSuccess()
+          return secondary.completion
+        }
+        // Both models failed. If BOTH were rate-limited, this is a genuine
+        // shared-gateway throttle — record ONE failure (not two).
+        if (secondary.rateLimited) {
+          const openedNow = this.circuit.recordFailure(429)
+          if (openedNow) {
+            const hint = secondary.retryAfterMs
+              ? ` (Retry-After: ${Math.round(secondary.retryAfterMs / 1000)}s)`
+              : primary.retryAfterMs
+                ? ` (Retry-After: ${Math.round(primary.retryAfterMs / 1000)}s)`
+                : ''
+            throw new CircuitOpenError(
+              `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
+                `429/5xx (both '${primaryModel}' and '${fallbackModel}' rate-limited).` +
+                ` Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s${hint}.`,
+            )
+          }
+          throw secondary.error
+        }
+        // Fallback failed with a hard (non-429) error — record it and bubble.
+        const openedNow = this.circuit.recordFailure(secondary.status || 500)
         if (openedNow) {
-          const hint = secondary.retryAfterMs
-            ? ` (Retry-After: ${Math.round(secondary.retryAfterMs / 1000)}s)`
-            : primary.retryAfterMs
-              ? ` (Retry-After: ${Math.round(primary.retryAfterMs / 1000)}s)`
-              : ''
           throw new CircuitOpenError(
-            `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
-              `429/5xx (both '${primaryModel}' and '${fallbackModel}' rate-limited).` +
-              ` Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s${hint}.`,
+            `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+              `Last error: ${secondary.error.message.slice(0, 160)}. ` +
+              `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
           )
         }
         throw secondary.error
       }
-      // Fallback failed with a hard (non-429) error — record it and bubble.
-      const openedNow = this.circuit.recordFailure(secondary.status || 500)
+      // Prompt too large for the 8b fallback's TPM — don't waste a call.
+      // Record a 429 against the circuit (the heavy model is rate-limited
+      // AND we can't fall back), let the orchestrator's graceful-degradation
+      // path run.
+      const openedNow = this.circuit.recordFailure(429)
       if (openedNow) {
         throw new CircuitOpenError(
           `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
-            `Last error: ${secondary.error.message.slice(0, 160)}. ` +
-            `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
+            `Primary '${primaryModel}' rate-limited and fallback '${fallbackModel}' ` +
+            `would exceed its ${FALLBACK_TPM_LIMIT} TPM limit (est. ${estTokens} tokens). ` +
+            `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s. ` +
+            `The orchestrator's fallback post-mortem path will run.`,
         )
       }
-      throw secondary.error
+      throw primary.error
     }
 
     // Primary failed with a non-429 error. If it's a hard (non-retryable)

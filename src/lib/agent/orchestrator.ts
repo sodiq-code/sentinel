@@ -51,13 +51,11 @@ import type {
   Signal,
 } from './types'
 
-// MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-6
-// iterations on the seed scenarios. 6 (down from 12) keeps enough headroom
-// for a nudge + a tool round, while keeping the total wall time under the
-// Vercel Hobby 60s function timeout. Each iteration is ~5-7s (2s pace +
-// 3s LLM call + 2s tool call), so 6 × 7s = 42s, leaving 18s for the
-// post-loop fallback post-mortem write.
-const MAX_ITERS = 6
+// MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-5
+// iterations on the seed scenarios. 5 (down from 6) keeps the scratchpad
+// under the Groq 8b fallback's 6,000 TPM limit even with verbose tool
+// results, leaving headroom for the post-loop fallback post-mortem write.
+const MAX_ITERS = 5
 
 // Soft deadline — the Vercel Hobby function timeout is 60s. We break the
 // loop at 45s to leave 15s for the post-loop fallback post-mortem write +

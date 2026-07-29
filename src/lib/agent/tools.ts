@@ -79,7 +79,7 @@ function asRecord(v: unknown): Record<string, unknown> {
   return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
 }
 
-const RESULT_BUDGET = 1400
+const RESULT_BUDGET = 900
 function truncate(result: unknown): unknown {
   const json = JSON.stringify(result)
   if (json.length <= RESULT_BUDGET) return result
