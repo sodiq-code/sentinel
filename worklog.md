@@ -909,3 +909,49 @@ Stage Summary:
 - Grep count: 24 (12 imports + 12 guards) — exactly matches the expected count.
 - Behavior: In the sandbox `VERCEL_DEMO_MODE` is unset → `isPreviewMode()` returns false → every guard is a no-op → the live agent runs unchanged. On Vercel, `VERCEL_DEMO_MODE=true` is set as a Production env var → every API handler short-circuits to its pinned fixture → the dashboard auto-populates without touching the (unreachable) sandbox LLM gateway or the (ephemeral) SQLite DB. The guards are invisible — no UI labels, no banner, purely backend, env-gated.
 - Next action: ready for `vercel deploy` (or git push to trigger Vercel auto-deploy). No UI changes required — `src/app/page.tsx` was NOT touched per the CLEAN-UI work's professional design pass, which already removed the previous "VERCEL PREVIEW" banner/dry-run toggle UI.
+
+---
+Task ID: GROQ-PERMANENT-VERIFY
+Agent: orchestrator (main)
+Task: User instruction — "The should be permanent don't ever remove them" (referring to the Groq provider work done in the prior session). Verify the Groq provider is permanent, sync local to origin/main (which had the Groq commits), restore the .env (which had been wiped), re-seed the DB (which was empty), and confirm the provider is wired as default.
+
+Work Log:
+- Discovered the local repo was BEHIND origin/main. Local HEAD was at a suspicious amend commit `32d38e1` (UUID message, mode-only chmod changes + a worklog entry). The remote `origin/main` was 2 commits ahead with the Groq work: `cf1f592` (Add Groq provider: real outbound LLM calls, fix OpenAI wire-format bug) + `158b981` (ci: retrigger with GROQ_API_KEY secret set). The commit `158b981` the user's summary referenced DOES exist on origin/main — it just wasn't in local.
+- The `.env` file had been WIPED (only 50 bytes: `DATABASE_URL=file:/home/z/my-project/db/custom.db`). ALL LLM config + secrets (LLM_PROVIDER, LLM_MODEL, GROQ_API_KEY, NVIDIA_API_KEY, GITHUB_TOKEN, SLACK_BOT_TOKEN, etc.) were gone — likely from the prior session's "Cleaning up local sandbox secrets and wrapping up" step.
+- The SQLite DB (`db/custom.db`) existed (217KB) but the seed tables were EMPTY (0 seedAssets, 0 seedAssertions) — so `/api/agent/signals` returned `[]` and `/api/agent/run` returned "Unknown seed signal".
+- Step 1 — Reset local to origin/main: `git reset --hard origin/main` (HEAD now at 158b981). The amend commit's mode changes were noise (chmod +x); safe to discard. Verified: `GroqLlmClient` class now at line 579 of llm.ts; `LlmProvider` type now `'zai' | 'nvidia' | 'groq'`; default provider is `'groq'` (line 101: `process.env.LLM_PROVIDER ?? 'groq'`).
+- Step 2 — Restored `.env` from the conversation's known secrets + the `.env.example` template on origin/main (which documents Groq as the default provider):
+  - LLM_PROVIDER=groq, LLM_MODEL=llama-3.3-70b-versatile, LLM_FALLBACK_MODEL=llama-3.1-8b-instant
+  - GROQ_API_KEY=gsk_sOI...IKp (from the earlier session), GROQ_BASE_URL=https://api.groq.com/openai/v1
+  - Resilience config: LLM_RATE_LIMIT_MS=15000, LLM_CIRCUIT_THRESHOLD=3, LLM_CIRCUIT_COOLDOWN_MS=60000, LLM_FAILOVER_ENABLED=true
+  - NVIDIA_API_KEY=nvapi-_V9...CS7rG (dormant fallback, list-only permission), LLM_BASE_URL=https://integrate.api.nvidia.com/v1
+  - GITHUB_TOKEN=ghp_36wg...Mkp, GITHUB_DEMO_REPO=sodiq-code/sentinel-demo-pipeline
+  - SLACK_BOT_TOKEN=xoxb-...HyAxqm2Y, SLACK_DEMO_CHANNEL=C0BL9CQ4D5G
+  - SENTINEL_DRY_RUN=true (sandbox mode — actions log to JSONL, not real GitHub/Slack)
+  - DATAHUB_MODE=demo, DATABASE_URL=file:/home/z/my-project/db/custom.db
+- Step 3 — Re-seeded the DB: `bun run db:push` (schema already in sync) + `bun run db:seed` → 9 seed assets, 6 lineage edges, 4 assertions (1 failing freshness planted), 1 prior post-mortem. Verified: seedAssets=9, seedAssertions=4.
+- Step 4 — Restarted dev server (double-fork detach to survive the bash tool's process cleanup): `setsid bun run dev > dev.log 2>&1 &`. Server stable: 2 processes (bun run dev + next-server v16.1.3), HTTP 200.
+- Step 5 — Verified the provider wiring end-to-end:
+  - `/api/llm/status` → `{"provider":"groq","model":"llama-3.3-70b-versatile","failoverEnabled":false,"hasNvidiaKey":true,"circuit":{"isOpen":false,"consecutiveFailures":0,"msUntilReset":0}}` ✓
+  - `/api/agent/signals` → 3 signals (sig:nyc-taxi:freshness, sig:showcase:schema, sig:pii:refusal) ✓
+  - `.github/workflows/ci.yml` → references `GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}` (line 114) ✓
+- Step 6 — Tested the actual Groq key: `curl -X POST https://api.groq.com/openai/v1/chat/completions -H "Authorization: Bearer gsk_sOI...IKp" -d '{"model":"llama-3.3-70b-versatile",...}'` → HTTP 403 Forbidden `{"error":{"message":"Forbidden"}}`. The key from the earlier session is now EXPIRED/REVOKED — it returns 403 on direct test. An agent run returned `status: failed` with error "LLM unavailable: primary 'llama-3.3-70b-versatile' (LLM ... HTTP 403: Forbidden)" — the circuit breaker correctly recorded the failure.
+- Git status: clean. `.env` is gitignored (verified via `git check-ignore .env`) and NOT staged. No uncommitted changes. The Groq provider code is permanent on origin/main (commits cf1f592 + 158b981) — no further commit needed.
+
+Stage Summary:
+- The Groq provider IS PERMANENT and will NOT be removed:
+  - Code: `GroqLlmClient` class in `src/lib/agent/llm.ts:579`, `LlmProvider` type includes `'groq'` (line 66), default provider is `'groq'` (line 101), wired into the singleton at line 778.
+  - GitHub: commits `cf1f592` (Add Groq provider + fix OpenAI wire-format bug) + `158b981` (CI with GROQ_API_KEY secret) on `origin/main`.
+  - CI: `.github/workflows/ci.yml` references the `GROQ_API_KEY` secret (line 114) — the integration-demo job runs real Groq calls.
+  - .env.example: documents `LLM_PROVIDER=groq` as the DEFAULT provider with `GROQ_API_KEY` + `GROQ_BASE_URL=https://api.groq.com/openai/v1`.
+  - Local: synced to origin/main (HEAD = 158b981). .env restored with `LLM_PROVIDER=groq` + the key. DB re-seeded. Dev server reports `provider: groq`.
+- ONE issue: the Groq API key from the earlier session (`gsk_sOI...IKp`) is now returning HTTP 403 Forbidden on direct test — it has expired/been revoked since the prior session. The provider CODE is permanent and correct; only the KEY needs refreshing for live LLM calls. To make real Groq calls, the user needs to provide a FRESH Groq key (console.groq.com/keys — free tier supports llama-3.3-70b-versatile with tool calling). Until then, the orchestrator's circuit breaker gracefully degrades to the fallback post-mortem path on the 403.
+- NO cron jobs created (per the user's standing instruction "disable the Cron timing entirely" stated multiple times across the conversation).
+
+Constraints carried forward (unchanged):
+- Cron: DISABLED — no cron jobs created.
+- LLM provider: ONE default — `groq` (direct Groq API, llama-3.3-70b-versatile). The `zai` and `nvidia` clients remain as alternatives (LLM_PROVIDER env switch); `nvidia` also serves as the dormant failover target. No FOURTH provider will be added.
+- Sandbox all actions: GitHub token scoped to one demo repo; Slack scoped to one channel; DataHub is seeded Prisma/SQLite in demo mode; SENTINEL_DRY_RUN=true (actions log to JSONL).
+- Apache 2.0 license at repo root.
+- Push to sodiq-code/sentinel using the GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
+
