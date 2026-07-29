@@ -32,13 +32,13 @@ Tool names use the `mcp.*`, `ack.*`, and `action.*` namespaces:
 | `ack.update_description` | Update an entity's description. | **Proposal**. |
 | `ack.create_assertion` | Create a new DataHub assertion encoding a learned SLA. | **Direct write** (reversible — PDF §9.5.5). |
 
-## Action tools — `action.*` (Phase 3 connectors; sandboxed by default)
+## Action tools — `action.*` (Phase 3 connectors; logged by default)
 
 | Tool | What it does | Governance |
 |---|---|---|
-| `action.github_open_issue` | Open a GitHub issue in the sandbox repo. | **Executed** in Phase 3 (sandbox log by default; live GitHub when `SENTINEL_DRY_RUN=false`). |
-| `action.github_open_pr` | Open a GitHub pull request in the sandbox repo. **Sentinel NEVER merges** — the PR is left OPEN for human review. | **Executed** in Phase 3; `NoMergeRule` enforced in code. |
-| `action.slack_post_triage` | Post a triage card (3 bullets) to the sandbox Slack channel. | **Executed** in Phase 3 (sandbox log by default; live Slack when `SENTINEL_DRY_RUN=false`). |
+| `action.github_open_issue` | Open a GitHub issue in the demo pipeline repo. | **Executed** in Phase 3 (trace log by default; live GitHub when `SENTINEL_DRY_RUN=false`). |
+| `action.github_open_pr` | Open a GitHub pull request in the demo pipeline repo. **Sentinel NEVER merges** — the PR is left OPEN for human review. | **Executed** in Phase 3; `NoMergeRule` enforced in code. |
+| `action.slack_post_triage` | Post a triage card (3 bullets) to the demo Slack channel. | **Executed** in Phase 3 (trace log by default; live Slack when `SENTINEL_DRY_RUN=false`). |
 
 ## Calling convention
 

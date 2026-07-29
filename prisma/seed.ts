@@ -24,25 +24,48 @@
 // =============================================================================
 
 import { PrismaClient } from '@prisma/client'
+import { PrismaLibSql } from '@prisma/adapter-libsql'
+
+// Connect via the libSQL driver adapter so the seed works against either a
+// local SQLite file (file: URL) or a managed Turso database (libsql:// URL).
+// The adapter handles the wire protocol; the PrismaClient just talks to it.
+function makePrisma(): PrismaClient {
+  const url = process.env.DATABASE_URL ?? ''
+  if (url.startsWith('libsql:') || url.startsWith('libsqls:')) {
+    const adapter = new PrismaLibSql({
+      url,
+      authToken: process.env.DATABASE_AUTH_TOKEN,
+    })
+    return new PrismaClient({ adapter })
+  }
+  return new PrismaClient()
+}
 
 // Use the shared db client when imported as a module (so the live Next.js
-// server uses the same connection pool); fall back to a standalone client
-// when run as a CLI script (`bun run db:seed`).
+// server uses the same connection pool); fall back to a CLI client above.
 let prisma: PrismaClient
 try {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  prisma = require('../src/lib/db').db as PrismaClient
+  const mod = require('../src/lib/db')
+  prisma = (mod.db ?? makePrisma()) as PrismaClient
 } catch {
-  prisma = new PrismaClient()
+  prisma = makePrisma()
 }
 
 // A fixed "now" so the freshness breach is deterministic across runs.
 // The raw S3 asset was last modified 6 hours ago; its SLA is 1 hour → fails.
+// All `lastModifiedAt` values are stored as SECONDS-since-epoch (Int32) to
+// work around a libsql/Turso driver quirk where INTEGER columns are returned
+// as Float, which Prisma's BigInt column rejects on read. The mock-datahub
+// reader multiplies by 1000 to restore ms for the API wire format. Date
+// columns (lastSuccessAt, createdAt) keep ms.
 const NOW = Date.parse('2026-07-28T08:00:00.000Z')
 const SIX_HOURS_AGO = NOW - 6 * 60 * 60 * 1000
 const TWO_HOURS_AGO = NOW - 2 * 60 * 60 * 1000
 const ONE_HOUR_AGO = NOW - 60 * 60 * 1000
 const TWO_DAYS_AGO = NOW - 2 * 24 * 60 * 60 * 1000
+// Seconds-since-epoch for the `Int?` lastModifiedAt column.
+const sec = (ms: number) => Math.floor(ms / 1000)
 
 // ---------------------------------------------------------------------------
 // URNs — DataHub-format. These exact strings are what the orchestrator
@@ -106,7 +129,7 @@ const nycAssets = [
       { name: 'fare_amount', type: 'double', nullable: true, nativeDataType: 'DOUBLE' },
       { name: 'total_amount', type: 'double', nullable: true, nativeDataType: 'DOUBLE' },
     ]),
-    lastModifiedAt: SIX_HOURS_AGO, // stale — planted freshness breach
+    lastModifiedAt: sec(SIX_HOURS_AGO), // stale — planted freshness breach
     platformNativeName: 's3://nyc-tlc/trips/raw/',
     scenarioId: 'nyc-taxi-freshness',
   },
@@ -134,7 +157,7 @@ const nycAssets = [
       { name: 'fare_amount', type: 'double', nullable: false, nativeDataType: 'DOUBLE' },
       { name: 'total_amount', type: 'double', nullable: false, nativeDataType: 'DOUBLE' },
     ]),
-    lastModifiedAt: TWO_HOURS_AGO, // fresh
+    lastModifiedAt: sec(TWO_HOURS_AGO), // fresh
     platformNativeName: 's3://nyc-tlc/clean/',
     scenarioId: 'nyc-taxi-freshness',
   },
@@ -157,7 +180,7 @@ const nycAssets = [
       { name: 'revenue', type: 'double', nullable: false, nativeDataType: 'DOUBLE' },
       { name: 'trips', type: 'long', nullable: false, nativeDataType: 'BIGINT' },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO, // fresh
+    lastModifiedAt: sec(ONE_HOUR_AGO), // fresh
     platformNativeName: 'analytics.daily_revenue_dashboard',
     scenarioId: 'nyc-taxi-freshness',
   },
@@ -284,7 +307,7 @@ const ecommerceAssets = [
       { name: 'currency', type: 'string', nullable: false },
       { name: 'created_at', type: 'timestamp', nullable: false },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 'ecom.raw_orders',
     scenarioId: 'showcase-ecommerce',
   },
@@ -302,7 +325,7 @@ const ecommerceAssets = [
     ]),
     governanceTagsJson: JSON.stringify([]),
     schemaFieldsJson: JSON.stringify([]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 'looker:orders_daily_chart',
     scenarioId: 'showcase-ecommerce',
   },
@@ -326,7 +349,7 @@ const ecommerceAssets = [
       { name: 'currency', type: 'string', nullable: false },
       { name: 'created_at', type: 'timestamp', nullable: false },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 'analytics.fct_orders_clean',
     scenarioId: 'showcase-ecommerce',
   },
@@ -349,7 +372,7 @@ const ecommerceAssets = [
       { name: 'order_total', type: 'double', nullable: false },
       { name: 'customer_ltv', type: 'double', nullable: true },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 's3://ecom/orders_enriched/',
     scenarioId: 'showcase-ecommerce',
   },
@@ -368,7 +391,7 @@ const ecommerceAssets = [
       { name: 'order_id', type: 'string', nullable: false },
       { name: 'order_total', type: 'double', nullable: false },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 's3://ecom/landing/orders_enriched_parquet',
     scenarioId: 'showcase-ecommerce',
   },
@@ -408,7 +431,7 @@ const piiAssets = [
       { name: 'full_name', type: 'string', nullable: false },
       { name: 'billing_address', type: 'string', nullable: true },
     ]),
-    lastModifiedAt: ONE_HOUR_AGO,
+    lastModifiedAt: sec(ONE_HOUR_AGO),
     platformNativeName: 'pg.customer_pii',
     scenarioId: 'pii',
   },

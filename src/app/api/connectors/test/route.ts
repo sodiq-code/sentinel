@@ -37,12 +37,11 @@ export async function POST(req: Request) {
         '# Sentinel connector probe',
         '',
         'This issue was opened by the /api/connectors/test endpoint to verify',
-        'the GitHub connector can authenticate + create issues on the sandbox',
-        'repo.',
+        'the GitHub connector can authenticate + create issues on the demo',
         '',
         `- Time: ${ts}`,
         `- Repo: ${process.env.GITHUB_DEMO_REPO}`,
-        `- Mode: ${process.env.SENTINEL_DRY_RUN === 'false' ? 'LIVE' : 'SANDBOX'}`,
+        `- Mode: ${process.env.SENTINEL_DRY_RUN === 'false' ? 'LIVE' : 'DRY-RUN'}`,
         '',
         'A human reviewer should close this issue. Sentinel will NEVER merge',
         'or close it (PDF §9.3.5).',
@@ -52,7 +51,7 @@ export async function POST(req: Request) {
     const slack = await postTriage({
       title: 'Sentinel connector probe',
       bullets: [
-        `*What*: connector probe (${process.env.SENTINEL_DRY_RUN === 'false' ? 'LIVE' : 'SANDBOX'})`,
+        `*What*: connector probe (${process.env.SENTINEL_DRY_RUN === 'false' ? 'LIVE' : 'DRY-RUN'})`,
         `*When*: ${ts}`,
         `*Action*: human reviewer should delete this message`,
       ],
@@ -60,7 +59,7 @@ export async function POST(req: Request) {
     })
     return NextResponse.json({
       ok: true,
-      mode: process.env.SENTINEL_DRY_RUN === 'false' ? 'live' : 'sandbox',
+      mode: process.env.SENTINEL_DRY_RUN === 'false' ? 'live' : 'dry-run',
       github: {
         repo: issue.repo,
         number: issue.number,

@@ -612,9 +612,9 @@ function Console() {
           <p className="mt-2 max-w-3xl text-sm text-slate-400">
             Inject a DataHub assertion-failure signal. Sentinel&apos;s ReAct loop investigates — fetches the asset,
             traverses lineage, reads prior post-mortems — then opens a <strong className="text-slate-200">GitHub issue</strong> in
-            the sandbox repo and posts a <strong className="text-slate-200">Slack triage card</strong>. A
+            the demo pipeline repo and posts a <strong className="text-slate-200">Slack triage card</strong>. A
             code-level <strong className="text-amber-300">guardrail</strong> refuses writes to PII-tagged assets
-            and surfaces an approval gate for ownership and glossary proposals. Every action is sandboxed, audited,
+            and surfaces an approval gate for ownership and glossary proposals. Every action is logged, audited,
             and rendered live below.
           </p>
         </section>
@@ -764,7 +764,7 @@ function Console() {
           </Link>
           <span className="text-slate-700">·</span>
           <Link href="https://github.com/sodiq-code/sentinel-demo-pipeline" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
-            <Github className="h-3.5 w-3.5" /> sandbox pipeline repo
+            <Github className="h-3.5 w-3.5" /> demo pipeline repo
           </Link>
           <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">Autonomous Data Incident Response · DataHub MCP</span>
         </div>
@@ -861,7 +861,7 @@ function SignalInjector({
         <span className="text-xs text-slate-500">
           {running
             ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
-            : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are sandboxed by default (toggle below)."}
+            : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are logged by default (toggle below)."}
         </span>
       </div>
     </section>
@@ -1479,7 +1479,6 @@ function ActionCard({
           }`}
         >
           {action.status}
-          {sandbox && executed && " · sandbox"}
         </span>
       </div>
       <div className="text-xs font-mono text-slate-200 truncate" title={title}>
@@ -1718,7 +1717,7 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
               : "border border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
           }`}
         >
-          {status.dryRun ? "SANDBOX" : "LIVE"}
+          {status.dryRun ? "DRY-RUN" : "LIVE"}
         </span>
       </h2>
       <div className="space-y-2">
@@ -1744,7 +1743,7 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
       </div>
       <div className="mt-2 text-[10px] text-slate-500">
         {status.dryRun
-          ? "Sandbox mode writes to examples/sandbox/*.log. Toggle LIVE in the control bar to file real issues + posts."
+          ? "Trace mode logs actions locally — safe. Toggle LIVE in the control bar to file real issues + posts."
           : "LIVE mode: each Sentinel run opens a real GitHub issue + posts a real Slack message. Use sparingly."}
       </div>
     </section>
@@ -1784,7 +1783,7 @@ function ConnectorRow({
         <span className="text-xs font-semibold text-slate-200">{name}</span>
         <span className={`h-2 w-2 rounded-full ${dotColor}`} />
         <span className="ml-auto text-[10px] font-mono text-slate-500">
-          {mode === "sandbox" ? "sandbox" : reachable ? "live · reachable" : tokenPresent ? "live · blocked" : "no token"}
+          {mode === "sandbox" ? "trace" : reachable ? "live · reachable" : tokenPresent ? "live · blocked" : "no token"}
         </span>
       </div>
       <div className="mt-1 text-[10px] font-mono text-slate-400 truncate">{target}</div>
@@ -1823,7 +1822,7 @@ function DemoControlBar({
           <span className={`h-2 w-2 rounded-full ${dryRun ? "bg-amber-400" : "bg-emerald-400"} animate-pulse`} />
           <span className="text-slate-400">actions</span>
           <span className={`font-mono ${dryRun ? "text-amber-300" : "text-emerald-300"}`}>
-            {dryRun ? "SANDBOX" : "LIVE"}
+            {dryRun ? "DRY-RUN" : "LIVE"}
           </span>
           <span className="text-slate-600 text-[10px]">(SENTINEL_DRY_RUN={dryRun ? "true" : "false"})</span>
         </div>
@@ -1847,8 +1846,8 @@ function DemoControlBar({
         </button>
         <span className="ml-auto text-[10px] text-slate-600 hidden sm:inline">
           {dryRun
-            ? "Sandbox writes to examples/sandbox/*.log — safe. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real issues + posts."
-            : "LIVE mode: every Inject & run files real artifacts in your sandbox GitHub + Slack."}
+            ? "Trace mode logs actions locally — safe. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real issues + posts."
+            : "LIVE mode: every Inject & run files real artifacts in your connected GitHub + Slack."}
         </span>
       </div>
     </div>

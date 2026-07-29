@@ -131,7 +131,7 @@ export const DirectWriteAllowlistRule: GuardrailRule = {
 export const ActionApprovalGateRule: GuardrailRule = {
   id: 'action-approval-gate',
   description:
-    'action.* tools (github + slack) target external systems. Sandboxed by default; surfaces a proposal card in the UI. (PDF §11.1 beat 2:00–2:20)',
+    'action.* tools (github + slack) target external systems. Logged by default; surfaces a proposal card in the UI. (PDF §11.1 beat 2:00–2:20)',
   async check(toolName, args) {
     if (!toolName.startsWith('action.')) return null
     // Allow action tools — the sandbox + dry-run toggle are the demo's approval

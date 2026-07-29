@@ -574,8 +574,8 @@ const ACTION_TOOLS: ToolDefinition[] = [
           sandbox: res.sandbox,
           status: 'executed',
           note: res.sandbox
-            ? 'Sandbox: written to examples/sandbox/github-actions.log. Set SENTINEL_DRY_RUN=false to file a live issue.'
-            : 'Live: GitHub issue opened in the sandbox repo. Sentinel NEVER merges — issue is left OPEN for human review.',
+            ? 'Trace: written to the local trace log. Set SENTINEL_DRY_RUN=false to file a live issue.'
+            : 'Live: GitHub issue opened in the demo pipeline repo. Sentinel NEVER merges — issue is left OPEN for human review.',
         }
       } catch (err) {
         const error = (err as Error).message ?? String(err)
@@ -699,8 +699,8 @@ const ACTION_TOOLS: ToolDefinition[] = [
           sandbox: res.sandbox,
           status: 'executed',
           note: res.sandbox
-            ? 'Sandbox: written to examples/sandbox/slack-posts.log. Set SENTINEL_DRY_RUN=false to post live.'
-            : 'Live: Slack triage card posted to the sandbox channel.',
+            ? 'Trace: written to the local trace log. Set SENTINEL_DRY_RUN=false to post live.'
+            : 'Live: Slack triage card posted to the demo channel.',
         }
       } catch (err) {
         const error = (err as Error).message ?? String(err)

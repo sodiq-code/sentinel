@@ -14,7 +14,8 @@
 // =============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -147,7 +148,7 @@ model SeedAsset {
   glossaryTermsJson String  @default("[]")  // JSON: [{urn, name}]
   governanceTagsJson String @default("[]") // JSON: [{name, level}]
   schemaFieldsJson String   @default("[]")  // JSON: [{name, type, nullable, ...}]
-  lastModifiedAt   BigInt?     // ms epoch — for freshness assertions (BigInt: ms overflows Int32)
+  lastModifiedAt   Int?        // seconds-since-epoch — for freshness assertions. (Stored as Int, not BigInt, because the libsql/Turso driver returns INTEGER columns as Float when they fit in JS Number, and Prisma's BigInt column rejects that on read. Seconds fits Int32 until 2038.)
   platformNativeName String?
   scenarioId       String   @default("nyc-taxi-freshness") // which scenario this asset belongs to
 }

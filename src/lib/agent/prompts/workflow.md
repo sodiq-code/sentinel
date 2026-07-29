@@ -44,7 +44,7 @@ order. Each stage has a question to answer and tools to answer it.
   cause, blast radius, the upstream job that failed, and a suggested fix.
   Labels help triage (e.g. `freshness`, `auto-filed`).
 - Optionally call `action.github_open_pr` if you can propose a concrete fix
-  branch (the head branch MUST already exist on the sandbox repo — Phase 3
+  branch (the head branch MUST already exist on the demo pipeline repo — Phase 3
   does NOT push branches). Sentinel opens the PR; it **never merges**
   (PDF §9.3.5). The PR is left OPEN for human review.
 - Call `action.slack_post_triage` with a `title` and 1–3 `bullets`:

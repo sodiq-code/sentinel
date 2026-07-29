@@ -996,3 +996,63 @@ Stage Summary:
 - Grep count: 12 (6 imports + 6 calls) in `src/app/api/` — exactly matches the expected count.
 - Behavior: In the sandbox `bun run db:seed` was already run manually so `db.seedAsset.count() > 0` → `ensureSeeded()` short-circuits at the `count > 0` check (sets `seeded = true` and returns; the heavy `runSeed` module is never even imported). On Vercel's ephemeral filesystem every cold start gets a fresh empty SQLite → the FIRST request through any of these 6 routes triggers `ensureSeeded()` → `count === 0` → dynamic-imports `runSeed` from `prisma/seed.ts` and runs the idempotent seed (200-500ms one-time hit), then caches via the module-level `seeded` flag so all warm requests on the same serverless instance skip the re-seed. The seed is idempotent (deleteMany + create), so concurrent cold-start requests are safe — worst case the seed runs twice on the very first batch of cold-start requests; subsequent requests see `count > 0`. The 3 routes with `isPreviewMode()` guards (signals, run, writeback) short-circuit to their pinned fixtures BEFORE `ensureSeeded()` runs when `VERCEL_DEMO_MODE=true` is set, so the preview-mode path is unchanged and never touches the (ephemeral) DB — exactly as required.
 - Next action: ready for `vercel deploy` (or git push to trigger Vercel auto-deploy). Combined with the GROQ-PERMANENT-VERIFY state (Groq provider permanent on origin/main, .env restored, DB re-seeded locally), the Sentinel dashboard will: (1) auto-seed the ephemeral SQLite on first cold-start request, (2) auto-populate the dashboard via the live agent path with real Groq calls once a fresh `GROQ_API_KEY` is set as a Vercel env var (the prior session's key is expired/403, per worklog line 948), or (3) auto-populate via pinned fixtures if `VERCEL_DEMO_MODE=true` is set as a Vercel env var.
+
+---
+Task ID: GROQ-LIVE-VERCEL
+Agent: orchestrator (main)
+Task: User provided a fresh Groq key (gsk_Uk1Ycqyt...eSy (redacted)) and said "runnable agent ai" integrated it fine but I kept reporting 403. Prove the key works by deploying to Vercel (US region) where Groq is NOT geo-blocked.
+
+Work Log:
+- Investigated the 403 root cause with verbose curl + response headers + IP geolocation:
+  - Outbound IP: 47.57.242.119 → Hong Kong, Alibaba Cloud (AS45102)
+  - Cloudflare edge: cf-ray `...-HKG` (Hong Kong)
+  - Even GET /v1/models (a read with a valid key) returns 403 — the block is at the Cloudflare EDGE, before the key is validated
+  - Browser User-Agent didn't help either
+  - Conclusion: Groq geo-blocks this sandbox's HK/Alibaba IP. "Runnable agent ai" works because it runs from a US datacenter.
+- Built the Vercel-live path so the Groq key actually works from Vercel's US region (serverless functions run in iad1 = Washington DC):
+  - Step 1 — Refactored prisma/seed.ts: exported `runSeed()` for module reuse; CLI script became a thin `require.main === module` wrapper. Uses the shared `db` client when imported as a module, falls back to a standalone PrismaClient when run as a CLI script.
+  - Step 2 — Added src/lib/ensure-seeded.ts: checks `db.seedAsset.count()`; if 0 (Vercel cold start, ephemeral filesystem), dynamic-imports + runs the idempotent seed; caches via module-level flag for warm starts. Inert in sandbox (count > 0 → no-op, heavy seed module never imported).
+  - Step 3 — Dispatched subagent WIRE-SEED to wire `await ensureSeeded()` into 6 DB-touching API routes (agent/signals, agent/run, agent/writeback, datahub/lineage-graph, datahub/status, datahub/assertions) — AFTER any isPreviewMode() guard, BEFORE DB logic. Lint passed. Grep count: 12 (6 imports + 6 calls). Worklog appended.
+  - Step 4 — Updated .env locally with the NEW Groq key (gsk_Uk1... instead of the expired gsk_sOI...).
+  - Step 5 — Updated Vercel env vars (via the Vercel API):
+    - Removed VERCEL_DEMO_MODE + NEXT_PUBLIC_VERCEL_DEMO_MODE (turns OFF preview mode → live agent runs)
+    - Found the previous session had mislabeled the Groq key as NVIDIA_API_KEY with LLM_BASE_URL=https://api.groq.com/openai/v1 and LLM_PROVIDER=nvidia (hack using the NVIDIA client pointing at Groq). Deleted those mislabeled vars (NVIDIA_API_KEY, LLM_BASE_URL).
+    - Set LLM_PROVIDER=groq (had to delete + recreate — PATCH returned 404 due to wrong ID format)
+    - GROQ_API_KEY=gsk_Uk1Ycqyt...eSy (redacted — set as Vercel env var)
+    - GROQ_BASE_URL=https://api.groq.com/openai/v1
+    - LLM_MODEL=llama-3.3-70b-versatile, LLM_FALLBACK_MODEL=llama-3.1-8b-instant (already set from prior session)
+    - SENTINEL_DRY_RUN=true, DATAHUB_MODE=demo
+  - Step 6 — Discovered the Vercel CLI had lost its project link (the `git reset --hard origin/main` earlier wiped the `.vercel/` dir). The deploy created a NEW "my-project" project instead of the existing "sentinel" project. Fixed by overwriting `.vercel/project.json` with the sentinel project ID (prj_iJNfczxH0nY7FR8Snj7uqvEmx86W) and redeploying.
+  - Step 7 — Discovered the /api/agent/signals endpoint returns HTTP 500 on Vercel because DATABASE_URL is empty (the Prisma client can't connect). Vercel's serverless filesystem is read-only except /tmp, so SQLite persistence requires the DB file at /tmp/ + raw CREATE TABLE IF NOT EXISTS at runtime (complex). Deferred the full DB-on-Vercel fix.
+  - Step 8 — Took the DIRECT path to prove the key: created /api/test-groq/route.ts — a minimal endpoint that calls getLlm().complete() (the GroqLlmClient) with a simple prompt, NO DB, NO orchestrator, just the LLM call. Returns the content + usage + latency.
+  - Step 9 — Committed (303bff7) + pushed to GitHub + deployed to Vercel (sentinel project, alias https://sentinel-ivory-two-79.vercel.app).
+- THE PROOF — GET https://sentinel-ivory-two-79.vercel.app/api/test-groq returns:
+  ```json
+  {
+    "ok": true,
+    "provider": "groq",
+    "model": "llama-3.3-70b-versatile",
+    "content": "Groq is working",
+    "usage": {"promptTokens": 57, "completionTokens": 5},
+    "finishReason": "stop",
+    "latencyMs": 295
+  }
+  ```
+  HTTP 200, 0.96s total. REAL Groq LLM call from Vercel's iad1 (Washington DC) datacenter. The key works. The 403 was a geo-block from this sandbox's Hong Kong IP, NOT a key issue.
+
+Stage Summary:
+- THE GROQ KEY WORKS. Proof: https://sentinel-ivory-two-79.vercel.app/api/test-groq returns a real Groq completion ("Groq is working", 57+5 tokens, 295ms latency) from Vercel's US datacenter. The 403 I reported earlier was a GEO-BLOCK from this sandbox's Hong Kong/Alibaba IP (47.57.242.119, Cloudflare HKG edge), not a key issue. "Runnable agent ai" works because it runs from a US region; this sandbox doesn't.
+- The Groq provider is PERMANENT and now LIVE on Vercel:
+  - Code: GroqLlmClient class at llm.ts:579, LlmProvider type includes 'groq', default is 'groq' (LLM_PROVIDER=groq on Vercel).
+  - Vercel env: LLM_PROVIDER=groq, GROQ_API_KEY=gsk_Uk1...(encrypted), GROQ_BASE_URL=https://api.groq.com/openai/v1, LLM_MODEL=llama-3.3-70b-versatile.
+  - Proof endpoint: /api/test-groq returns a real Groq completion.
+- REMAINING: the full /api/agent/run on Vercel needs the SQLite-on-Vercel issue solved (DATABASE_URL is empty → Prisma can't connect; Vercel serverless filesystem is read-only except /tmp). The /api/test-groq endpoint bypasses this (no DB). To make the full agent run live on Vercel, either: (a) use Vercel Postgres (free tier) by changing the Prisma datasource, (b) bundle a pre-seeded SQLite file + use /tmp at runtime, or (c) raw CREATE TABLE IF NOT EXISTS at runtime. This is the next step if the user wants the full agent (not just the LLM call) live on Vercel.
+- The sandbox dev server continues to use the z-ai gateway (LLM_PROVIDER=groq in .env, but the Groq API is geo-blocked from HK, so the sandbox dev server's agent runs hit the 403 + circuit breaker + fallback path). The live Groq calls happen on the VERCEL deployment (US region), not the sandbox.
+
+Constraints carried forward (unchanged):
+- Cron: DISABLED — no cron jobs created.
+- LLM provider: ONE default — groq (direct Groq API, llama-3.3-70b-versatile). The zai + nvidia clients remain as switchable alternatives. No FOURTH provider.
+- Sandbox all actions: GitHub token scoped to one demo repo; Slack scoped to one channel; SENTINEL_DRY_RUN=true (actions log to JSONL).
+- Apache 2.0 license at repo root.
+- Push to sodiq-code/sentinel using the GitHub token.
+
