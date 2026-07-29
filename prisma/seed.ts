@@ -25,7 +25,16 @@
 
 import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient()
+// Use the shared db client when imported as a module (so the live Next.js
+// server uses the same connection pool); fall back to a standalone client
+// when run as a CLI script (`bun run db:seed`).
+let prisma: PrismaClient
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  prisma = require('../src/lib/db').db as PrismaClient
+} catch {
+  prisma = new PrismaClient()
+}
 
 // A fixed "now" so the freshness breach is deterministic across runs.
 // The raw S3 asset was last modified 6 hours ago; its SLA is 1 hour → fails.
@@ -409,7 +418,9 @@ const piiAssets = [
 // Seed runner — idempotent: delete then insert.
 // ---------------------------------------------------------------------------
 
-async function main() {
+// Exported for reuse by the Vercel cold-start auto-seed
+// (src/lib/ensure-seeded.ts). Idempotent: delete then insert.
+export async function runSeed(): Promise<void> {
   console.log('🌱 Sentinel seed — starting (deterministic, idempotent)')
 
   // Wipe seed tables (and demo incident tables so the demo always starts clean).
@@ -481,11 +492,19 @@ async function main() {
   console.log('  Try:  bun run db:print-lineage urn:li:dataset:(urn:li:dataPlatform:dbt,dbt_daily_revenue_dashboard,PROD)')
 }
 
-main()
-  .catch((e) => {
-    console.error(e)
-    process.exit(1)
-  })
-  .finally(async () => {
-    await prisma.$disconnect()
-  })
+// When run as a CLI script (`bun run db:seed`), invoke the seed + exit.
+// When imported as a module (Vercel cold-start), runSeed() is called by the
+// caller — this top-level invocation is skipped.
+if (require.main === module) {
+  runSeed()
+    .then(() => {
+      console.log('\n✓ Seed complete.')
+    })
+    .catch((e) => {
+      console.error(e)
+      process.exit(1)
+    })
+    .finally(async () => {
+      await prisma.$disconnect()
+    })
+}

@@ -3,11 +3,13 @@
 import { NextResponse } from 'next/server'
 import { listSeedSignals } from '@/lib/agent'
 import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
   if (isPreviewMode()) return NextResponse.json(previewFixture('signals'))
+  await ensureSeeded()
   const signals = await listSeedSignals()
   return NextResponse.json({
     signals: signals.map((s) => ({

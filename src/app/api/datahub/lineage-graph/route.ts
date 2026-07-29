@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import type { Urn } from '@/lib/datahub/types'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,6 +37,7 @@ interface GraphEdge {
 }
 
 export async function GET(request: Request) {
+  await ensureSeeded()
   const { searchParams } = new URL(request.url)
   const urn = searchParams.get('urn')
   if (!urn) {

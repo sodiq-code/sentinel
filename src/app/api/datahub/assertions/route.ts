@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 
 // GET /api/datahub/assertions?urn=<optional asset urn>
 // Returns seeded assertions (optionally filtered to one asset).
 export async function GET(request: Request) {
+  await ensureSeeded()
   const { searchParams } = new URL(request.url)
   const assetUrn = searchParams.get('urn') ?? undefined
   const where = assetUrn ? { assetUrn } : undefined

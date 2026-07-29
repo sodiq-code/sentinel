@@ -7,12 +7,14 @@
 import { NextResponse } from 'next/server'
 import { runSentinelOnSeedSignal, listSeedSignals } from '@/lib/agent'
 import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // the loop may take 10-40s with NVIDIA
 
 export async function POST(req: Request) {
   if (isPreviewMode()) return NextResponse.json(previewFixture('run-result'))
+  await ensureSeeded()
   let body: { signalId?: string }
   try {
     body = (await req.json()) as { signalId?: string }

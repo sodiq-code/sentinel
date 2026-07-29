@@ -955,3 +955,44 @@ Constraints carried forward (unchanged):
 - Apache 2.0 license at repo root.
 - Push to sodiq-code/sentinel using the GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
 
+
+---
+Task ID: WIRE-SEED
+Agent: general-purpose
+Task: Wire ensureSeeded() into 6 API routes for Vercel cold-start auto-seed.
+
+Work Log:
+- Read worklog tail (last ~80 lines) to confirm current state: Groq provider permanent, .env restored, DB re-seeded locally (seedAssets=9, seedAssertions=4), Vercel deploy pending with the live-Groq-via-auto-seed plan. Confirmed `src/lib/ensure-seeded.ts` exists (33 lines, exports `ensureSeeded()`, caches via module-level `seeded` flag, dynamic-imports `runSeed` from `prisma/seed.ts` only when DB is empty).
+- Read each of the 6 target route files to locate the exact handler signature and any existing `isPreviewMode()` guard:
+  1. `src/app/api/agent/signals/route.ts` — GET() at line 9, isPreviewMode guard at line 10 (returns `previewFixture('signals')`).
+  2. `src/app/api/agent/run/route.ts` — POST(req) at line 14, isPreviewMode guard at line 15 (returns `previewFixture('run-result')`), followed by a `try { body = ... }` block.
+  3. `src/app/api/agent/writeback/route.ts` — POST(req) at line 32, isPreviewMode guard at line 33 (returns `previewFixture('writeback')`).
+  4. `src/app/api/datahub/lineage-graph/route.ts` — GET(request) at line 38, NO isPreviewMode guard (first line is `const { searchParams } = new URL(request.url)`).
+  5. `src/app/api/datahub/status/route.ts` — GET() at line 9, NO isPreviewMode guard (first line is `const mode = getDataHubMode()`).
+  6. `src/app/api/datahub/assertions/route.ts` — GET(request) at line 8, NO isPreviewMode guard (first line is `const { searchParams } = new URL(request.url)`).
+- Added `import { ensureSeeded } from '@/lib/ensure-seeded'` to the import block of each file (after the last existing import, before the `export const dynamic` line).
+- Added `await ensureSeeded()` as the FIRST statement AFTER the `isPreviewMode()` guard in the 3 routes that have a guard (signals, run, writeback), and as the very FIRST statement inside GET/POST in the 3 routes without a guard (lineage-graph, status, assertions). In every case the call precedes any DB-touching logic.
+- First lint run FAILED (exit 1): a PRE-EXISTING error in `prisma/seed.ts` (line 34:12 `@typescript-eslint/no-require-imports` + an unused eslint-disable directive on line 33). Verified this was not introduced by my edits — stashed my 6 API-route changes and re-ran lint; the same `prisma/seed.ts` error persisted on baseline. The error originated from a PRIOR session's modification of `prisma/seed.ts` (which added the `runSeed()` export + a CommonJS `require('../src/lib/db')` block needed by `ensure-seeded.ts`) — the eslint-disable comment targeted the wrong rule name (`@typescript-eslint/no-var-requires` instead of `@typescript-eslint/no-require-imports`).
+- Fixed the lint suppress comment in `prisma/seed.ts` line 33: changed `// eslint-disable-next-line @typescript-eslint/no-var-requires` → `// eslint-disable-next-line @typescript-eslint/no-require-imports`. This is a comment-only change (zero logic/behavior change) — the `require()` call on line 34 is unchanged, only the rule name in the suppression comment now matches the rule that actually fires.
+- Re-ran `cd /home/z/my-project && bun run lint` — exits 0, no errors, no warnings. PASS.
+- Ran `cd /home/z/my-project && rg "ensureSeeded" src/app/api/ | wc -l` — result: 12 (exactly 6 imports + 6 calls). Cross-checked the 12 lines via `rg -n`:
+  - `agent/signals/route.ts:6` (import), `:12` (call, after isPreviewMode guard)
+  - `agent/run/route.ts:10` (import), `:17` (call, after isPreviewMode guard, before try-block)
+  - `agent/writeback/route.ts:18` (import), `:35` (call, after isPreviewMode guard)
+  - `datahub/lineage-graph/route.ts:4` (import), `:40` (call, FIRST line inside GET)
+  - `datahub/status/route.ts:4` (import), `:11` (call, FIRST line inside GET)
+  - `datahub/assertions/route.ts:3` (import), `:10` (call, FIRST line inside GET)
+
+Stage Summary:
+- Files edited (7 total = 6 routes + 1 pre-existing lint fix):
+  - `src/app/api/agent/signals/route.ts` (import + call after isPreviewMode guard)
+  - `src/app/api/agent/run/route.ts` (import + call after isPreviewMode guard, before try-block)
+  - `src/app/api/agent/writeback/route.ts` (import + call after isPreviewMode guard)
+  - `src/app/api/datahub/lineage-graph/route.ts` (import + call as FIRST line inside GET)
+  - `src/app/api/datahub/status/route.ts` (import + call as FIRST line inside GET)
+  - `src/app/api/datahub/assertions/route.ts` (import + call as FIRST line inside GET)
+  - `prisma/seed.ts` (comment-only fix to the pre-existing eslint-disable directive; no logic change)
+- Lint result: PASS — `bun run lint` (eslint .) exits 0, no errors, no warnings.
+- Grep count: 12 (6 imports + 6 calls) in `src/app/api/` — exactly matches the expected count.
+- Behavior: In the sandbox `bun run db:seed` was already run manually so `db.seedAsset.count() > 0` → `ensureSeeded()` short-circuits at the `count > 0` check (sets `seeded = true` and returns; the heavy `runSeed` module is never even imported). On Vercel's ephemeral filesystem every cold start gets a fresh empty SQLite → the FIRST request through any of these 6 routes triggers `ensureSeeded()` → `count === 0` → dynamic-imports `runSeed` from `prisma/seed.ts` and runs the idempotent seed (200-500ms one-time hit), then caches via the module-level `seeded` flag so all warm requests on the same serverless instance skip the re-seed. The seed is idempotent (deleteMany + create), so concurrent cold-start requests are safe — worst case the seed runs twice on the very first batch of cold-start requests; subsequent requests see `count > 0`. The 3 routes with `isPreviewMode()` guards (signals, run, writeback) short-circuit to their pinned fixtures BEFORE `ensureSeeded()` runs when `VERCEL_DEMO_MODE=true` is set, so the preview-mode path is unchanged and never touches the (ephemeral) DB — exactly as required.
+- Next action: ready for `vercel deploy` (or git push to trigger Vercel auto-deploy). Combined with the GROQ-PERMANENT-VERIFY state (Groq provider permanent on origin/main, .env restored, DB re-seeded locally), the Sentinel dashboard will: (1) auto-seed the ephemeral SQLite on first cold-start request, (2) auto-populate the dashboard via the live agent path with real Groq calls once a fresh `GROQ_API_KEY` is set as a Vercel env var (the prior session's key is expired/403, per worklog line 948), or (3) auto-populate via pinned fixtures if `VERCEL_DEMO_MODE=true` is set as a Vercel env var.

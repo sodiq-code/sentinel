@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server'
 import { getDataHub, getDataHubMode, isSeeded } from '@/lib/datahub'
 import { db } from '@/lib/db'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 
 // GET /api/datahub/status
 // Returns the mode (demo|live), seeded bool, and counts for the Phase 1 status UI.
 export async function GET() {
+  await ensureSeeded()
   const mode = getDataHubMode()
   const seeded = await isSeeded()
   let counts: { assets: number; lineageEdges: number; assertions: number; contextDocs: number; failingAssertions: number } | undefined

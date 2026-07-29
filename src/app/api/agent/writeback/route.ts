@@ -15,6 +15,7 @@ import { getDataHub } from '@/lib/datahub'
 import { getAudit } from '@/lib/agent/audit'
 import { writeBackDocument } from '@/lib/agent/writeback'
 import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
+import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
@@ -31,6 +32,7 @@ interface ReattemptBody {
 
 export async function POST(req: Request) {
   if (isPreviewMode()) return NextResponse.json(previewFixture('writeback'))
+  await ensureSeeded()
   let body: ReattemptBody
   try {
     body = (await req.json()) as ReattemptBody
