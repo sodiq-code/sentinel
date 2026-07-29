@@ -1186,3 +1186,33 @@ Stage Summary:
 - Local dev server running on port 3000, page renders 200, /api/llm/status returns the new shape.
 - Groq is geo-blocked from this sandbox (403 Forbidden from HK), so the local injection will fail with a 403 (non-retryable, not a circuit-open). The LIVE Vercel deployment (US datacenter) can reach Groq, so the 429-resilience fixes will be exercised there.
 - Next: push to GitHub, update Vercel env vars, verify the live deployment.
+
+---
+Task ID: GROQ-429-VERCEL-TIMEOUT-FIX
+Agent: orchestrator (main)
+Task: The first production test showed the 429-resilience fix worked (run completed in 19s, no timeout) but the status was 'failed' instead of 'degraded' because the 429 error from both primary + fallback models didn't open the circuit (threshold 5 was too high for MAX_RETRIES=1). A second issue: the 15s pace limiter made 8 LLM calls take ~120s, exceeding the Vercel Hobby 60s function timeout and leaving incidents in 'investigating' state.
+
+Work Log:
+- Diagnosed via the live production run: the first LLM call 429'd, the 3-retry sequence (8s + 16s + 30s = 54s) ate the entire 60s function timeout before the agent loop ran. Incident left at 2 steps, 0 tools, 'investigating' state.
+- Fix 1 — Pace limiter 15s -> 2s: within a single run (up to 6 LLM calls), 2s between calls = 12s total, well under the Groq 30 req/min per-minute budget. The circuit breaker handles CROSS-RUN throttling. Vercel env var updated.
+- Fix 2 — MAX_ITERS 8 -> 6: each iteration is ~5-7s (2s pace + 3s LLM + 2s tool), so 6 × 7s = 42s, leaving 18s for the post-loop fallback post-mortem write.
+- Fix 3 — Soft deadline (SOFT_DEADLINE_MS = 45s): added a time check at the top of each loop iteration. If the loop hits 45s, it breaks immediately, emits an 'observe' step explaining the deadline, and marks the incident 'degraded'. This guarantees the post-loop fallback always runs within the 60s Vercel Hobby function timeout.
+- Fix 4 — MAX_RETRIES 3 -> 1: 3 retries with 429 backoff (54s) ate the entire 60s function timeout. 1 retry (2 total attempts) gives the rate-limit window one chance to reset; if still 429, the circuit opens + the orchestrator marks 'degraded'. Worst-case 429 path is now ~20s.
+- Fix 5 — 429 backoff cap 35s -> 15s: the Retry-After header is now capped at 15s (not 35s) so ONE retry fits the 60s function timeout. Vercel env var LLM_RATE_LIMIT_BACKOFF_MAX_MS updated 30000 -> 15000.
+- Fix 6 — Circuit threshold 5 -> 3 (restored): with MAX_RETRIES=1, 2 failures from primary + 1 from fallback = 3, which opens the circuit on the fallback's first 429. The orchestrator then catches CircuitOpenError and marks 'degraded'. Vercel env var updated.
+- Fix 7 — Belt-and-suspenders 429 detection in the orchestrator: even if the circuit doesn't open (e.g. only 2 total failures), the catch block now checks if the error message matches /429|rate limit|too many requests/i and marks the incident 'degraded' regardless. This handles all edge cases.
+
+Stage Summary:
+- The live production deployment now gracefully handles Groq free-tier rate limits. Verified end-to-end:
+  - POST /api/agent/run returns in ~20s (no Vercel function timeout)
+  - The incident status is 'degraded' (amber, not 'failed' red)
+  - The observe step explains: "LLM provider returned a 429 rate-limit error. The agent completed 0 reasoning step(s) before the throttle. Both the primary and fallback models were rate-limited. Sentinel will write a fallback post-mortem and mark this incident as degraded (partial investigation)."
+  - The fallback post-mortem IS written (1 writeback)
+  - The dashboard's IncidentHistory renders 'degraded' in amber (dot + label)
+  - The audit timeline shows 'incident_degraded' in amber
+- The prior 'failed' incidents (from before the fix was deployed) are still in the history as red — they're historical and won't be re-processed.
+- The 2 'investigating' incidents (from the Vercel function timeout) are stale — the function was killed before resolving them. They stay as 'investigating' (grey) permanently. This is cosmetic; a future cleanup could sweep stale 'investigating' incidents older than 5 minutes.
+- Sandbox removal: confirmed clean. rg finds 0 'sandbox' references in src/, sentinel/, scripts/, examples/, skill/, rfc/, next.config.ts, README.md, .env.example. The only matches are bun.lock (a transitive dependency name) and worklog.md (this history file).
+- All commits pushed to origin/main: 01fa777 (resilience), 7bd8c51 (pace 2s), bd7aaa0 (soft deadline), a06366a (MAX_RETRIES 1), a1b7569 (threshold 3 + 429 detection).
+- Vercel env vars all set: LLM_RATE_LIMIT_MS=2000, LLM_RATE_LIMIT_BACKOFF_MS=8000, LLM_RATE_LIMIT_BACKOFF_MAX_MS=15000, LLM_CIRCUIT_THRESHOLD=3, LLM_CIRCUIT_COOLDOWN_MS=90000.
+- Standing constraints honored throughout: Groq provider permanent, no cron jobs (until the final QA cron), single route /, no indigo/blue, emerald/amber/rose/slate palette, Apache 2.0.
