@@ -156,6 +156,8 @@ interface LlmResilienceStatus {
     isOpen: boolean;
     consecutiveFailures: number;
     msUntilReset: number;
+    lastStatus: number;
+    lastOpenedAt: number;
   } | null;
 }
 
@@ -240,6 +242,7 @@ const AUDIT_KIND_META: Record<string, { icon: typeof Activity; group: AuditGroup
   signal_received: { icon: Radar, group: "lifecycle", label: "SIGNAL RECEIVED", color: "text-emerald-300", dot: "bg-emerald-400" },
   incident_created: { icon: ShieldCheck, group: "lifecycle", label: "INCIDENT CREATED", color: "text-emerald-300", dot: "bg-emerald-400" },
   incident_resolved: { icon: CheckCircle2, group: "lifecycle", label: "INCIDENT RESOLVED", color: "text-emerald-300", dot: "bg-emerald-400" },
+  incident_degraded: { icon: AlertTriangle, group: "error", label: "INCIDENT DEGRADED", color: "text-amber-300", dot: "bg-amber-400" },
   incident_failed: { icon: XCircle, group: "error", label: "INCIDENT FAILED", color: "text-rose-400", dot: "bg-rose-500" },
   // reasoning — amber (the "watch the agent think" trace)
   plan: { icon: BrainCircuit, group: "reasoning", label: "PLAN", color: "text-amber-300", dot: "bg-amber-400" },
@@ -683,6 +686,8 @@ function Console() {
               onRun={() => selectedSignalId && run.mutate(selectedSignalId)}
               running={running}
               elapsed={elapsed}
+              circuitOpen={Boolean(llmStatus.data?.circuit?.isOpen)}
+              circuitResetsInSec={Math.ceil((llmStatus.data?.circuit?.msUntilReset ?? 0) / 1000)}
             />
 
             {runError && (
@@ -805,6 +810,8 @@ function SignalInjector({
   onRun,
   running,
   elapsed,
+  circuitOpen,
+  circuitResetsInSec,
 }: {
   signals: SeedSignal[];
   loading: boolean;
@@ -813,6 +820,8 @@ function SignalInjector({
   onRun: () => void;
   running: boolean;
   elapsed: number;
+  circuitOpen: boolean;
+  circuitResetsInSec: number;
 }) {
   const scenarioColor: Record<string, string> = {
     "nyc-taxi-freshness": "border-amber-500/40 bg-amber-500/5",
@@ -824,6 +833,26 @@ function SignalInjector({
       <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
         <Radar className="h-4 w-4 text-emerald-400" /> Inject a DataHub signal
       </h2>
+      {circuitOpen && (
+        <div className="mb-4 rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-rose-500/10 p-3 flex items-start gap-3">
+          <div className="mt-0.5 h-7 w-7 rounded-md bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
+            <ShieldAlert className="h-4 w-4 text-amber-300" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-amber-200">
+              LLM provider rate-limited — agent runs paused
+            </div>
+            <div className="text-xs text-amber-200/80 mt-0.5 leading-relaxed">
+              Groq&apos;s free-tier per-minute rate limit was tripped. The circuit is open
+              for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>.
+              Sentinel will write a fallback post-mortem on any in-flight run and mark it
+              <span className="font-mono text-amber-100"> degraded</span> (partial investigation).
+              Wait for the circuit to cool down, then re-inject. No retry burn — the
+              circuit refuses calls while open.
+            </div>
+          </div>
+        </div>
+      )}
       {loading && (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -863,17 +892,19 @@ function SignalInjector({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={!selectedId || running}
+          disabled={!selectedId || running || circuitOpen}
           onClick={onRun}
           className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-          {running ? "Investigating…" : "Inject & run Sentinel"}
+          {running ? "Investigating…" : circuitOpen ? "Circuit cooling down…" : "Inject & run Sentinel"}
         </button>
         <span className="text-xs text-slate-500">
           {running
             ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
-            : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are logged by default (toggle below)."}
+            : circuitOpen
+              ? "The LLM circuit is open. Inject is disabled until the Groq rate-limit window resets."
+              : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are logged by default (toggle below)."}
         </span>
       </div>
     </section>
@@ -1885,6 +1916,7 @@ function IncidentHistory({
 }) {
   const statusColor: Record<string, string> = {
     resolved: "text-emerald-400",
+    degraded: "text-amber-400",
     failed: "text-rose-400",
     investigating: "text-amber-400",
     open: "text-slate-400",
@@ -1928,7 +1960,7 @@ function IncidentHistory({
           >
             <div className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${
-                it.status === "resolved" ? "bg-emerald-400" : it.status === "failed" ? "bg-rose-400" : "bg-amber-400"
+                it.status === "resolved" ? "bg-emerald-400" : it.status === "failed" ? "bg-rose-400" : it.status === "degraded" ? "bg-amber-400" : "bg-slate-400"
               }`} />
               <span className={`text-[10px] font-mono uppercase ${statusColor[it.status] ?? "text-slate-400"}`}>{it.status}</span>
               <span className="text-[10px] font-mono text-slate-500">{it.signalType}</span>

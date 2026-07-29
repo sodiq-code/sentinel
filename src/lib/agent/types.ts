@@ -87,6 +87,7 @@ export type IncidentStatus =
   | 'acting'
   | 'awaiting_approval'
   | 'resolved'
+  | 'degraded'
   | 'failed'
   | 'cancelled'
 
@@ -170,6 +171,7 @@ export type AuditEventKind =
   | 'writeback_failed'
   | 'write_back_succeeded'
   | 'incident_resolved'
+  | 'incident_degraded'
   | 'incident_failed'
 
 export interface AuditEvent {

@@ -10,7 +10,11 @@ import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 import { ensureSeeded } from '@/lib/ensure-seeded'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60 // the loop may take 10-40s with NVIDIA
+// The loop may take 10-40s when the LLM is healthy. With 429 retries (up to
+// 35s Retry-After backoff + the call), a single run can take up to ~90s.
+// Vercel Pro supports up to 300s; Hobby supports 60s. Set to 120 so a
+// single Retry-After cycle fits on Pro without the function timing out.
+export const maxDuration = 120
 
 export async function POST(req: Request) {
   if (isPreviewMode()) return NextResponse.json(previewFixture('run-result'))

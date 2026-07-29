@@ -25,7 +25,7 @@
 
 import { db } from '@/lib/db'
 import { getDataHub } from '@/lib/datahub'
-import { getLlm, getLlmModel, getLlmProvider } from './llm'
+import { CircuitOpenError, getLlm, getLlmModel, getLlmProvider } from './llm'
 import { assembleSystemPrompt, PROMPT_VERSION } from './prompts/system-prompt'
 import {
   buildToolCatalogue,
@@ -51,7 +51,12 @@ import type {
   Signal,
 } from './types'
 
-const MAX_ITERS = 12
+// MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-6
+// iterations on the seed scenarios. 8 (down from 12) keeps enough headroom
+// for a nudge + a couple of tool rounds, while halving the LLM-call count
+// per run — important on the Groq free tier (~30 req/min) where 12 calls
+// per run × 2 runs = 24 calls nearly exhausts the per-minute budget.
+const MAX_ITERS = 8
 
 export interface OrchestratorResult {
   incident: Incident
@@ -164,6 +169,7 @@ export async function runSentinel(
   let piiRefusalOnPostMortem = false
   let finalReflection = ''
   let lastError: string | null = null
+  let wasCircuitOpen = false
 
   const emit = (kind: ReasoningStep['kind'], partial: Omit<ReasoningStep, 'step' | 'kind' | 'ts'>) => {
     const step: ReasoningStep = {
@@ -367,7 +373,30 @@ export async function runSentinel(
     }
   } catch (err) {
     lastError = (err as Error).message ?? String(err)
-    emit('error', { error: lastError })
+    // Distinguish "throttled" (circuit-open — rate-limited) from "failed"
+    // (a real error). A throttled run did partial work and writes a fallback
+    // post-mortem, so the incident is DEGRADED, not FAILED. This keeps the
+    // dashboard from showing a scary red "failed" every time Groq's free-tier
+    // per-minute rate limit trips, while still surfacing the throttle state.
+    if (err instanceof CircuitOpenError) {
+      wasCircuitOpen = true
+      const provider = getLlmProvider()
+      const secs = Math.round(
+        ((err as unknown as { cooldownMs?: number }).cooldownMs ?? 90_000) / 1000,
+      )
+      emit('observe', {
+        reasoning:
+          `LLM provider '${provider}' is rate-limited (circuit open). The ` +
+          `agent completed ${steps.length} reasoning step(s) before the ` +
+          `throttle. Sentinel will write a fallback post-mortem and mark ` +
+          `this incident as **degraded** (partial investigation). The ` +
+          `circuit cools down in ~${secs}s; a subsequent run resumes ` +
+          `normally. This is the designed graceful-degradation path ` +
+          `(PDF §9.5.4 retry visibility + §11.3 contingency plan).`,
+      })
+    } else {
+      emit('error', { error: lastError })
+    }
   }
 
   // 3. Post-loop: guarantee a post-mortem context doc (the compounding artefact).
@@ -438,36 +467,48 @@ export async function runSentinel(
   }
 
   // 4. Resolve the incident.
-  const failed = Boolean(lastError)
+  // Three terminal states:
+  //   - 'resolved'  — the agent completed the closed loop (no error)
+  //   - 'degraded'  — the LLM was rate-limited (circuit open); the agent did
+  //                   partial work and a fallback post-mortem was written.
+  //                   This is NOT a failure — it's the designed graceful
+  //                   degradation path (PDF §11.3).
+  //   - 'failed'    — a real error (non-throttle). The agent could not
+  //                   complete the investigation.
+  const failed = Boolean(lastError) && !wasCircuitOpen
+  const degraded = Boolean(lastError) && wasCircuitOpen
+  const finalStatus: Incident['status'] = failed ? 'failed' : degraded ? 'degraded' : 'resolved'
   const resolvedAt = new Date()
   await db.incident.update({
     where: { urn: incidentUrn },
-    data: { status: failed ? 'failed' : 'resolved', resolvedAt },
+    data: { status: finalStatus, resolvedAt },
   })
+  const resolutionKind = failed ? 'incident_failed' : degraded ? 'incident_degraded' : 'incident_resolved'
+  const resolutionSummary = failed
+    ? `Incident failed: ${lastError}`
+    : degraded
+      ? `Incident degraded (LLM rate-limited): ${lastError}`
+      : `Incident resolved in ${steps.length} reasoning steps`
   await audit.record({
     incidentUrn,
-    kind: failed ? 'incident_failed' : 'incident_resolved',
-    summary: failed
-      ? `Incident failed: ${lastError}`
-      : `Incident resolved in ${steps.length} reasoning steps`,
-    payload: { steps: steps.length, totalPromptTokens, totalCompletionTokens },
+    kind: resolutionKind,
+    summary: resolutionSummary,
+    payload: { steps: steps.length, totalPromptTokens, totalCompletionTokens, wasCircuitOpen },
   })
   // Phase 4: mirror the resolution milestone to DataHub Assertions (best-effort,
   // non-fatal). This is the assertion a DataHub operator sees on the asset page:
   // "Sentinel incident resolved / failed on {asset}". (PDF §13.4)
   void getAuditMirror().mirror({
     incidentUrn,
-    kind: failed ? 'incident_failed' : 'incident_resolved',
-    summary: failed
-      ? `Incident failed: ${lastError}`
-      : `Incident resolved in ${steps.length} reasoning steps`,
+    kind: resolutionKind,
+    summary: resolutionSummary,
     assetUrn: signal.assetUrn,
   })
 
   const incident: Incident = {
     urn: incidentUrn,
     signal,
-    status: failed ? 'failed' : 'resolved',
+    status: finalStatus,
     createdAt: steps[0]?.ts ?? resolvedAt.toISOString(),
     resolvedAt: resolvedAt.toISOString(),
     reasoningSteps: steps,

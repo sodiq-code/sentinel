@@ -42,6 +42,7 @@ export const MIRRORED_KINDS = new Set<AuditEventKind>([
   'incident_created',
   'writeback_succeeded',
   'incident_resolved',
+  'incident_degraded',
   'incident_failed',
 ])
 
@@ -126,6 +127,8 @@ function buildAssertionDescription(input: MirrorInput): string {
       return `Sentinel post-mortem written${input.title ? `: ${input.title}` : ''}`
     case 'incident_resolved':
       return `Sentinel incident resolved — ${input.summary}`
+    case 'incident_degraded':
+      return `Sentinel incident degraded (LLM rate-limited) — ${input.summary}`
     case 'incident_failed':
       return `Sentinel incident failed — ${input.summary}`
     default:

@@ -1137,3 +1137,52 @@ Constraints carried forward (unchanged):
 - Sandbox actions: GitHub token scoped to one demo repo; Slack scoped to one channel; SENTINEL_DRY_RUN=true (actions log to trace JSONL); trace mode = the demo's approval surface for action tools (PDF §11.3).
 - Apache 2.0 license at repo root.
 - Push to sodiq-code/sentinel using the GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
+
+---
+Task ID: GROQ-429-RESILIENCE
+Agent: orchestrator (main)
+Task: User reported the injection on the live Vercel deployment fails with "groq circuit opened after 3 consecutive 429/5xx. Last error: HTTP 429" and the incident is marked "failed". The dashboard should gracefully handle Groq free-tier rate limits instead of showing a scary red failure.
+
+Work Log:
+- Diagnosed the issue via VLM analysis of the user's two screenshots (449 = idle dashboard, 450 = after injection). The dashboard renders premium, but the agent run fails because Groq returns 429 (free-tier per-minute rate limit) after the user ran it 3 times in quick succession (23:26, 23:51, 23:56).
+- Root cause: the 429 backoff (5s -> 10s -> 20s) was too short for Groq's per-minute rate-limit window to reset, and the circuit opened after just 3 consecutive 429s, marking the incident "failed" even though the fallback post-mortem WAS written.
+- Fix 1 — LLM client (src/lib/agent/llm.ts):
+  - Added readRetryAfterMs() helper that reads the `Retry-After` header (seconds or HTTP-date) from Groq 429 responses, capped at 35s to stay under Vercel's serverless function timeout.
+  - GroqLlmClient now uses Retry-After as the next-attempt backoff (when present), falling back to the exponential curve with jitter.
+  - NVIDIA NIM client got the same Retry-After treatment (consistency for deployments with a valid NVIDIA key).
+  - Raised default circuit threshold 3 -> 5 (tolerates transient 429 bursts).
+  - Raised default circuit cooldown 60s -> 90s (ensures the rate-limit window fully resets before the circuit closes).
+  - Raised default rate-limit backoff base 5s -> 8s, max 20s -> 30s (fits one retry in the Vercel 60s function timeout).
+  - Raised default pace limiter 6s -> 15s (one call per 15s per provider; Groq free tier is ~30 req/min).
+  - Added `lastStatus` + `lastOpenedAt` to the CircuitBreaker snapshot so the UI can show what HTTP status opened the circuit and when.
+  - Updated getLlmResilienceStatus() return type to include the new fields.
+- Fix 2 — Orchestrator (src/lib/agent/orchestrator.ts):
+  - Added 'degraded' to IncidentStatus (types.ts) — a third terminal state for rate-limited runs.
+  - The catch block now distinguishes CircuitOpenError (throttle) from other errors (real failure). On a circuit open, it emits an 'observe' step (not 'error') explaining the rate limit, the partial work done, and the cooldown duration.
+  - The resolution logic sets status to 'degraded' (not 'failed') when wasCircuitOpen is true. The fallback post-mortem is still written (the compounding artefact is preserved). The audit mirror mirrors 'incident_degraded' (not 'incident_failed').
+  - Added 'incident_degraded' to AuditEventKind + the audit-mirror's MIRRORED_KINDS set + buildAssertionDescription() (assertion status = 'passing' since the incident wasn't a hard failure — the agent did partial work).
+  - Reduced MAX_ITERS from 12 -> 8 (a well-prompted agent converges in 4-6 iterations; 8 keeps headroom for a nudge + a couple of tool rounds while halving the LLM-call count per run — important on the Groq free tier where 12 calls per run nearly exhausts the per-minute budget).
+- Fix 3 — Dashboard UX (src/app/page.tsx):
+  - LlmResilienceStatus interface updated to include lastStatus + lastOpenedAt.
+  - Added 'incident_degraded' to AUDIT_KIND_META (amber AlertTriangle, "INCIDENT DEGRADED" label).
+  - IncidentHistory statusColor map now includes 'degraded' -> text-amber-400.
+  - IncidentHistory dot color now renders 'degraded' as amber (not red).
+  - SignalInjector accepts new props: circuitOpen + circuitResetsInSec.
+  - SignalInjector shows a circuit-open banner (amber gradient, ShieldAlert icon) explaining: "LLM provider rate-limited — agent runs paused", the cooldown countdown in seconds, that Sentinel writes a fallback post-mortem + marks the incident 'degraded', and that the circuit refuses calls while open (no retry burn).
+  - The Inject button is disabled when circuitOpen is true; the label changes to "Circuit cooling down…" and the helper text explains the inject is disabled until the rate-limit window resets.
+  - Console passes llmStatus.data.circuit.isOpen + msUntilReset to SignalInjector.
+- Fix 4 — Vercel function timeout:
+  - /api/agent/run maxDuration raised 60s -> 120s (so a single Retry-After cycle fits on Vercel Pro; on Hobby the 60s cap still applies but the 35s Retry-After backoff fits).
+- Fix 5 — .env defaults updated to the new resilience values.
+
+Stage Summary:
+- The dashboard now gracefully handles Groq free-tier rate limits instead of failing. When 429s trip the circuit:
+  1. The LLM client retries with the Retry-After header (up to 35s), giving the rate-limit window time to reset.
+  2. If the circuit still opens (5 consecutive 429/5xx), the orchestrator marks the incident 'degraded' (amber, not 'failed' red), emits an 'observe' step explaining the throttle, and writes a fallback post-mortem (the compounding artefact is preserved).
+  3. The dashboard shows a clear amber circuit-open banner with the cooldown countdown, disables the inject button (no retry burn), and the LlmCircuitChip shows "Throttled" with the countdown.
+  4. After 90s (circuit cooldown), the circuit closes, the banner disappears, and the inject button re-enables.
+- Groq provider is PERMANENT (standing instruction honored). No cron jobs created (standing instruction honored). Single route / only (honored). No indigo/blue colors (honored). Emerald/amber/rose/slate mission-control palette preserved.
+- Lint passes (exit 0, no errors, no warnings).
+- Local dev server running on port 3000, page renders 200, /api/llm/status returns the new shape.
+- Groq is geo-blocked from this sandbox (403 Forbidden from HK), so the local injection will fail with a 403 (non-retryable, not a circuit-open). The LIVE Vercel deployment (US datacenter) can reach Groq, so the 429-resilience fixes will be exercised there.
+- Next: push to GitHub, update Vercel env vars, verify the live deployment.

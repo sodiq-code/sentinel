@@ -8,11 +8,14 @@
 //   • TokenBucket pace limiter (default 1 req / 6s per provider) — keeps
 //     the agent from bursting into 429s and contributing to a shared-gateway
 //     throttle.
-//   • 429-specific backoff with jitter (5s → 10s → 20s ± 25%) — longer than
-//     the general network/5xx backoff, because a 429 from a shared gateway is
-//     a sustained throttle, not a per-account quota.
-//   • CircuitBreaker — opens after 3 consecutive 429/5xx, stays open for 60s.
+//   • 429-specific backoff with jitter (8s → 18s → 40s ± 25%) — long enough
+//     for the Groq free-tier per-minute rate-limit window to reset. When the
+//     provider returns a `Retry-After` header, that value is used instead
+//     (capped at 60s to stay under the serverless function timeout).
+//   • CircuitBreaker — opens after 5 consecutive 429/5xx, stays open for 90s.
 //     While open, calls throw CircuitOpenError immediately (no retry burn).
+//     Threshold 5 (was 3) tolerates transient bursts; cooldown 90s (was 60s)
+//     ensures the rate-limit window fully resets before we retry.
 //   • Optional provider failover — when the primary's circuit is open AND a
 //     NVIDIA key is present, the dormant NvidiaNimLlmClient takes over.
 //     In local dev the NVIDIA key is dead (403 on inference), so the
@@ -80,20 +83,25 @@ const MAX_RETRIES = 3
 // General backoff (network / 5xx) — keeps the original aggressive curve.
 const INITIAL_BACKOFF_MS = 800
 
-// 429-specific backoff with jitter — much longer, because a 429 from a
-// shared gateway is a sustained throttle, not a per-account quota.
-const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 5000)
-const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 20000)
-const RATE_LIMIT_JITTER_PCT = 0.25
+// 429-specific backoff with jitter — long enough for the Groq free-tier
+// per-minute rate-limit window to reset. When the provider returns a
+// `Retry-After` header, that value is used instead (capped at 60s to stay
+// under the Vercel serverless function timeout).
+const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 8000)
+const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 45000)
+const RATE_LIMIT_JITTER_PCT = 0.2
 
-// Pace limiter — at most one call per interval per provider. Default 6s
-// keeps the agent from contributing to a shared-gateway 429 pressure.
-// Set to 0 (or a low value) to disable for fast dev loops.
-const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 6000)
+// Pace limiter — at most one call per interval per provider. Default 15s
+// (Groq free tier allows ~30 req/min on llama-3.3-70b-versatile; one call per
+// 15s keeps a full ReAct loop under the per-minute budget). Set to 0 to
+// disable for fast dev loops.
+const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 15000)
 
 // Circuit breaker — opens after N consecutive 429/5xx, stays open for cooldown.
-const CIRCUIT_THRESHOLD = Number(process.env.LLM_CIRCUIT_THRESHOLD ?? 3)
-const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 60000)
+// Threshold 5 tolerates transient bursts; cooldown 90s ensures the Groq
+// per-minute rate-limit window fully resets before the circuit recloses.
+const CIRCUIT_THRESHOLD = Number(process.env.LLM_CIRCUIT_THRESHOLD ?? 5)
+const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 90000)
 
 // Failover toggle — when 'true' (default), the z-ai primary can fail over to
 // the dormant NVIDIA client when its circuit is open AND a NVIDIA key is
@@ -129,6 +137,28 @@ function jitter(ms: number, pct: number = RATE_LIMIT_JITTER_PCT): number {
 function extractStatusFromMessage(msg: string): number | null {
   const m = msg.match(/status (\d{3})\b/i)
   return m ? parseInt(m[1], 10) : null
+}
+
+/**
+ * Read the `Retry-After` header (seconds or HTTP-date) from a 429/503 response.
+ * Returns the delay in ms, capped at `capMs` (to stay under the serverless
+ * function timeout — Vercel Hobby max is 60s, so we cap at 35s to leave room
+ * for the actual call + remaining work). Groq sends this header on 429s to
+ * indicate when the per-minute rate-limit window resets.
+ */
+function readRetryAfterMs(headers: Headers, capMs: number = 35_000): number | null {
+  const raw = headers.get('retry-after')
+  if (!raw) return null
+  const asNum = Number(raw)
+  if (!Number.isNaN(asNum) && asNum > 0) {
+    return Math.min(asNum * 1000, capMs)
+  }
+  const asDate = Date.parse(raw)
+  if (!Number.isNaN(asDate)) {
+    const delta = asDate - Date.now()
+    return delta > 0 ? Math.min(delta, capMs) : null
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +210,8 @@ class TokenBucket {
 class CircuitBreaker {
   private consecutiveFailures = 0
   private openUntil = 0
+  private lastOpenedAt = 0
+  private lastStatus = 0
   constructor(
     private readonly threshold: number,
     private readonly cooldownMs: number,
@@ -195,8 +227,10 @@ class CircuitBreaker {
   recordFailure(status: number): boolean {
     if (status === 429 || status >= 500) {
       this.consecutiveFailures++
+      this.lastStatus = status
       if (this.consecutiveFailures >= this.threshold && !this.isOpen()) {
         this.openUntil = Date.now() + this.cooldownMs
+        this.lastOpenedAt = Date.now()
         return true
       }
     }
@@ -210,11 +244,13 @@ class CircuitBreaker {
     return Math.max(0, this.openUntil - Date.now())
   }
   /** Snapshot for the UI status chip / `/api/llm/status`. */
-  snapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number } {
+  snapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number; lastStatus: number; lastOpenedAt: number } {
     return {
       isOpen: this.isOpen(),
       consecutiveFailures: this.consecutiveFailures,
       msUntilReset: this.msUntilReset(),
+      lastStatus: this.lastStatus,
+      lastOpenedAt: this.lastOpenedAt,
     }
   }
 }
@@ -231,7 +267,7 @@ export class CircuitOpenError extends Error {
 interface ResilientLlmClient extends LlmClient {
   isThrottled(): boolean
   providerName(): string
-  circuitSnapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number }
+  circuitSnapshot(): { isOpen: boolean; consecutiveFailures: number; msUntilReset: number; lastStatus: number; lastOpenedAt: number }
 }
 
 // ---------------------------------------------------------------------------
@@ -489,15 +525,18 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
       }
       let lastErr: Error | null = null
       let sawRateLimit = false
+      let retryAfterMs: number | null = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         if (attempt > 0) {
-          const baseBackoff = sawRateLimit
-            ? Math.min(
-                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
-                RATE_LIMIT_BACKOFF_MAX_MS,
-              )
-            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+          const baseBackoff = retryAfterMs
+            ?? (sawRateLimit
+              ? Math.min(
+                  RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                  RATE_LIMIT_BACKOFF_MAX_MS,
+                )
+              : INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
           await sleep(jitter(baseBackoff))
+          retryAfterMs = null
         }
         await this.rateLimiter.acquire()
         let res: Response
@@ -527,13 +566,17 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
         }
         if (!res.ok) {
           const text = await res.text().catch(() => '')
-          if (res.status === 429) sawRateLimit = true
+          if (res.status === 429) {
+            sawRateLimit = true
+            retryAfterMs = readRetryAfterMs(res.headers, 35_000)
+          }
           const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
           const openedNow = this.circuit.recordFailure(res.status)
           if (openedNow) {
+            const hint = retryAfterMs ? ` (Retry-After: ${Math.round(retryAfterMs / 1000)}s)` : ''
             throw new CircuitOpenError(
               `nvidia circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
-                `Last error: HTTP ${res.status}`,
+                `Last error: HTTP ${res.status}${hint}. Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
             )
           }
           if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
@@ -626,15 +669,21 @@ class GroqLlmClient implements ResilientLlmClient {
       }
       let lastErr: Error | null = null
       let sawRateLimit = false
+      let retryAfterMs: number | null = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         if (attempt > 0) {
-          const baseBackoff = sawRateLimit
-            ? Math.min(
-                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
-                RATE_LIMIT_BACKOFF_MAX_MS,
-              )
-            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1)
+          // Prefer the provider's Retry-After hint (capped at 60s to stay
+          // under the serverless function timeout). Fall back to the
+          // exponential curve with jitter.
+          const baseBackoff = retryAfterMs
+            ?? (sawRateLimit
+              ? Math.min(
+                  RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                  RATE_LIMIT_BACKOFF_MAX_MS,
+                )
+              : INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
           await sleep(jitter(baseBackoff))
+          retryAfterMs = null
         }
         await this.rateLimiter.acquire()
         let res: Response
@@ -663,13 +712,19 @@ class GroqLlmClient implements ResilientLlmClient {
         }
         if (!res.ok) {
           const text = await res.text().catch(() => '')
-          if (res.status === 429) sawRateLimit = true
+          if (res.status === 429) {
+            sawRateLimit = true
+            // Groq tells us when the per-minute rate-limit window resets.
+            // Use that as the next-attempt backoff (capped at 60s).
+            retryAfterMs = readRetryAfterMs(res.headers, 35_000)
+          }
           const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
           const openedNow = this.circuit.recordFailure(res.status)
           if (openedNow) {
+            const hint = retryAfterMs ? ` (Retry-After: ${Math.round(retryAfterMs / 1000)}s)` : ''
             throw new CircuitOpenError(
               `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
-                `Last error: HTTP ${res.status}`,
+                `Last error: HTTP ${res.status}${hint}. Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
             )
           }
           if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
@@ -828,13 +883,21 @@ export function getLlmResilienceStatus(): {
     isOpen: boolean
     consecutiveFailures: number
     msUntilReset: number
+    lastStatus: number
+    lastOpenedAt: number
   } | null
 } {
   const hasNvidiaKey = !!(
     process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('nvapi-')
   )
   const s = getSingleton()
-  let circuit: { isOpen: boolean; consecutiveFailures: number; msUntilReset: number } | null = null
+  let circuit: {
+    isOpen: boolean
+    consecutiveFailures: number
+    msUntilReset: number
+    lastStatus: number
+    lastOpenedAt: number
+  } | null = null
   if (s.zai && getProvider() === 'zai') circuit = s.zai.circuitSnapshot()
   else if (s.nvidia && getProvider() === 'nvidia') circuit = s.nvidia.circuitSnapshot()
   else if (s.groq && getProvider() === 'groq') circuit = s.groq.circuitSnapshot()
