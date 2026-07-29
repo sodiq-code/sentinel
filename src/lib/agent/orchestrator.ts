@@ -52,12 +52,18 @@ import type {
 } from './types'
 
 // MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-6
-// iterations on the seed scenarios. 8 (down from 12) keeps enough headroom
-// for a nudge + a couple of tool rounds, while keeping the LLM-call count
-// per run well under the Groq free-tier per-minute rate limit (~30 req/min).
-// With a 2s pace limiter, 8 calls × ~4s (call + tool exec) ≈ 32s — fits the
-// Vercel Hobby 60s function timeout with room for the post-loop fallback.
-const MAX_ITERS = 8
+// iterations on the seed scenarios. 6 (down from 12) keeps enough headroom
+// for a nudge + a tool round, while keeping the total wall time under the
+// Vercel Hobby 60s function timeout. Each iteration is ~5-7s (2s pace +
+// 3s LLM call + 2s tool call), so 6 × 7s = 42s, leaving 18s for the
+// post-loop fallback post-mortem write.
+const MAX_ITERS = 6
+
+// Soft deadline — the Vercel Hobby function timeout is 60s. We break the
+// loop at 45s to leave 15s for the post-loop fallback post-mortem write +
+// incident resolution. If we hit the deadline, the incident is marked
+// 'degraded' (partial investigation) — the same state as a circuit-open.
+const SOFT_DEADLINE_MS = 45_000
 
 export interface OrchestratorResult {
   incident: Incident
@@ -210,9 +216,27 @@ export async function runSentinel(
   const mandatoryDone = new Set<string>()
   let nudgeCount = 0
   const MAX_NUDGES = 2
+  const loopStart = Date.now()
 
   try {
     for (let iter = 0; iter < MAX_ITERS; iter++) {
+      // Soft deadline — break before the Vercel Hobby 60s function timeout so
+      // the post-loop fallback post-mortem + incident resolution can run.
+      // The incident is marked 'degraded' (partial investigation), the same
+      // state as a circuit-open — the agent did real work but couldn't finish.
+      if (Date.now() - loopStart > SOFT_DEADLINE_MS) {
+        wasCircuitOpen = true // treat deadline as a graceful degradation
+        lastError = `soft deadline reached at ${Math.round((Date.now() - loopStart) / 1000)}s — breaking the loop to leave time for the post-loop fallback post-mortem before the Vercel function timeout`
+        emit('observe', {
+          reasoning:
+            `Soft deadline reached after ${Math.round((Date.now() - loopStart) / 1000)}s. ` +
+            `Sentinel completed ${steps.length} reasoning step(s) but could not finish ` +
+            `the full closed loop within the Vercel function timeout. Writing a fallback ` +
+            `post-mortem and marking this incident **degraded** (partial investigation). ` +
+            `The agent's work so far is preserved in the audit log + the compounding artefact.`,
+        })
+        break
+      }
       const completion = await llm.complete({
         messages,
         tools: ltools,
