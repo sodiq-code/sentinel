@@ -53,9 +53,10 @@ import type {
 
 // MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-6
 // iterations on the seed scenarios. 8 (down from 12) keeps enough headroom
-// for a nudge + a couple of tool rounds, while halving the LLM-call count
-// per run — important on the Groq free tier (~30 req/min) where 12 calls
-// per run × 2 runs = 24 calls nearly exhausts the per-minute budget.
+// for a nudge + a couple of tool rounds, while keeping the LLM-call count
+// per run well under the Groq free-tier per-minute rate limit (~30 req/min).
+// With a 2s pace limiter, 8 calls × ~4s (call + tool exec) ≈ 32s — fits the
+// Vercel Hobby 60s function timeout with room for the post-loop fallback.
 const MAX_ITERS = 8
 
 export interface OrchestratorResult {
