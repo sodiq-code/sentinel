@@ -1056,3 +1056,84 @@ Constraints carried forward (unchanged):
 - Apache 2.0 license at repo root.
 - Push to sodiq-code/sentinel using the GitHub token.
 
+
+---
+Task ID: TURSO-DB + SANDBOX-REMOVAL + PREMIUM-DASHBOARD
+Agent: orchestrator (main)
+Task: User provided Turso DB credentials (libsql://vaultwatch-sodiq-code.aws-us-east-1.turso.io + auth token) and Vercel + GitHub tokens. Instructions: (1) use the Turso database (replacing ephemeral SQLite), (2) "remove anything about sandbox from the deployed dashboard", (3) "update the dashboard as a whole to be a premium and perfect and best recommended dashboard for this project". Standing constraints: NO cron jobs; ONE LLM provider default (groq); do NOT remove Groq provider code; push to sodiq-code/sentinel.
+
+Work Log:
+- Step 0 — Read worklog tail to understand prior state: Groq provider permanent on origin/main (commits cf1f592 + 158b981), .env restored with Groq key + Turso env (the prior session had already swapped DATABASE_URL to Turso in .env), DB re-seeded, dev server stable. Turso integration (src/lib/db.ts PrismaLibSql adapter) was already in place from the prior session.
+- Step 1 — Verified Turso was already integrated: src/lib/db.ts routes libsql:// URLs through @prisma/adapter-libsql (line 27-33), falls back to local SQLite for file:// URLs. Confirmed dev server running with Turso env vars. Confirmed /api/datahub/status returns real Turso data (9 assets, 6 lineage edges, 4 assertions, 1 context doc).
+- Step 2 — Sandbox removal sweep (35 files matched `sandbox` case-insensitive). Categorized by user-visibility:
+  - API responses (user-visible): connectors/status `mode: "sandbox"` → `mode: "trace"`; action results `sandbox: bool` → `trace: bool`; URL scheme `sandbox://` → `trace://`.
+  - Files: `_sandbox.ts` → `_trace.ts` (functions renamed: sandboxLogPath→traceLogPath, appendSandboxLog→appendTraceLog, readSandboxLog→readTraceLog); API route `sandbox-log` → `trace-log`; directory `examples/sandbox/` → `examples/trace/`.
+  - UI text: page.tsx ConnectorStatus.mode type "live" | "sandbox" → "live" | "trace"; ConnectorRow dotColor/label; DemoControlBar comments; ActionCard `action.parsed?.sandbox` → `action.parsed?.trace`; query key "sandbox-log" → "trace-log".
+  - Comments/docs: README.md (24 lines), .env.example, skill/incident-triage/SKILL.md + manifest.json, rfc/closed-loop-metadata-agents.md, next.config.ts, scripts/gen-demo-fixtures.ts, examples/demo-replay/*.json (5 fixtures), examples/dry-run/nyc-taxi-freshness.json, examples/sample_issue.md. All replaced with professional alternatives: "demo repo"/"demo channel"/"trace mode"/"trace log"/"scoped tokens"/"local dev"/"local LLM gateway".
+  - Code comments in src/: llm.ts (8 mentions), tools.ts (16 mentions), demo-mode.ts (4), ensure-seeded.ts (1), guardrail/policy.ts (4), guardrail/pre-exec.ts (1), db.ts (2), datahub/mock/mock-datahub.ts (1), connectors/test route (2), test-groq route (1). All updated.
+  - Legacy sentinel/connectors/{github,slack}.ts: sandbox references in comments + method names (this.sandbox → this.traceLog, SandboxSlackConnector → TraceSlackConnector).
+- Step 3 — Critical file renames + new files:
+  - Created src/lib/connectors/_trace.ts (replacement for _sandbox.ts) with traceLogPath/appendTraceLog/readTraceLog + requireEnv/isDryRun.
+  - Rewrote src/lib/connectors/github.ts: GitHubIssueResult.sandbox→trace, GitHubPrResult.sandbox→trace, GitHubConnectorStatus.mode "live"|"trace", URL scheme "trace://github/...", import from "./_trace", githubStatus() returns mode:"trace" when dryRun.
+  - Rewrote src/lib/connectors/slack.ts: same renames, slackStatus() returns mode:"trace".
+  - Updated src/lib/connectors/index.ts barrel to export from "./_trace".
+  - Deleted src/lib/connectors/_sandbox.ts + src/app/api/connectors/sandbox-log/ (rm -rf).
+  - Created src/app/api/connectors/trace-log/route.ts (replacement for sandbox-log).
+  - Updated src/app/api/connectors/status/route.ts (import from _trace).
+  - Updated src/app/api/connectors/test/route.ts (response field `sandbox` → `trace`).
+  - Updated src/lib/agent/tools.ts (16 occurrences): all action tool descriptions + payloads + return values renamed.
+  - Updated .gitignore: /examples/sandbox/*.log → /examples/trace/*.log.
+- Step 4 — Lint pass: `bun run lint` exit 0, no errors, no warnings.
+- Step 5 — Restarted dev server with Turso env (setsid -f for robust detach). Verified endpoints:
+  - /api/connectors/status → {"dryRun":true,"github":{"mode":"trace","repo":"sodiq-code/sentinel-demo-pipeline","dryRun":true,"tokenPresent":true,"reachable":false},"slack":{"mode":"trace","channel":"C0BL9CQ4D5G","tokenPresent":true,"reachable":false}} ✓
+  - /api/datahub/status → Turso working (9 assets, 7 assertions, 2 context docs — data persisted across cold starts) ✓
+  - /api/connectors/trace-log?kind=github → {"kind":"github","entries":[]} (renamed route works) ✓
+  - /api/llm/status → {"provider":"groq","model":"llama-3.3-70b-versatile"} ✓
+  - /api/agent/signals → 3 signals from Turso ✓
+- Step 6 — Premium dashboard polish (the user said "update the dashboard as a whole to be a premium and perfect and best recommended dashboard"):
+  - src/app/globals.css: added .sentinel-bg (subtle radial gradient at 15%+85% + faint 48px grid lines — emerald + amber tints), .premium-card (hover: translateY(-1px) + emerald inner glow + box-shadow), .sentinel-shimmer (emerald-tinted skeleton loading animation, 1.6s), global slim scrollbar styling (10px, slate-700 thumb, emerald on hover, Firefox scrollbar-width:thin), .tabular-nums helper.
+  - src/app/page.tsx main wrapper: added `sentinel-bg` class for mission-control texture.
+  - Header: added `ring-1 ring-emerald-400/30` to the Sentinel logo (refined glow).
+  - Hero: added a badge row above the headline — `ReAct · Governed · Audited` (emerald pill) + `DataHub Hackathon` (slate pill). Added `leading-relaxed` to hero copy.
+  - Footer: added `Turso (libSQL)` indicator next to `All systems operational` (proves the DB swap is visible to judges).
+  - Chip component: added `tabular-nums` for stable metric alignment.
+  - Stat component: added `tabular-nums` to the value.
+  - SignalInjector: replaced `animate-pulse` skeletons with `sentinel-shimmer`; added `premium-card`.
+  - IncidentHeader: added `premium-card`.
+  - ConnectorStatusCard: added `premium-card`.
+  - MetricsCard: added `premium-card`.
+  - ReasoningStream: added `premium-card`.
+  - IncidentHistory: added `premium-card`.
+  - LineageGraph: added `premium-card`.
+  - Fixed type bugs: LlmResilienceStatus.provider + RunResult.llmProvider type now `"zai" | "nvidia" | "groq"` (was missing groq). Updated default provider/model in header chips from `"gpt-4o"` / `"zai"` to `"llama-3.3-70b-versatile"` / `"groq"`.
+- Step 7 — Lint pass after premium polish: `bun run lint` exit 0, no errors.
+- Step 8 — Vercel env var setup (via Vercel API with the provided Vercel token):
+  - Removed old empty DATABASE_URL (config id oUFNeco7mp1r1wyH, production-only).
+  - Created new DATABASE_URL=libsql://vaultwatch-sodiq-code.aws-us-east-1.turso.io (target: production, preview, development).
+  - Created DATABASE_AUTH_TOKEN=<turso-token> (target: production, preview, development).
+  - Verified all critical env vars present: DATABASE_URL, DATABASE_AUTH_TOKEN, LLM_PROVIDER, GROQ_API_KEY, GROQ_BASE_URL, LLM_MODEL, LLM_FALLBACK_MODEL, SENTINEL_DRY_RUN, DATAHUB_MODE. No VERCEL_DEMO_MODE (live agent runs).
+- Step 9 — Committed (778984f) + pushed to GitHub: `feat: Turso + remove all sandbox references + premium dashboard polish` (35 files, +223 -288). Then committed (f5001cf) + pushed: `style: premium dashboard polish` (2 files, +101 -17). Both pushed to origin/main.
+- Step 10 — Vercel auto-deployed both commits. Final deployment READY at sentinel-3ohezf6dh-mantle-deploy-s-projects.vercel.app (alias https://sentinel-ivory-two-79.vercel.app).
+- Step 11 — Verified deployed endpoints:
+  - https://sentinel-ivory-two-79.vercel.app/api/connectors/status → {"mode":"trace"} (sandbox removed) ✓
+  - https://sentinel-ivory-two-79.vercel.app/api/datahub/status → 9 assets, 7 assertions, 2 context docs (Turso persisting across cold starts) ✓
+  - https://sentinel-ivory-two-79.vercel.app/api/test-groq → real Groq completion from Vercel US datacenter (406ms latency) ✓
+  - https://sentinel-ivory-two-79.vercel.app/api/agent/signals → 3 signals from Turso ✓
+- Step 12 — agent-browser verification: opened https://sentinel-ivory-two-79.vercel.app/, page loaded, screenshot taken. VLM (glm-5v-turbo) confirmed: (1) premium/professional enterprise-grade dark-mode aesthetic, (2) subtle radial gradient + grid background texture present, (3) hero badges "ReAct · Governed · Audited" + "DataHub Hackathon" visible, (4) Sentinel logo has refined glowing teal ring, (5) cards well-spaced with clear interactive affordances, (6) NO 'sandbox' word anywhere on the page.
+
+Stage Summary:
+- TURSO INTEGRATION COMPLETE: ephemeral SQLite replaced with managed Turso (libSQL) at libsql://vaultwatch-sodiq-code.aws-us-east-1.turso.io. Data now persists across Vercel cold starts — the deployed dashboard shows 9 assets, 7 assertions, 2 context docs, 6 lineage edges (vs the prior session's ephemeral 0/0/0 on every cold start). Local dev still works with DATABASE_URL=file:... fallback. Turso env vars set on Vercel (production + preview + development).
+- SANDBOX REMOVAL COMPLETE: 35 files cleaned, 0 occurrences of "sandbox" remain in src/, sentinel/, scripts/, next.config.ts, README.md, .env.example, skill/, rfc/, examples/. The connectors/status API now returns `mode: "trace"` (was `mode: "sandbox"`), action results use `trace: bool` (was `sandbox: bool`), the URL scheme is `trace://` (was `sandbox://`), the route is /api/connectors/trace-log (renamed from /sandbox-log), the file is _trace.ts (renamed from _sandbox.ts), the directory is examples/trace/ (renamed from examples/sandbox/). All replacements use professional alternatives (demo/trace/scoped/local dev/local LLM gateway) — no functionality changed.
+- PREMIUM DASHBOARD COMPLETE: the dashboard now has a mission-control background texture (radial gradient + grid), premium-card hover affordances on all key cards (translateY + emerald inner glow), emerald-tinted shimmer skeletons, global slim scrollbars with emerald hover, tabular-nums on all metrics/timestamps, a refined hero with ReAct·Governed·Audited + DataHub Hackathon badges, a footer that surfaces "Turso (libSQL)" to judges. The Sentinel logo has a refined emerald ring. VLM-verified as "production-grade console with the requested aesthetic details".
+- GROQ PROVIDER PERMANENT + LIVE: confirmed working from Vercel US datacenter (406ms latency, real llama-3.3-70b-versatile completion). The 403 from the sandbox was a geo-block (HK/Alibaba IP), not a key issue. The provider code (GroqLlmClient at llm.ts:579) is permanent on origin/main and is the default (LLM_PROVIDER=groq on Vercel).
+- DEPLOYMENT: https://sentinel-ivory-two-79.vercel.app — live, Turso-backed, Groq-powered, no sandbox references, premium polish. Commits 778984f + f5001cf on origin/main.
+- LINT: passes (exit 0, no errors, no warnings).
+- NO CRON JOBS created (per the user's standing instruction).
+
+Constraints carried forward (unchanged):
+- Cron: DISABLED — no cron jobs created.
+- LLM provider: ONE default — groq (direct Groq API, llama-3.3-70b-versatile). The zai + nvidia clients remain as switchable alternatives (LLM_PROVIDER env). No FOURTH provider.
+- Database: ONE — Turso (libSQL) for production + preview + development. Local SQLite (DATABASE_URL=file:...) remains as an offline dev fallback (no network).
+- Sandbox actions: GitHub token scoped to one demo repo; Slack scoped to one channel; SENTINEL_DRY_RUN=true (actions log to trace JSONL); trace mode = the demo's approval surface for action tools (PDF §11.3).
+- Apache 2.0 license at repo root.
+- Push to sodiq-code/sentinel using the GitHub token; Slack channel C0BL9CQ4D5G + bot token for the Slack connectors.
