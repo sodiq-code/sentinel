@@ -140,3 +140,75 @@
 .custom-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgb(16 185 129 / 0.7);
 }
+
+/* Premium scrollbar — Firefox */
+.custom-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(51 65 81 / 0.6) transparent;
+}
+
+/* Global scrollbar for the page body — slim, mission-control */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(30 41 59 / 0.7) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(30 41 59 / 0.7);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(16 185 129 / 0.6);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* Sentinel — premium mission-control background texture.
+   Subtle radial gradient + grid lines, sits behind the slate-950 base. */
+.sentinel-bg {
+  background-image:
+    radial-gradient(circle at 15% 0%, rgb(16 185 129 / 0.06), transparent 40%),
+    radial-gradient(circle at 85% 10%, rgb(245 158 11 / 0.04), transparent 45%),
+    linear-gradient(rgb(148 163 184 / 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(148 163 184 / 0.025) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 48px 48px, 48px 48px;
+  background-position: 0 0, 0 0, 0 0, 0 0;
+}
+
+/* Subtle card glow on hover — used by .premium-card */
+.premium-card {
+  transition: transform 150ms ease-out, border-color 150ms ease-out, box-shadow 200ms ease-out;
+}
+.premium-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -12px rgb(16 185 129 / 0.15), 0 0 0 1px rgb(16 185 129 / 0.08) inset;
+}
+
+/* Shimmer for loading skeletons — emerald-tinted */
+@keyframes sentinel-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.sentinel-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgb(30 41 59 / 0.4) 0%,
+    rgb(30 41 59 / 0.6) 50%,
+    rgb(30 41 59 / 0.4) 100%
+  );
+  background-size: 200% 100%;
+  animation: sentinel-shimmer 1.6s ease-in-out infinite;
+}
+
+/* Tabular nums for metrics + timestamps */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}

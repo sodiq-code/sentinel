@@ -93,7 +93,7 @@ interface RunResult {
   steps: ReasoningStep[];
   totalTokens: { promptTokens: number; completionTokens: number };
   llmModel: string;
-  llmProvider?: "zai" | "nvidia";
+  llmProvider?: "zai" | "nvidia" | "groq";
   promptVersion: string;
 }
 
@@ -148,7 +148,7 @@ interface ConnectorStatus {
 
 // Resilience — LLM circuit + failover state from /api/llm/status.
 interface LlmResilienceStatus {
-  provider: "zai" | "nvidia";
+  provider: "zai" | "nvidia" | "groq";
   model: string;
   failoverEnabled: boolean;
   hasNvidiaKey: boolean;
@@ -568,12 +568,12 @@ function Console() {
   const totalTokens = result?.totalTokens;
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100">
+    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 sentinel-bg">
       {/* Header */}
       <header className="border-b border-slate-800/80 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/40">
+            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/40 ring-1 ring-emerald-400/30">
               <Radar className="h-5 w-5 text-slate-950" />
             </div>
             <div className="leading-tight">
@@ -585,8 +585,8 @@ function Console() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Operational
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
-            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gpt-4o"} mono />
-            <Chip icon={Database} label="Provider" value={result?.llmProvider ?? "zai"} mono />
+            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "llama-3.3-70b-versatile"} mono />
+            <Chip icon={Database} label="Provider" value={result?.llmProvider ?? "groq"} mono />
             <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "—"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
@@ -606,10 +606,18 @@ function Console() {
       <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-28">
         {/* Hero */}
         <section className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-emerald-300">
+              <Sparkles className="h-3 w-3" /> ReAct · Governed · Audited
+            </span>
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-slate-400">
+              <GitBranch className="h-3 w-3" /> DataHub Hackathon
+            </span>
+          </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-50">
             Watch Sentinel think — then act, governed.
           </h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-400">
+          <p className="mt-2 max-w-3xl text-sm text-slate-400 leading-relaxed">
             Inject a DataHub assertion-failure signal. Sentinel&apos;s ReAct loop investigates — fetches the asset,
             traverses lineage, reads prior post-mortems — then opens a <strong className="text-slate-200">GitHub issue</strong> in
             the demo pipeline repo and posts a <strong className="text-slate-200">Slack triage card</strong>. A
@@ -757,6 +765,10 @@ function Console() {
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> All systems operational
           </span>
           <span className="text-slate-700">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5 text-slate-400" /> Turso (libSQL)
+          </span>
+          <span className="text-slate-700">·</span>
           <span>Apache 2.0 · Open source</span>
           <span className="text-slate-700">·</span>
           <Link href="https://github.com/sodiq-code/sentinel" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
@@ -808,14 +820,14 @@ function SignalInjector({
     "pii": "border-rose-500/40 bg-rose-500/5",
   };
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 premium-card">
       <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
         <Radar className="h-4 w-4 text-emerald-400" /> Inject a DataHub signal
       </h2>
       {loading && (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-16 rounded-md bg-slate-800/40 animate-pulse" />
+            <div key={i} className="h-16 rounded-md sentinel-shimmer" />
           ))}
         </div>
       )}
@@ -895,7 +907,7 @@ function ReasoningStream({
 }) {
   const empty = steps.length === 0 && !running;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card">
       <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <BrainCircuit className="h-4 w-4 text-amber-400" /> Reasoning stream
@@ -1650,7 +1662,7 @@ function MetricsCard({
   const tokens = result?.totalTokens;
   const total = tokens ? tokens.promptTokens + tokens.completionTokens : 0;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
       <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
         <Activity className="h-4 w-4 text-emerald-400" /> Live metrics
       </h2>
@@ -1682,7 +1694,7 @@ function Stat({
       <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
         <Icon className="h-3 w-3" /> {label}
       </div>
-      <div className={`mt-1 font-mono text-lg font-bold ${highlight ? "text-emerald-300" : "text-slate-100"}`}>{value}</div>
+      <div className={`mt-1 font-mono text-lg font-bold tabular-nums ${highlight ? "text-emerald-300" : "text-slate-100"}`}>{value}</div>
     </div>
   );
 }
@@ -1707,7 +1719,7 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
   }
   if (!status) return null;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
       <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
         <Terminal className="h-4 w-4 text-emerald-400" /> Connectors
         <span
@@ -1878,7 +1890,7 @@ function IncidentHistory({
     open: "text-slate-400",
   };
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <Radar className="h-4 w-4 text-emerald-400" /> Incident history
@@ -1957,7 +1969,7 @@ function Chip({
   mono?: boolean;
 }) {
   return (
-    <div className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1">
+    <div className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 tabular-nums">
       <Icon className="h-3 w-3 text-slate-500" />
       <span className="text-slate-500">{label}</span>
       <span className={`text-slate-300 max-w-[180px] truncate ${mono ? "font-mono" : ""}`} title={value}>{value}</span>
@@ -2060,7 +2072,7 @@ function IncidentHeader({ signal, asset, running, elapsed }: {
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5"
+      className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5 premium-card"
     >
       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
         {/* Persona card */}
@@ -2264,7 +2276,7 @@ function LineageGraph({ rootUrn, steps, running }: {
   const traversedArr = Array.from(traversedUrns);
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 premium-card">
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <Workflow className="h-4 w-4 text-emerald-400" /> Lineage graph
