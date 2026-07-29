@@ -14,7 +14,7 @@
 //     (capped at 15s to stay under the Vercel Hobby 60s serverless function timeout).
 //   • CircuitBreaker — opens after 5 consecutive 429/5xx, stays open for 90s.
 //     While open, calls throw CircuitOpenError immediately (no retry burn).
-//     Threshold 5 (was 3) tolerates transient bursts; cooldown 90s (was 60s)
+//     Threshold 3 (restored) — 3 consecutive 429s open the circuit; cooldown 90s (was 60s)
 //     ensures the rate-limit window fully resets before we retry.
 //   • Optional provider failover — when the primary's circuit is open AND a
 //     NVIDIA key is present, the dormant NvidiaNimLlmClient takes over.
@@ -104,7 +104,7 @@ const RATE_LIMIT_JITTER_PCT = 0.2
 const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 15000)
 
 // Circuit breaker — opens after N consecutive 429/5xx, stays open for cooldown.
-// Threshold 5 tolerates transient bursts; cooldown 90s ensures the Groq
+// Threshold 3 (restored) — 3 consecutive 429s open the circuit; cooldown 90s ensures the Groq
 // per-minute rate-limit window fully resets before the circuit recloses.
 const CIRCUIT_THRESHOLD = Number(process.env.LLM_CIRCUIT_THRESHOLD ?? 5)
 const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 90000)

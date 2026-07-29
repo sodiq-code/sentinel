@@ -398,11 +398,18 @@ export async function runSentinel(
     }
   } catch (err) {
     lastError = (err as Error).message ?? String(err)
-    // Distinguish "throttled" (circuit-open — rate-limited) from "failed"
-    // (a real error). A throttled run did partial work and writes a fallback
-    // post-mortem, so the incident is DEGRADED, not FAILED. This keeps the
-    // dashboard from showing a scary red "failed" every time Groq's free-tier
-    // per-minute rate limit trips, while still surfacing the throttle state.
+    // Distinguish "throttled" (circuit-open OR a 429 rate-limit error) from
+    // "failed" (a real error). A throttled run did partial work and writes a
+    // fallback post-mortem, so the incident is DEGRADED, not FAILED. This
+    // keeps the dashboard from showing a scary red "failed" every time Groq's
+    // free-tier per-minute rate limit trips.
+    //
+    // Two throttle signals:
+    //   1. CircuitOpenError — the circuit breaker opened after 3 consecutive 429/5xx.
+    //   2. A regular Error whose message mentions 429 / "rate limit" — this
+    //      happens when the primary + fallback models both 429 but the
+    //      circuit threshold hasn't been hit yet (e.g. MAX_RETRIES=1 means
+    //      only 2 failures per model).
     if (err instanceof CircuitOpenError) {
       wasCircuitOpen = true
       const provider = getLlmProvider()
@@ -418,6 +425,22 @@ export async function runSentinel(
           `circuit cools down in ~${secs}s; a subsequent run resumes ` +
           `normally. This is the designed graceful-degradation path ` +
           `(PDF §9.5.4 retry visibility + §11.3 contingency plan).`,
+      })
+    } else if (/429|rate limit|too many requests/i.test(lastError)) {
+      // 429 from both primary + fallback, but circuit didn't open (e.g.
+      // MAX_RETRIES=1 → only 2 failures per model, threshold 3 not reached
+      // within a single model's attempts, though the shared counter may
+      // accumulate across the fallback). Treat as degraded regardless.
+      wasCircuitOpen = true
+      emit('observe', {
+        reasoning:
+          `LLM provider returned a 429 rate-limit error. The agent ` +
+          `completed ${steps.length} reasoning step(s) before the throttle. ` +
+          `Both the primary and fallback models were rate-limited. Sentinel ` +
+          `will write a fallback post-mortem and mark this incident as ` +
+          `**degraded** (partial investigation). Wait ~60s for the Groq ` +
+          `per-minute rate-limit window to reset, then re-inject. This is ` +
+          `the designed graceful-degradation path (PDF §11.3 contingency plan).`,
       })
     } else {
       emit('error', { error: lastError })
