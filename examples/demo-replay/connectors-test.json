@@ -1,15 +1,15 @@
 {
   "ok": true,
-  "mode": "sandbox",
+  "mode": "trace",
   "github": {
     "repo": "sodiq-code/sentinel-demo-pipeline",
     "number": 42,
     "url": "https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42",
-    "sandbox": true
+    "trace": true
   },
   "slack": {
     "channel": "C0BL9CQ4D5G",
     "ts": "1753685655.000123",
-    "sandbox": true
+    "trace": true
   }
 }

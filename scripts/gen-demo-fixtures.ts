@@ -228,12 +228,12 @@ async function main() {
     ],
   }
 
-  // --- connectors-status.json (polished: configured + reachable, sandbox mode) ---
+  // --- connectors-status.json (polished: configured + reachable, trace mode) ---
   const connectorsStatus = {
     dryRun: true,
     demoMode: true,
     github: {
-      mode: 'sandbox',
+      mode: 'trace',
       repo: 'sodiq-code/sentinel-demo-pipeline',
       dryRun: true,
       tokenPresent: true,
@@ -242,7 +242,7 @@ async function main() {
       error: null,
     },
     slack: {
-      mode: 'sandbox',
+      mode: 'trace',
       channel: 'C0BL9CQ4D5G',
       tokenPresent: true,
       reachable: true,
@@ -260,24 +260,24 @@ async function main() {
     hasNvidiaKey: true,
     circuit: { isOpen: false, consecutiveFailures: 0, msUntilReset: 0 },
     demoMode: true,
-    note: 'Vercel preview runs in dry-run mode — no live LLM calls. Live agent demo runs on the sandbox link.',
+    note: 'Vercel preview runs in dry-run mode — no live LLM calls. Live agent demo runs in local dev.',
   }
 
   // --- POST no-op fixtures ---
   const connectorsTest = {
     ok: true,
     demoMode: true,
-    mode: 'sandbox',
+    mode: 'trace',
     github: {
       repo: 'sodiq-code/sentinel-demo-pipeline',
       number: 42,
       url: 'https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42',
-      sandbox: true,
+      trace: true,
     },
     slack: {
       channel: 'C0BL9CQ4D5G',
       ts: '1753685655.000123',
-      sandbox: true,
+      trace: true,
     },
     note: 'Vercel preview — connector test is a no-op replay of the dry-run fixture.',
   }

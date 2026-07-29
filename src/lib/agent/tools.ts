@@ -13,8 +13,8 @@
 //               write, glossary/ownership/tags/description are proposals
 //   action.*  — 3 action tools (Phase 3): github_open_issue, github_open_pr
 //               (NEVER merges), slack_post_triage. All call the real
-//               connectors against the sandbox repo / channel. SENTINEL_DRY_RUN
-//               flips them to the sandbox log.
+//               connectors against the demo repo / channel. SENTINEL_DRY_RUN
+//               flips them to the trace log.
 //
 // Every tool call is recorded to the ToolCall table (PDF §9.4.3) and the audit
 // trail. Action tools additionally record an Action row (status: executed /
@@ -526,8 +526,8 @@ const WRITE_TOOLS: ToolDefinition[] = [
 // ---------------------------------------------------------------------------
 // ACTION tools — action.* (Phase 3: real GitHub + Slack connectors)
 // These now call src/lib/connectors/{github,slack}.ts. SENTINEL_DRY_RUN=true
-// (default) routes to the sandbox JSONL log; SENTINEL_DRY_RUN=false calls the
-// live GitHub + Slack APIs against the sandbox repo + channel.
+// (default) routes to the trace JSONL log; SENTINEL_DRY_RUN=false calls the
+// live GitHub + Slack APIs against the demo repo + channel.
 // Sentinel NEVER merges (PDF §9.3.5). The guardrail's NoMergeRule enforces this
 // in code even if the LLM attempts to call a merge tool.
 // ---------------------------------------------------------------------------
@@ -536,7 +536,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.github_open_issue',
     description:
-      'Open a GitHub issue in the sandbox repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Sentinel NEVER merges (PDF §9.3.5). Honors SENTINEL_DRY_RUN: sandbox mode writes to examples/sandbox/github-actions.log.',
+      'Open a GitHub issue in the demo repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Sentinel NEVER merges (PDF §9.3.5). Honors SENTINEL_DRY_RUN: trace mode writes to examples/trace/github-actions.log.',
     parameters: {
       type: 'object',
       properties: {
@@ -559,9 +559,9 @@ const ACTION_TOOLS: ToolDefinition[] = [
             incidentUrn: ctx.incidentUrn,
             kind: 'github.openIssue',
             target: repo,
-            payload: JSON.stringify({ repo, title, body, labels, number: res.number, sandbox: res.sandbox }),
+            payload: JSON.stringify({ repo, title, body, labels, number: res.number, trace: res.trace }),
             status: 'executed',
-            url: res.sandbox ? null : res.url,
+            url: res.trace ? null : res.url,
             ts: new Date(),
           },
         })
@@ -571,9 +571,9 @@ const ACTION_TOOLS: ToolDefinition[] = [
           number: res.number,
           url: res.url,
           state: res.state,
-          sandbox: res.sandbox,
+          trace: res.trace,
           status: 'executed',
-          note: res.sandbox
+          note: res.trace
             ? 'Trace: written to the local trace log. Set SENTINEL_DRY_RUN=false to file a live issue.'
             : 'Live: GitHub issue opened in the demo pipeline repo. Sentinel NEVER merges — issue is left OPEN for human review.',
         }
@@ -596,7 +596,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.github_open_pr',
     description:
-      'Open a GitHub pull request in the sandbox repo (GITHUB_DEMO_REPO) with the proposed fix. Sentinel NEVER merges (PDF §9.3.5 no-merge policy) — the PR is always left OPEN for human review. The head branch MUST already exist on the repo (Phase 3 only opens PRs; it does NOT push branches). Honors SENTINEL_DRY_RUN.',
+      'Open a GitHub pull request in the demo repo (GITHUB_DEMO_REPO) with the proposed fix. Sentinel NEVER merges (PDF §9.3.5 no-merge policy) — the PR is always left OPEN for human review. The head branch MUST already exist on the repo (Phase 3 only opens PRs; it does NOT push branches). Honors SENTINEL_DRY_RUN.',
     parameters: {
       type: 'object',
       properties: {
@@ -621,9 +621,9 @@ const ACTION_TOOLS: ToolDefinition[] = [
             incidentUrn: ctx.incidentUrn,
             kind: 'github.openPR',
             target: repo,
-            payload: JSON.stringify({ repo, title, body, branch, base, number: res.number, sandbox: res.sandbox, neverMerged: true }),
+            payload: JSON.stringify({ repo, title, body, branch, base, number: res.number, trace: res.trace, neverMerged: true }),
             status: 'executed',
-            url: res.sandbox ? null : res.url,
+            url: res.trace ? null : res.url,
             ts: new Date(),
           },
         })
@@ -634,7 +634,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
           url: res.url,
           state: res.state,
           mergeable: res.mergeable,
-          sandbox: res.sandbox,
+          trace: res.trace,
           neverMerged: true,
           status: 'executed',
           note: 'Sentinel NEVER merges this PR (PDF §9.3.5). It is left OPEN for human review. A human reviewer decides whether to merge.',
@@ -658,7 +658,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.slack_post_triage',
     description:
-      'Post a 3-bullet triage summary (what failed / who is affected / what on-call should do) to the sandbox Slack channel (SLACK_DEMO_CHANNEL). Renders as a Slack Block Kit triage card. Honors SENTINEL_DRY_RUN: sandbox mode writes to examples/sandbox/slack-posts.log.',
+      'Post a 3-bullet triage summary (what failed / who is affected / what on-call should do) to the demo Slack channel (SLACK_DEMO_CHANNEL). Renders as a Slack Block Kit triage card. Honors SENTINEL_DRY_RUN: trace mode writes to examples/trace/slack-posts.log.',
     parameters: {
       type: 'object',
       properties: {
@@ -685,9 +685,9 @@ const ACTION_TOOLS: ToolDefinition[] = [
             incidentUrn: ctx.incidentUrn,
             kind: 'slack.postMessage',
             target: channel,
-            payload: JSON.stringify({ channel, title, bullets, footer, ts: res.ts, sandbox: res.sandbox }),
+            payload: JSON.stringify({ channel, title, bullets, footer, ts: res.ts, trace: res.trace }),
             status: 'executed',
-            url: res.sandbox ? null : res.url,
+            url: res.trace ? null : res.url,
             ts: new Date(),
           },
         })
@@ -696,9 +696,9 @@ const ACTION_TOOLS: ToolDefinition[] = [
           channel,
           ts: res.ts,
           url: res.url,
-          sandbox: res.sandbox,
+          trace: res.trace,
           status: 'executed',
-          note: res.sandbox
+          note: res.trace
             ? 'Trace: written to the local trace log. Set SENTINEL_DRY_RUN=false to post live.'
             : 'Live: Slack triage card posted to the demo channel.',
         }

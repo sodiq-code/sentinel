@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
-// `output: "standalone"` is sandbox-only — it produces a self-contained
-// server.js the sandbox runs via `bun .next/standalone/server.js`. On Vercel
+// `output: "standalone"` is for local dev only — it produces a self-contained
+// server.js that runs via `bun .next/standalone/server.js`. On Vercel
 // the standalone output interferes with serverless function routing, so we
 // disable it there (Vercel sets VERCEL=1 at build time) + let Vercel build a
 // standard serverless Next.js deployment.

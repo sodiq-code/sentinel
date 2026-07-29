@@ -94,7 +94,7 @@ The agent takes real-world actions via external connectors:
 - Post a Slack triage summary
 - File a Jira ticket (for compliance agents)
 
-All actions are sandboxed (scoped tokens, sandbox repos/channels/workspaces). All actions are audited.
+All actions are scoped (scoped tokens, demo repos/channels/workspaces). All actions are audited.
 
 ### Phase 5 — write structured knowledge back to the graph
 
@@ -149,7 +149,7 @@ A correctly-implemented closed-loop-metadata-agent has five properties:
 
 | Threat | Mitigation |
 |---|---|
-| Agent takes a destructive action | Sandboxed tokens; no-merge policy; guardrail refusal |
+| Agent takes a destructive action | Scoped tokens; no-merge policy; guardrail refusal |
 | Agent writes incorrect metadata | Proposals, not patches (humans approve). Assertions are the only direct write and are reversible. |
 | Secrets leakage | `.env` out of git; gitleaks in CI; env-var-only secrets |
 | Prompt injection via catalog metadata | Structured tool-call inputs (never free-text execution); metadata treated as data, not instructions |
@@ -165,7 +165,7 @@ Sentinel (https://github.com/sodiq-code/sentinel) is the reference implementatio
 - **Stack**: Next.js 16 + TypeScript + Prisma/SQLite + shadcn/ui + NVIDIA NIM API (`nvidia/llama-3.3-nemotron-super-49b-v1`)
 - **Read tools**: DataHub MCP Server (12 tools)
 - **Write tools**: DataHub Agent Context Kit (7 tools) + REST ingestion fallback
-- **Action connectors**: GitHub, Slack (sandboxed)
+- **Action connectors**: GitHub, Slack (scoped)
 - **Bonus artefacts**: this RFC + the `incident-triage` Skill (https://github.com/sodiq-code/sentinel/tree/main/skill/incident-triage)
 
 The `incident-triage` Skill is the agent-agnostic form of the same loop — installable into Claude Code, Cursor, Codex, Copilot, or Gemini via the DataHub Skills CLI.

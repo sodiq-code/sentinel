@@ -1,7 +1,7 @@
 {
   "dryRun": true,
   "github": {
-    "mode": "sandbox",
+    "mode": "trace",
     "repo": "sodiq-code/sentinel-demo-pipeline",
     "dryRun": true,
     "tokenPresent": true,
@@ -10,7 +10,7 @@
     "error": null
   },
   "slack": {
-    "mode": "sandbox",
+    "mode": "trace",
     "channel": "C0BL9CQ4D5G",
     "tokenPresent": true,
     "reachable": true,

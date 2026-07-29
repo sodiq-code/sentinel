@@ -127,7 +127,7 @@ interface HydratedIncident {
 interface ConnectorStatus {
   dryRun: boolean;
   github: {
-    mode: "live" | "sandbox";
+    mode: "live" | "trace";
     repo: string;
     dryRun: boolean;
     tokenPresent: boolean;
@@ -136,7 +136,7 @@ interface ConnectorStatus {
     error?: string;
   };
   slack: {
-    mode: "live" | "sandbox";
+    mode: "live" | "trace";
     channel: string;
     tokenPresent: boolean;
     reachable: boolean;
@@ -279,7 +279,7 @@ const AUDIT_GROUP_META: Record<AuditGroup, { label: string; color: string }> = {
 // When deployed to Vercel, the dashboard auto-populates with a pre-recorded
 // run on first load so a visitor lands on a fully-rendered incident console
 // without clicking anything. The flag is set at build time by Vercel env
-// vars and is inert in the sandbox (live agent runs unchanged).
+// vars and is inert in local dev (live agent runs unchanged).
 const PREVIEW_MODE = process.env.NEXT_PUBLIC_VERCEL_DEMO_MODE === "true";
 
 const queryClient = new QueryClient({
@@ -337,7 +337,7 @@ function Console() {
     staleTime: 10_000,
   });
 
-  // Connector status — live/sandbox + reachability chips.
+  // Connector status — live/trace + reachability chips.
   const connectors = useQuery<ConnectorStatus>({
     queryKey: ["connectors-status"],
     queryFn: async () => {
@@ -434,7 +434,7 @@ function Console() {
   // Preview auto-populate: when deployed to Vercel, the dashboard runs the
   // first signal once on mount so a visitor lands on a fully-rendered
   // incident console (reasoning stream, lineage, actions, write-back,
-  // audit log) without clicking anything. Inert in the sandbox.
+  // audit log) without clicking anything. Inert in local dev.
   useEffect(() => {
     if (!PREVIEW_MODE) return;
     if (result) return;
@@ -725,7 +725,7 @@ function Console() {
         </div>
       </main>
 
-      {/* Sticky bottom control bar — connector sandbox toggle + connector test + compounding re-run */}
+      {/* Sticky bottom control bar — connector trace toggle + connector test + compounding re-run */}
       <DemoControlBar
         status={connectors.data ?? null}
         running={running}
@@ -741,7 +741,7 @@ function Console() {
             const j = await r.json();
             if (!r.ok) throw new Error(j.error ?? "Test failed");
             queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
-            queryClient.invalidateQueries({ queryKey: ["sandbox-log"] });
+            queryClient.invalidateQueries({ queryKey: ["trace-log"] });
             return j;
           } catch (err) {
             setRunError((err as Error).message);
@@ -1456,7 +1456,7 @@ function ActionCard({
   const neverMerged = isPR && action.parsed?.neverMerged === true;
   const number = typeof action.parsed?.number === "number" ? action.parsed.number : null;
   const title = typeof action.parsed?.title === "string" ? action.parsed.title : "";
-  const sandbox = action.parsed?.sandbox === true;
+  const trace = action.parsed?.trace === true;
 
   return (
     <div
@@ -1490,7 +1490,7 @@ function ActionCard({
           <ShieldCheck className="h-3 w-3" /> Never merged
         </div>
       )}
-      {action.url && !sandbox && (
+      {action.url && !trace && (
         <Link
           href={action.url}
           target="_blank"
@@ -1688,7 +1688,7 @@ function Stat({
 }
 
 // ---------------------------------------------------------------------------
-// Connector status card — live/sandbox + reachability
+// Connector status card — live/trace + reachability
 // ---------------------------------------------------------------------------
 
 function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | null; loading: boolean }) {
@@ -1763,7 +1763,7 @@ function ConnectorRow({
   icon: typeof Github;
   name: string;
   target: string;
-  mode: "live" | "sandbox";
+  mode: "live" | "trace";
   reachable: boolean;
   tokenPresent: boolean;
   error?: string;
@@ -1771,7 +1771,7 @@ function ConnectorRow({
 }) {
   const dotColor = !tokenPresent
     ? "bg-rose-400"
-    : mode === "sandbox"
+    : mode === "trace"
       ? "bg-amber-400"
       : reachable
         ? "bg-emerald-400"
@@ -1783,7 +1783,7 @@ function ConnectorRow({
         <span className="text-xs font-semibold text-slate-200">{name}</span>
         <span className={`h-2 w-2 rounded-full ${dotColor}`} />
         <span className="ml-auto text-[10px] font-mono text-slate-500">
-          {mode === "sandbox" ? "trace" : reachable ? "live · reachable" : tokenPresent ? "live · blocked" : "no token"}
+          {mode === "trace" ? "trace" : reachable ? "live · reachable" : tokenPresent ? "live · blocked" : "no token"}
         </span>
       </div>
       <div className="mt-1 text-[10px] font-mono text-slate-400 truncate">{target}</div>
@@ -1794,7 +1794,7 @@ function ConnectorRow({
 }
 
 // ---------------------------------------------------------------------------
-// Sticky bottom control bar — connector sandbox mode indicator, compounding
+// Sticky bottom control bar — connector trace mode indicator, compounding
 // re-run button, connector test button.
 // ---------------------------------------------------------------------------
 

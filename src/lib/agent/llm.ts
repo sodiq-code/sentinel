@@ -15,7 +15,7 @@
 //     While open, calls throw CircuitOpenError immediately (no retry burn).
 //   • Optional provider failover — when the primary's circuit is open AND a
 //     NVIDIA key is present, the dormant NvidiaNimLlmClient takes over.
-//     In this sandbox the NVIDIA key is dead (403 on inference), so the
+//     In local dev the NVIDIA key is dead (403 on inference), so the
 //     failover surfaces a clear CircuitOpenError and the orchestrator's
 //     post-loop fallback post-mortem path runs gracefully. On a real
 //     deployment with a fresh NVIDIA key, the agent transparently switches
@@ -24,28 +24,32 @@
 // All tunables via env: LLM_RATE_LIMIT_MS, LLM_CIRCUIT_THRESHOLD,
 // LLM_CIRCUIT_COOLDOWN_MS, LLM_FAILOVER_ENABLED. See .env.example.
 //
-// Provider selection (LLM_PROVIDER env, default 'zai'):
+// Provider selection (LLM_PROVIDER env, default 'groq'):
 //
-//   zai     — z-ai-web-dev-sdk gateway (DEFAULT). Works inside the build
-//             sandbox where direct outbound to integrate.api.nvidia.com is
-//             blocked (HTTP 401 on inference). Supports OpenAI-style
-//             tool-calling + multi-turn role:'tool' messages + parallel
-//             tool_calls. This is the provider the live demo runs on.
+//   groq    — direct Groq API (DEFAULT). llama-3.3-70b-versatile primary,
+//             llama-3.1-8b-instant fallback. OpenAI-compatible endpoint at
+//             api.groq.com/openai/v1. This is the provider the live demo runs
+//             on (Vercel US datacenter — Groq is geo-blocked from some regions).
 //
-//             When the z-ai gateway is hard-throttled (sustained 429 — a
-//             shared-gateway quota burn, not a per-second limit), the circuit
-//             opens and the orchestrator's post-loop fallback post-mortem
-//             path runs gracefully. The dashboard surfaces the circuit state
-//             to the operator (header chip + /api/llm/status) without
-//             masking it.
+//             When Groq is hard-throttled (sustained 429 — a shared-gateway
+//             quota burn, not a per-second limit), the circuit opens and the
+//             orchestrator's post-loop fallback post-mortem path runs
+//             gracefully. The dashboard surfaces the circuit state to the
+//             operator (header chip + /api/llm/status) without masking it.
+//
+//   zai     — z-ai-web-dev-sdk gateway. Works inside the build environment
+//             where direct outbound to integrate.api.nvidia.com is
+//             blocked. Supports OpenAI-style tool-calling + multi-turn
+//             role:'tool' messages + parallel tool_calls. Kept as an
+//             alternative provider (LLM_PROVIDER=zai).
 //
 //   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint
 //             (https://integrate.api.nvidia.com/v1). PRIMARY model
 //             nvidia/llama-3.3-nemotron-super-49b-v1 (parallel tool-calling),
 //             FALLBACK openai/gpt-oss-120b. Selected when a valid NVIDIA key
-//             is present in a non-sandboxed deployment. Kept as an
-//             alternative so the same orchestrator runs against real NVIDIA
-//             hardware, and as the dormant failover target for z-ai.
+//             is present. Kept as an alternative so the same orchestrator
+//             runs against real NVIDIA hardware, and as the dormant failover
+//             target for groq.
 //
 // Both providers expose the same OpenAI-compatible `chat/completions` surface,
 // so the orchestrator is provider-agnostic. The fallback MODEL is swapped in
@@ -76,14 +80,14 @@ const MAX_RETRIES = 3
 // General backoff (network / 5xx) — keeps the original aggressive curve.
 const INITIAL_BACKOFF_MS = 800
 
-// 429-specific backoff with jitter — much longer, because a 429 from the
-// shared sandbox gateway is a sustained throttle, not a per-account quota.
+// 429-specific backoff with jitter — much longer, because a 429 from a
+// shared gateway is a sustained throttle, not a per-account quota.
 const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 5000)
 const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 20000)
 const RATE_LIMIT_JITTER_PCT = 0.25
 
 // Pace limiter — at most one call per interval per provider. Default 6s
-// keeps the agent from contributing to the shared sandbox 429 pressure.
+// keeps the agent from contributing to a shared-gateway 429 pressure.
 // Set to 0 (or a low value) to disable for fast dev loops.
 const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 6000)
 
@@ -136,7 +140,7 @@ function extractStatusFromMessage(msg: string): number | null {
  * `refillIntervalMs`. `acquire()` waits until a token is available.
  *
  * Used per-provider to pace calls so the agent doesn't burst into the
- * shared sandbox gateway's 429 throttle.
+ * shared gateway's 429 throttle.
  */
 class TokenBucket {
   private tokens: number
@@ -301,7 +305,7 @@ function mapCompletion(res: OpenAiResponse): LlmCompletion {
 }
 
 // ===========================================================================
-// Provider: z-ai-web-dev-sdk (DEFAULT — works in-sandbox)
+// Provider: z-ai-web-dev-sdk (works in the local build environment)
 // ===========================================================================
 
 class ZaiLlmClient implements ResilientLlmClient {
@@ -338,7 +342,7 @@ class ZaiLlmClient implements ResilientLlmClient {
     if (this.circuit.isOpen()) {
       throw new CircuitOpenError(
         `z-ai circuit open for ${this.circuit.msUntilReset()}ms ` +
-          `(sustained 429 from the shared sandbox gateway). ` +
+          `(sustained 429 from the shared gateway). ` +
           `Sentinel will fail over to NVIDIA if a key is present, otherwise ` +
           `the orchestrator's fallback post-mortem path runs (PDF §9.4.2).`,
       )
@@ -433,7 +437,7 @@ class ZaiLlmClient implements ResilientLlmClient {
 
 // ===========================================================================
 // Provider: NVIDIA NIM direct (OpenAI-compatible)
-// Kept for non-sandboxed deployments where the NVIDIA key is valid. Also
+// Kept for deployments where the NVIDIA key is valid. Also
 // serves as the dormant failover target when the z-ai circuit opens.
 // ===========================================================================
 
@@ -570,7 +574,7 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
 // Groq's chat/completions endpoint is a drop-in OpenAI-compatible surface
 // (same request/response shape as NVIDIA NIM), so it reuses the exact same
 // resilience primitives (TokenBucket, CircuitBreaker, retry/backoff). This
-// is the provider actually reachable from outside the build sandbox — no
+// is the provider actually reachable from outside the build environment — no
 // z-ai gateway, no dead NVIDIA key. Get a free key at console.groq.com/keys.
 // ===========================================================================
 
@@ -781,7 +785,7 @@ export function getLlm(): LlmClient {
       s.zai = new ZaiLlmClient()
       const nvidiaKey = process.env.NVIDIA_API_KEY
       // Optional dormant failover — only if a NVIDIA key looks configured.
-      // In the sandbox this key is dead (401 on inference), so the failover
+      // In local dev this key is dead (401 on inference), so the failover
       // surfaces a clear CircuitOpenError instead of masking it; the
       // orchestrator's post-loop fallback post-mortem path runs gracefully.
       if (LLM_FAILOVER_ENABLED && nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
@@ -811,7 +815,7 @@ export function getLlmModel(): string {
  * Phase 3 resilience — expose circuit state for the UI status chip and the
  * `/api/llm/status` endpoint. Read-only; never throws.
  *
- * In sandbox mode (z-ai + dead NVIDIA key), `failoverEnabled` is true but
+ * In local dev (z-ai + dead NVIDIA key), `failoverEnabled` is true but
  * `nvidiaHealthy` is false — the UI shows the operator that the agent will
  * degrade gracefully via the post-loop fallback path, not via live NVIDIA.
  */

@@ -1,14 +1,14 @@
 // =============================================================================
 // Sentinel — Vercel preview mode helper
 //
-// The Sentinel console runs live in the sandbox (real LLM, real connectors,
-// real write-backs). On Vercel's serverless runtime the sandbox-internal LLM
+// The Sentinel console runs live in local dev (real LLM, real connectors,
+// real write-backs). On Vercel's serverless runtime the local LLM
 // gateway is unreachable and SQLite is ephemeral, so a second read-only path
 // is used: every API route returns a pinned, pre-recorded run derived from the
 // Phase 7 dry-run trace. The page auto-populates on first load so a visitor
 // lands on a fully-rendered incident console without clicking anything.
 //
-// This file is server-only. It is inert in the sandbox (VERCEL_DEMO_MODE is
+// This file is server-only. It is inert in local dev (VERCEL_DEMO_MODE is
 // unset there) — every guard is a no-op and the live agent runs unchanged.
 // =============================================================================
 
@@ -25,7 +25,7 @@ import guardrailPendingFixture from "../../examples/demo-replay/guardrail-pendin
 import guardrailApproveFixture from "../../examples/demo-replay/guardrail-approve.json";
 import guardrailDenyFixture from "../../examples/demo-replay/guardrail-deny.json";
 
-// Server-only guard. In the sandbox this is always false.
+// Server-only guard. In local dev this is always false.
 export function isPreviewMode(): boolean {
   return process.env.VERCEL_DEMO_MODE === "true";
 }

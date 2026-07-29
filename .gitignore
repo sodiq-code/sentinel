@@ -55,7 +55,7 @@ server.log
 /skills/
 
 # Sentinel runtime artefacts
-/examples/sandbox/*.log
+/examples/trace/*.log
 /prisma/migrations/dev/
 
 # zscripts (internal scaffold, not part of Sentinel)

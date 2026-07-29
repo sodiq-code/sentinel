@@ -21,7 +21,7 @@ Built for **[Build with DataHub: The Agent Hackathon](https://datahub.devpost.co
 | Judging criterion | How Sentinel nails it |
 |---|---|
 | **Use of DataHub** (tie-breaker) | Uses the deepest surface: lineage, ownership, glossary, governance, assertions, ML metadata. Reads via the **DataHub MCP Server**; writes back via the **Agent Context Kit** (+ REST ingestion fallback). |
-| **Technical Execution** | Real GitHub issues + PRs in a sandbox repo, real Slack posts, real DataHub write-backs. Audited end-to-end. |
+| **Technical Execution** | Real GitHub issues + PRs in a demo repo, real Slack posts, real DataHub write-backs. Audited end-to-end. |
 | **Originality** | The **write-back loop** — every incident leaves the context graph richer. Compounds over time. No competitor does this. |
 | **Real-World Usefulness** | Built around a real persona: Priya, on-call at 3am. The seeded `nyc-taxi` planted-freshness scenario is sponsor-provided. |
 | **Submission Quality** | Runs from a fresh clone in <1 min. Polished shadcn/ui incident console. Apache 2.0. |
@@ -38,8 +38,8 @@ Every theatrical beat in the console maps to a judging criterion. This is the ma
 | 1 | Priya persona + failing asset surface **before** the agent runs (03:14 UTC, on-call) | **Real-World Usefulness** | `<IncidentHeader>` |
 | 2 | Agent traverses lineage on screen, nodes highlight in real-time as `mcp.get_lineage` fires | **Use of DataHub** (tie-breaker) + **Technical Execution** | `<LineageGraph>` |
 | 3 | Reasoning streams live — plan → act → observe → reflect, token-by-token | **Technical Execution** + **Submission Quality** | `<ReasoningStream>` |
-| 4 | Real GitHub issue + draft PR open in the sandbox repo with a **NOT MERGED** badge | **Technical Execution** + **Real-World Usefulness** | `<ActionsPanel>` |
-| 5 | Real Slack triage card posts to the sandbox channel | **Real-World Usefulness** | `<ActionsPanel>` |
+| 4 | Real GitHub issue + draft PR open in the demo repo with a **NOT MERGED** badge | **Technical Execution** + **Real-World Usefulness** | `<ActionsPanel>` |
+| 5 | Real Slack triage card posts to the demo channel | **Real-World Usefulness** | `<ActionsPanel>` |
 | 6 | Agent **refuses** the PII-tagged asset without approval — red `REQUIRES APPROVAL` card | **Real-World Usefulness** + **Technical Execution** (guardrail is code, not prompt) | `<GuardrailPanel>` |
 | 7 | Post-mortem + glossary + ownership proposals + new SLA assertion written **back to DataHub** | **Use of DataHub** + **Originality** (the write-back loop) | `<WriteBackPanel>` |
 | 8 | Run 2 **visibly reads** Run 1's post-mortem → "prior incident found" highlight card | **Originality** (compounding-context — the structural moat) | Replay loop button |
@@ -85,9 +85,9 @@ flowchart LR
     D[(Metadata Graph<br/>lineage · ownership · glossary<br/>assertions · context docs)]
   end
 
-  subgraph External["Sandbox actions"]
-    GHRepo[sandbox GitHub repo]
-    SlackCh[sandbox Slack channel]
+  subgraph External["Demo actions"]
+    GHRepo[demo GitHub repo]
+    SlackCh[demo Slack channel]
   end
 
   A --> SL
@@ -130,7 +130,7 @@ src/lib/agent/                         # the LIVE agent (Phase 2+)
 src/lib/connectors/                    # Phase 3 action connectors
   github.ts                            # openIssue, openPR (NEVER merges), getRepoInfo
   slack.ts                             # postTriage (Slack Web API chat.postMessage, Block Kit triage card)
-  _sandbox.ts                          # requireEnv, isDryRun, appendSandboxLog, readSandboxLog
+  _trace.ts                            # requireEnv, isDryRun, appendTraceLog, readTraceLog
   index.ts                             # barrel
 src/lib/guardrail/                     # Phase 3 code-level guardrail (PDF §9.3.5, §12.3)
   policy.ts                            # NoMergeRule + DirectWriteAllowlistRule + ActionApprovalGateRule
@@ -159,7 +159,7 @@ src/                                   # Next.js 16 incident console (the demo s
   app/page.tsx                         # the Phase 3 console: live ReAct reasoning + actions panel + guardrail panel + demo control bar
   app/api/agent/                       # run / incidents / incident/[urn] / signals routes
   app/api/guardrail/                    # Phase 3: pending / approve / deny routes
-  app/api/connectors/                   # Phase 3: status / test / sandbox-log routes
+  app/api/connectors/                   # Phase 3: status / test / trace-log routes
   lib/agent/                           # the live Phase 2+ agent (see above)
   lib/connectors/                      # Phase 3 GitHub + Slack connectors
   lib/guardrail/                       # Phase 3 code-level guardrail
@@ -180,7 +180,7 @@ bun install
 
 # 3. Configure
 cp .env.example .env
-# edit .env — LLM_PROVIDER defaults to 'zai' (z-ai-web-dev-sdk gateway, works in-sandbox).
+# edit .env — LLM_PROVIDER defaults to 'zai' (z-ai-web-dev-sdk gateway, works in local dev).
 # Set LLM_PROVIDER=nvidia + NVIDIA_API_KEY to call NVIDIA NIM directly.
 # leave DATAHUB_GMS_URL empty to run in DEMO mode (seeded fixtures, no live DataHub)
 
@@ -189,7 +189,7 @@ bun run db:push
 
 # 5. Run
 bun run dev
-# open the incident console at the Preview Panel (the sandbox gateway is on port 3000)
+# open the incident console at the Preview Panel (the local LLM gateway is on port 3000)
 ```
 
 The first time you click **"Inject nyc-taxi freshness"** in the console, Sentinel:
@@ -199,8 +199,8 @@ The first time you click **"Inject nyc-taxi freshness"** in the console, Sentine
 4. Reads glossary → finds `sla-freshness-15m`, `business-critical`
 5. Reads prior post-mortems (none on first run)
 6. Computes blast radius via downstream lineage → 2 dashboards affected
-7. Opens a GitHub issue + a PR (NOT merged) in the sandbox repo
-8. Posts a triage summary to the sandbox Slack channel
+7. Opens a GitHub issue + a PR (NOT merged) in the demo repo
+8. Posts a triage summary to the demo Slack channel
 9. Writes a post-mortem context doc + a glossary proposal + an ownership proposal + a new SLA assertion back to DataHub
 10. The next time you click **"Replay loop"**, Run 2 visibly reads Run 1's post-mortem — **the compounding beat**.
 
@@ -221,18 +221,18 @@ The same TypeScript interfaces (`McpClient`, `ContextKitClient`, `IngestionClien
 
 ---
 
-## Live sandbox (PDF §12.2 — mitigates "judges discount sandbox actions as theatre")
+## Live demo (PDF §12.2 — mitigates "judges discount demo actions as theatre")
 
-Every action Sentinel takes is real, against sandbox surfaces, and auditable end-to-end. Nothing is mocked at the action layer — only the DataHub catalog is seeded (because the sandbox has no live DataHub instance, and the demo must be reproducible from a fresh clone).
+Every action Sentinel takes is real, against demo surfaces, and auditable end-to-end. Nothing is mocked at the action layer — only the DataHub catalog is seeded (because the local environment has no live DataHub instance, and the demo must be reproducible from a fresh clone).
 
 | Surface | Where | What the judge can verify |
 |---|---|---|
-| **Sandbox GitHub repo** | [`sodiq-code/sentinel-demo-pipeline`](https://github.com/sodiq-code/sentinel-demo-pipeline) | Real issues + draft PRs opened by Sentinel. Token scoped to `issues:write` + `pull_requests:write` on this one repo only. **Never merged** — there is no `mergePR` tool. |
-| **Sandbox Slack channel** | `#sentinel-incidents` (`C0BL9CQ4D5G`) | Real Block Kit triage cards posted by the Sentinel bot. Token scoped to `chat:write` on this one channel. Read-only invites available on request (DM the maintainer). |
-| **Sandbox DataHub** | Seeded Prisma/SQLite (`prisma/dev.db`) | The `nyc-taxi` planted-freshness scenario, the `showcase-ecommerce` cross-platform lineage scenario, and a `customer_pii` PII scenario. Deterministic — same seed every fresh clone. Flip to live DataHub with one env var (see Demo Mode above). |
+| **Demo GitHub repo** | [`sodiq-code/sentinel-demo-pipeline`](https://github.com/sodiq-code/sentinel-demo-pipeline) | Real issues + draft PRs opened by Sentinel. Token scoped to `issues:write` + `pull_requests:write` on this one repo only. **Never merged** — there is no `mergePR` tool. |
+| **Demo Slack channel** | `#sentinel-incidents` (`C0BL9CQ4D5G`) | Real Block Kit triage cards posted by the Sentinel bot. Token scoped to `chat:write` on this one channel. Read-only invites available on request (DM the maintainer). |
+| **Seeded DataHub (mock)** | Seeded Prisma/SQLite (`prisma/dev.db`) | The `nyc-taxi` planted-freshness scenario, the `showcase-ecommerce` cross-platform lineage scenario, and a `customer_pii` PII scenario. Deterministic — same seed every fresh clone. Flip to live DataHub with one env var (see Demo Mode above). |
 | **Audit log** | `prisma/dev.db` → `audit_log` table + mirrored to seed `SeedAssertion`/`SeedEvent` | Every tool call, action, write-back, guardrail check is in an immutable timeline. Surfaced live in the `<AuditLogDrawer>`. |
 
-> **Why this matters for judging**: a sandbox is only "theatre" if the actions don't really happen. Sentinel's actions really happen — the issues, PRs, and Slack posts are live in the sandbox surfaces above, with scoped tokens. The only thing that's seeded is the catalog (necessarily — there's no live DataHub in the sandbox). The write-back loop is real: the post-mortem Sentinel writes in Run 1 is the post-mortem Run 2 reads.
+> **Why this matters for judging**: a demo is only "theatre" if the actions don't really happen. Sentinel's actions really happen — the issues, PRs, and Slack posts are live in the demo surfaces above, with scoped tokens. The only thing that's seeded is the catalog (necessarily — there's no live DataHub in the local environment). The write-back loop is real: the post-mortem Sentinel writes in Run 1 is the post-mortem Run 2 reads.
 
 ---
 
@@ -256,9 +256,9 @@ Every action Sentinel takes is real, against sandbox surfaces, and auditable end
 - All read APIs (`/api/agent/signals`, `/api/agent/incidents`, `/api/agent/incident/[urn]`, `/api/agent/audit/[urn]`, `/api/llm/status`, `/api/connectors/status`) return live data from the SQLite database.
 - The **"re-run with compounding context"** button runs the ReAct loop twice on the same scenario — Run 2 visibly reads Run 1's post-mortem before reasoning (the compounding-context beat).
 
-**What stays on the sandbox:** the **live agent demo** — real LLM triage, real GitHub issues, real Slack posts, real DataHub write-backs — runs identically on the sandbox link. Both surfaces run the SAME code; the only difference is the `SENTINEL_DRY_RUN` env flag (sandboxed GitHub + Slack actions on Vercel, live actions on the sandbox).
+**What stays in local dev:** the **live agent demo** — real LLM triage, real GitHub issues, real Slack posts, real DataHub write-backs — runs identically in local dev. Both surfaces run the SAME code; the only difference is the `SENTINEL_DRY_RUN` env flag (trace-mode GitHub + Slack actions on Vercel, live actions in local dev).
 
-> **Architecture note**: there is no demo/dry-run split. The dashboard always calls the real LLM and writes to the real DB. When the LLM gateway is unavailable, the orchestrator's post-loop fallback path runs gracefully. The `SENTINEL_DRY_RUN` flag controls only whether GitHub + Slack **actions** are live or sandboxed (writes to `examples/sandbox/*.log` vs real issues + posts).
+> **Architecture note**: there is no demo/dry-run split. The dashboard always calls the real LLM and writes to the real DB. When the LLM gateway is unavailable, the orchestrator's post-loop fallback path runs gracefully. The `SENTINEL_DRY_RUN` flag controls only whether GitHub + Slack **actions** are live or in trace mode (writes to `examples/trace/*.log` vs real issues + posts).
 
 ---
 
@@ -270,7 +270,7 @@ Every action Sentinel takes is real, against sandbox surfaces, and auditable end
 | 0:10–0:25 | Persona + pain | "Priya, on-call. A freshness breach just fired." |
 | 0:25–0:45 | Signal fires | DataHub UI: assertion failure on nyc-taxi |
 | 0:45–1:30 | Sentinel investigates | Console: agent calls MCP, traverses lineage, reads owner/glossary/prior post-mortem |
-| 1:30–2:00 | Sentinel acts | Sandbox repo: issue opens, PR opens (NOT merged); Slack triage posts |
+| 1:30–2:00 | Sentinel acts | Demo repo: issue opens, PR opens (NOT merged); Slack triage posts |
 | 2:00–2:20 | Governance refusal beat | Agent refuses PII-tagged asset without approval |
 | 2:20–2:50 | Sentinel writes back | Context doc + assertion + proposals appear in DataHub |
 | 2:50–3:00 | Closing slide | "Open-source. New DataHub Skill. Repo + examples/. Try it." |
@@ -282,7 +282,7 @@ Every action Sentinel takes is real, against sandbox surfaces, and auditable end
 | Component | Version | Notes |
 |---|---|---|
 | Next.js | 16.1.1 | App Router, TypeScript |
-| z-ai-web-dev-sdk | 0.0.18 | the in-sandbox LLM gateway (OpenAI-compatible, tool-calling verified) |
+| z-ai-web-dev-sdk | 0.0.18 | the local LLM gateway (OpenAI-compatible, tool-calling verified) |
 | DataHub MCP Server | 0.0.4 | pinned, called over HTTP |
 | DataHub Agent Context Kit | langchain-integration | `include_mutations=True` |
 | Prisma | 6.11.1 | SQLite client |
@@ -333,7 +333,7 @@ The moat is the **compounding context graph** — every incident an enterprise r
 
 | Threat | Mitigation |
 |---|---|
-| Agent takes a destructive action | Sandboxed tokens; no-merge policy; guardrail refusal |
+| Agent takes a destructive action | Scoped tokens; no-merge policy; guardrail refusal |
 | Agent writes incorrect metadata | Ownership/glossary are **proposed** (humans approve). Assertions are the only direct write and are reversible. |
 | Secrets leakage | `.env` out of git; gitleaks in CI; env-var-only secrets |
 | Prompt injection via DataHub metadata | Structured tool-call inputs (never free-text execution); guardrail sanitises |
@@ -361,13 +361,13 @@ The demo runs from a fresh clone in under a minute, deterministically. No Docker
 **Phase 0 — Foundation & Repo hygiene** ✅ complete.
 **Phase 1 — DataHub Mock + Seed** ✅ complete.
 **Phase 2 — Orchestrator + ReAct Loop** ✅ complete — inject a seed signal and the agent (gpt-4o via the z-ai gateway) runs the full closed loop: investigate with the MCP read tools, traverse lineage, read prior post-mortems, open a GitHub issue, post a Slack triage, and write a post-mortem back to DataHub. A completion gate refuses premature stops until the mandatory write-back tools are called. The reasoning stream is visible live in the console (PDF §5.3).
-**Phase 3 — Action Connectors + Guardrails** ✅ complete — the Phase 2 action stubs are replaced with real GitHub (`action.github_open_issue`, `action.github_open_pr` — never merges) and Slack (`action.slack_post_triage`) connectors against the sandbox repo `sodiq-code/sentinel-demo-pipeline` and channel `C0BL9CQ4D5G`. `SENTINEL_DRY_RUN=true` (default) routes both connectors to `examples/sandbox/*.log`; flip to `false` to file live issues + post live Slack cards. A **code-level guardrail** (`src/lib/guardrail/`) now enforces the PDF §9.3.5 no-merge policy, PII refusal (reads DataHub governance tags via MCP `get_entities`), and surfaces a human-approval gate for ownership / glossary / tags / description proposals. The guardrail runs BEFORE every `action.*` and `ack.save_document` tool call — the LLM cannot bypass it by rephrasing. Refusals + approval cards render live in the console.
+**Phase 3 — Action Connectors + Guardrails** ✅ complete — the Phase 2 action stubs are replaced with real GitHub (`action.github_open_issue`, `action.github_open_pr` — never merges) and Slack (`action.slack_post_triage`) connectors against the demo repo `sodiq-code/sentinel-demo-pipeline` and channel `C0BL9CQ4D5G`. `SENTINEL_DRY_RUN=true` (default) routes both connectors to `examples/trace/*.log`; flip to `false` to file live issues + post live Slack cards. A **code-level guardrail** (`src/lib/guardrail/`) now enforces the PDF §9.3.5 no-merge policy, PII refusal (reads DataHub governance tags via MCP `get_entities`), and surfaces a human-approval gate for ownership / glossary / tags / description proposals. The guardrail runs BEFORE every `action.*` and `ack.save_document` tool call — the LLM cannot bypass it by rephrasing. Refusals + approval cards render live in the console.
 
 **Phase 4 — Write-Back + Audit Log** ✅ complete — the orchestrator's post-loop now drives a **dual write-back path**: Agent Context Kit primary (`ack.save_document`, `ack.add_glossary_terms`, `ack.add_owners`, `ack.create_assertion`) with **REST ingestion fallback** (`ingestProposal` / `patchEntity` / `createAssertion`) when the Context Kit is unavailable. The path taken is logged per-write-back to the audit log. The audit log is mirrored to DataHub as `SeedAssertion` / `SeedEvent` rows (the live-mode equivalent is DataHub Assertions/Events). New API route `/api/agent/audit/[urn]` returns the full lifecycle + reasoning trace for an incident. The console now renders a `<WriteBackPanel>` (per-card path/status/URN/payload + re-attempt indicator) and an `<AuditTimeline>` inside the `<AuditLogDrawer>` (filter tabs: All / Lifecycle / Write-backs / Errors; mirror badge showing how many events were mirrored to seed).
 
 **Phase 5 — Incident Console UI (the demo surface)** ✅ complete — all 9 PDF §11.1 console components now exist: `<IncidentHeader>` (Priya persona + failing asset + assertion failure reason, fetched live from `/api/datahub/asset`), `<LineageGraph>` (SVG renderer with real-time traversal highlight — nodes laid out by degree, edges as cubic béziers, traversed URNs pulse amber as the agent calls `mcp.get_lineage`), `<ReasoningStream>`, `<ActionsPanel>`, `<GuardrailPanel>`, `<WriteBackPanel>`, `<AuditLogDrawer>`, `<DemoControlBar>` (sticky bottom, with the new **"Replay loop (compounding demo)"** button), sticky `<Footer>`. The compounding beat is engineered in: Run 2 visibly reads Run 1's post-mortem via `mcp.search_documents` → an emerald "prior incident found: <title> · <urn>" highlight card surfaces. Works even when the LLM gateway is throttled (the orchestrator's fallback post-mortem path + trace-based detection keep the compounding beat visible).
 
-**Phase 6 — DataHub Skill + RFC + README** ✅ complete — the two bonus artefacts are finalised: (1) [`skill/incident-triage/`](./skill/incident-triage/) — a new DataHub Skill following the `datahub-skills` SKILL.md format (`SKILL.md` + `manifest.json` + `references/mcp-tools.md` documenting all 19 MCP tools + `references/datahub-cli-reference.md`), installable via `npx skills add`, compatible with Claude Code / Cursor / Codex / Copilot / Gemini; (2) [`rfc/closed-loop-metadata-agents.md`](./rfc/closed-loop-metadata-agents.md) — the generalisable closed-loop-metadata-agent pattern (observe → ground → reason → act → write back → await feedback → update), with a generalisation table (incidents / ML audit / compliance / code generation) and the five properties (Grounded, Governed, Audited, Compounding, Reproducible). This README is the third Phase 6 deliverable: persona+pain opener, beat-by-beat judge mapping, Live Sandbox section, Business model, Reproducibility section, and the full Phase 0–6 status.
+**Phase 6 — DataHub Skill + RFC + README** ✅ complete — the two bonus artefacts are finalised: (1) [`skill/incident-triage/`](./skill/incident-triage/) — a new DataHub Skill following the `datahub-skills` SKILL.md format (`SKILL.md` + `manifest.json` + `references/mcp-tools.md` documenting all 19 MCP tools + `references/datahub-cli-reference.md`), installable via `npx skills add`, compatible with Claude Code / Cursor / Codex / Copilot / Gemini; (2) [`rfc/closed-loop-metadata-agents.md`](./rfc/closed-loop-metadata-agents.md) — the generalisable closed-loop-metadata-agent pattern (observe → ground → reason → act → write back → await feedback → update), with a generalisation table (incidents / ML audit / compliance / code generation) and the five properties (Grounded, Governed, Audited, Compounding, Reproducible). This README is the third Phase 6 deliverable: persona+pain opener, beat-by-beat judge mapping, Live demo section, Business model, Reproducibility section, and the full Phase 0–6 status.
 
 **Phase 7 — CI + Hardening + Submission Prep** ✅ complete — the `.github/workflows/ci.yml` `integration-demo` job is now live (was a Phase 0 stub). It pushes the Prisma schema + seeds, starts `bun run dev`, POSTs `/api/agent/run` with the nyc-taxi signal, and asserts: (a) ≥1 `WriteBack` row with `kind='context_doc'` (the post-mortem); (b) `mirroredCount ≥ 1` (the audit mirror created SeedAssertion rows); (c) the incident reached a terminal state (`resolved` or `failed`). The test passes even when the LLM gateway is unreachable in CI — the orchestrator's fallback post-mortem path runs and the write-back still happens. gitleaks secret scan runs on every push + PR. The Apache 2.0 `LICENSE` is at the repo root (visible in the GitHub About box).
 
@@ -397,7 +397,7 @@ All tunables via env: `LLM_RATE_LIMIT_MS`, `LLM_CIRCUIT_THRESHOLD`, `LLM_CIRCUIT
 |---|---|
 | `github.ts` | `openIssue` (POST /repos/{repo}/issues), `openPR` (POST /repos/{repo}/pulls — no merge method exposed), `getRepoInfo`, `githubStatus`. Honors `SENTINEL_DRY_RUN`. |
 | `slack.ts` | `postTriage` (Slack Web API `chat.postMessage` with Block Kit triage card), `slackStatus`. Honors `SENTINEL_DRY_RUN`. |
-| `_sandbox.ts` | Shared helpers: `requireEnv`, `isDryRun`, `appendSandboxLog`, `readSandboxLog`. |
+| `_trace.ts` | Shared helpers: `requireEnv`, `isDryRun`, `appendTraceLog`, `readTraceLog`. |
 | `index.ts` | Barrel. |
 
 ### Guardrail (`src/lib/guardrail/`)
@@ -417,32 +417,32 @@ All tunables via env: `LLM_RATE_LIMIT_MS`, `LLM_CIRCUIT_THRESHOLD`, `LLM_CIRCUIT
 | `/api/guardrail/pending` | GET | List pending + decided approvals (query: `?incidentUrn=`, `?status=`, `?limit=`). |
 | `/api/guardrail/approve` | POST | Mark an approval as approved (body: `{ id, approverUrn }`). |
 | `/api/guardrail/deny` | POST | Mark an approval as denied. |
-| `/api/connectors/status` | GET | Live/sandbox + reachability for GitHub + Slack (used by the DemoControlBar chips). |
+| `/api/connectors/status` | GET | Live/trace + reachability for GitHub + Slack (used by the DemoControlBar chips). |
 | `/api/connectors/test` | POST | Open a test GitHub issue + post a test Slack card (honors `SENTINEL_DRY_RUN` or `{ dryRun }` body override). |
-| `/api/connectors/sandbox-log` | GET | Last N sandbox JSONL entries (query: `?kind=github|slack`, `?limit=`). |
+| `/api/connectors/trace-log` | GET | Last N trace JSONL entries (query: `?kind=github|slack`, `?limit=`). |
 | `/api/llm/status` | GET | Phase 3 resilience: provider + circuit state + failover readiness (polled by the header `Circuit` chip). |
 
 ### Demo control bar
 
 The page renders a sticky bottom bar with:
-- A live/sandbox mode chip (reads `SENTINEL_DRY_RUN`).
+- A live/trace mode chip (reads `SENTINEL_DRY_RUN`).
 - A "test connectors" button (calls `/api/connectors/test`).
 - The GitHub + Slack connector rows show reachability + token presence.
 
 ### Phase 3 LLM resilience layer (`src/lib/agent/llm.ts`)
 
-The LLM client now hardens against the shared sandbox gateway's 429 throttle. PDF §9.5.4 (retry with exponential backoff) + §11.3 (contingency plan — surface throttle state, don't mask it). All knobs are env-tunable and default to safe-for-demo values.
+The LLM client now hardens against the shared local LLM gateway's 429 throttle. PDF §9.5.4 (retry with exponential backoff) + §11.3 (contingency plan — surface throttle state, don't mask it). All knobs are env-tunable and default to safe-for-demo values.
 
 | Layer | Class | Behaviour | Default |
 |---|---|---|---|
-| Pace limiter | `TokenBucket` | 1 token / `LLM_RATE_LIMIT_MS` per provider. The agent paces itself instead of bursting into the shared sandbox 429. | 6s |
+| Pace limiter | `TokenBucket` | 1 token / `LLM_RATE_LIMIT_MS` per provider. The agent paces itself instead of bursting into the shared local LLM gateway's 429. | 6s |
 | 429 backoff | per-attempt | `LLM_RATE_LIMIT_BACKOFF_MS * 2^(attempt-1)`, capped at `LLM_RATE_LIMIT_BACKOFF_MAX_MS`, with ±25% jitter. Distinct from the network/5xx curve (which keeps the original 800ms base). | 5s → 10s → 20s |
 | Circuit breaker | `CircuitBreaker` | Opens after `LLM_CIRCUIT_THRESHOLD` consecutive 429/5xx, stays open for `LLM_CIRCUIT_COOLDOWN_MS`. While open, calls throw `CircuitOpenError` immediately — no retry burn. | threshold 3, cooldown 60s |
-| Provider failover | `FailoverLlmClient` | When the primary's circuit is open AND `LLM_FAILOVER_ENABLED=true` AND a NVIDIA key is present, the dormant `NvidiaNimLlmClient` takes over. In-sandbox the NVIDIA key is dead (401), so the failover surfaces a clear `CircuitOpenError` instead of masking it — the orchestrator's existing post-loop fallback post-mortem path runs gracefully. On a real deployment with a fresh NVIDIA key, the agent transparently switches providers and continues. | on (when key present) |
+| Provider failover | `FailoverLlmClient` | When the primary's circuit is open AND `LLM_FAILOVER_ENABLED=true` AND a NVIDIA key is present, the dormant `NvidiaNimLlmClient` takes over. In local dev the NVIDIA key is dead (401), so the failover surfaces a clear `CircuitOpenError` instead of masking it — the orchestrator's existing post-loop fallback post-mortem path runs gracefully. On a real deployment with a fresh NVIDIA key, the agent transparently switches providers and continues. | on (when key present) |
 
 The header now shows a `Circuit` chip (emerald `Healthy` / rose pulsing `Throttled {N}s` with cooldown countdown / slate `…`). The state is polled via `/api/llm/status` — every 1s while the circuit is open (so the operator sees the cooldown tick down), every 20s when healthy.
 
-**End-to-end behaviour when z-ai is throttled (in-sandbox, no valid NVIDIA key):**
+**End-to-end behaviour when z-ai is throttled (in local dev, no valid NVIDIA key):**
 1. First 3 calls return 429 → circuit opens, throws `CircuitOpenError`.
 2. `FailoverLlmClient` tries NVIDIA → NVIDIA returns 401 → re-thrown as `CircuitOpenError` with both errors in the message.
 3. Orchestrator catches it, emits an `error` step ("z-ai circuit open for Nms..."), runs the existing fallback post-mortem path (inline PII check → write the compounding artefact to DataHub via the Agent Context Kit, or refuse with the same PII tag the guardrail would surface).

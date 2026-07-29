@@ -3,7 +3,7 @@
 //
 // This is the heart of the Phase 3 guardrail. The orchestrator calls
 // `checkBeforeExecute(toolName, args, ctx)` BEFORE every tool_call. The hook:
-//   1. For action.* tools → no-merge check, allow (the sandbox + dry-run
+//   1. For action.* tools → no-merge check, allow (the trace + dry-run
 //      toggle are the demo's approval surface).
 //   2. For ack.save_document → async PII check on the assetUrn (reads
 //      governance tags via MCP `get_entities`). If PII: refuse + persist

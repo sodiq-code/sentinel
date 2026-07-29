@@ -4,7 +4,7 @@
 // Body (optional):
 //   { dryRun?: bool } — override SENTINEL_DRY_RUN for this test call only.
 //
-// Honors SENTINEL_DRY_RUN: if true, writes to the sandbox JSONL logs only.
+// Honors SENTINEL_DRY_RUN: if true, writes to the trace JSONL logs only.
 // If false, opens a LIVE issue + posts a LIVE Slack message. The test
 // artifacts are tagged with the `sentinel-test` label so the operator can
 // identify + clean them up.
@@ -64,13 +64,13 @@ export async function POST(req: Request) {
         repo: issue.repo,
         number: issue.number,
         url: issue.url,
-        sandbox: issue.sandbox,
+        trace: issue.trace,
       },
       slack: {
         channel: slack.channel,
         ts: slack.ts,
         url: slack.url,
-        sandbox: slack.sandbox,
+        trace: slack.trace,
       },
     })
   } catch (err) {

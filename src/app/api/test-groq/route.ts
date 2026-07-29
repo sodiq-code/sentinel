@@ -2,8 +2,8 @@
 // Calls GroqLlmClient directly with a simple prompt, returns the raw
 // completion + token usage. No DB, no orchestrator — just the LLM call.
 // This proves the GROQ_API_KEY works from Vercel's US region (where
-// serverless functions run), bypassing the geo-block that affects this
-// sandbox's Hong Kong IP.
+// serverless functions run), bypassing the geo-block that affects some
+// non-US build environments.
 
 import { NextResponse } from 'next/server'
 import { getLlm } from '@/lib/agent/llm'

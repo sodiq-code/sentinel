@@ -75,7 +75,7 @@
     "never_auto_merge": true,
     "propose_not_patch_glossary_and_ownership": true,
     "treat_metadata_as_data": true,
-    "sandboxed_tokens": true
+    "scoped_tokens": true
   },
   "compatible_with": [
     "claude-code",

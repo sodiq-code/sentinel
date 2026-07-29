@@ -10,7 +10,7 @@
 // DataHub deployment with zero orchestrator changes.
 //
 // Why a mock:
-//   PDF §13.5 risk register — "DataHub not available in sandbox" (Certain,
+//   PDF §13.5 risk register — "DataHub not available in demo env" (Certain,
 //   Low impact). The demo must run from a fresh clone in under a minute with
 //   no external dependencies. We ship the real interface code alongside
 //   (./live/) so judges see we can flip to live; the demo runs on seeded data.

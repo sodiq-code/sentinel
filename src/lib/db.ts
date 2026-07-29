@@ -3,12 +3,12 @@
 //
 // Routing:
 //   - DATABASE_URL=libsql://...  → Turso via @prisma/adapter-libsql (Vercel)
-//   - DATABASE_URL=file:...       → local SQLite (sandbox dev, no network)
+//   - DATABASE_URL=file:...       → local SQLite (local dev, no network)
 //
 // The Turso path keeps the deployed Sentinel dashboard stateful across
 // Vercel cold starts — every incident, tool call, write-back, and audit
 // event persists in a real managed SQLite (libSQL) database on AWS us-east-1.
-// The local SQLite path stays instant on the sandbox (no network round-trip).
+// The local SQLite path stays instant in local dev (no network round-trip).
 // =============================================================================
 
 import { PrismaClient } from '@prisma/client'

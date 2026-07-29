@@ -66,8 +66,4 @@ export async function readTraceLog(
   }
 }
 
-// Backward-compat aliases (deprecated; will be removed in a follow-up).
-// Kept so any external callers (e.g. scripts) keep working during the rename.
-export const sandboxLogPath = traceLogPath
-export const appendSandboxLog = appendTraceLog
-export const readSandboxLog = readTraceLog
+

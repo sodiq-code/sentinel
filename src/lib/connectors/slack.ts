@@ -4,8 +4,8 @@
 // PDF §10.3 Phase 3 spec:
 //   postTriage(channel, summary) — Slack Web API `chat.postMessage` with a
 //   structured, scannable triage card (3 bullets — what failed, who is
-//   affected, what on-call should do). Sandbox mode writes JSONL to
-//   `examples/sandbox/slack-posts.log`.
+//   affected, what on-call should do). Trace mode writes JSONL to
+//   `examples/trace/slack-posts.log`.
 //
 // Token scope (PDF §10.3): a single bot token scoped to one channel
 // (chat:write + the bot's user identity). The bot does NOT need
@@ -16,7 +16,7 @@
 // UI as part of <ActionsPanel>.
 // =============================================================================
 
-import { appendSandboxLog, isDryRun, requireEnv } from './_sandbox'
+import { appendTraceLog, isDryRun, requireEnv } from './_trace'
 
 const SLACK_API = 'https://slack.com/api'
 
@@ -36,12 +36,13 @@ export interface SlackPostResult {
   channel: string
   ts: string | null
   url: string
-  sandbox: boolean
+  /** True when the action was logged to a trace file instead of hitting the live API. */
+  trace: boolean
   ok: boolean
 }
 
 // ---------------------------------------------------------------------------
-// Slack auth — used by /api/connectors/status for the live/sandbox chip.
+// Slack auth — used by /api/connectors/status for the live/trace chip.
 // ---------------------------------------------------------------------------
 
 export function slackToken(): string | null {
@@ -94,7 +95,7 @@ export async function postTriage(input: SlackTriageInput): Promise<SlackPostResu
   const text = `${input.title}\n${input.bullets.map((b) => `• ${b}`).join('\n')}`
 
   if (isDryRun()) {
-    const sandboxRec = {
+    const traceRec = {
       kind: 'slack.postMessage',
       channel,
       title: input.title,
@@ -103,13 +104,13 @@ export async function postTriage(input: SlackTriageInput): Promise<SlackPostResu
       text,
       ts,
     }
-    await appendSandboxLog('slack', sandboxRec)
+    await appendTraceLog('slack', traceRec)
     return {
       kind: 'slack.postMessage',
       channel,
       ts: null,
-      url: `sandbox://slack/${channel}/${Date.now()}`,
-      sandbox: true,
+      url: `trace://slack/${channel}/${Date.now()}`,
+      trace: true,
       ok: true,
     }
   }
@@ -140,7 +141,7 @@ export async function postTriage(input: SlackTriageInput): Promise<SlackPostResu
     channel: chan,
     ts: body.ts ?? null,
     url: cleanTs ? `https://slack.com/archives/${chan}/${cleanTs}` : '',
-    sandbox: false,
+    trace: false,
     ok: true,
   }
 }
@@ -150,7 +151,7 @@ export async function postTriage(input: SlackTriageInput): Promise<SlackPostResu
 // ---------------------------------------------------------------------------
 
 export async function slackStatus(): Promise<{
-  mode: 'live' | 'sandbox'
+  mode: 'live' | 'trace'
   channel: string
   tokenPresent: boolean
   reachable: boolean
@@ -161,7 +162,7 @@ export async function slackStatus(): Promise<{
   const channel = defaultChannel()
   if (isDryRun()) {
     return {
-      mode: 'sandbox',
+      mode: 'trace',
       channel,
       tokenPresent: Boolean(slackToken()),
       reachable: false,

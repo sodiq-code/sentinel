@@ -165,7 +165,7 @@
           "issueNumber": 42,
           "url": "https://github.com/sodiq-code/sentinel-demo-pipeline/issues/42",
           "repo": "sodiq-code/sentinel-demo-pipeline",
-          "sandbox": true
+          "trace": true
         },
         "ts": "2026-07-28T03:14:13.000Z"
       },
@@ -187,7 +187,7 @@
           "ok": true,
           "channel": "C0BL9CQ4D5G",
           "ts": "1753685655.000123",
-          "sandbox": true
+          "trace": true
         },
         "ts": "2026-07-28T03:14:15.000Z"
       },

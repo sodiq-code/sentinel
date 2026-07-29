@@ -120,11 +120,11 @@ export const DirectWriteAllowlistRule: GuardrailRule = {
 
 // ---------------------------------------------------------------------------
 // Rule 3: Action approval gate. The action.* tools (github.openIssue,
-// github.openPR, slack.postTriage) target external systems. In demo mode the
-// sandbox absorbs the side effect (sandbox JSONL log) — but they are still
+// github.openPR, slack.postTriage) target external systems. In trace mode the
+// trace log absorbs the side effect (trace JSONL log) — but they are still
 // surfaced for human review per the PDF §11.1 beat 2:00–2:20 governance
-// refusal beat. For the demo we let them through (the sandbox is the demo's
-// approval surface) but mark the audit. In a non-demo deployment this rule
+// refusal beat. For the demo we let them through (the trace log is the demo's
+// approvals surface) but mark the audit. In a non-demo deployment this rule
 // returns `needs_approval`.
 // ---------------------------------------------------------------------------
 
@@ -134,7 +134,7 @@ export const ActionApprovalGateRule: GuardrailRule = {
     'action.* tools (github + slack) target external systems. Logged by default; surfaces a proposal card in the UI. (PDF §11.1 beat 2:00–2:20)',
   async check(toolName, args) {
     if (!toolName.startsWith('action.')) return null
-    // Allow action tools — the sandbox + dry-run toggle are the demo's approval
+    // Allow action tools — the trace + dry-run toggle are the demo's approval
     // surface. We do NOT block them, but the orchestrator records the Action row
     // + the connector records the side effect, both visible in the UI.
     return null

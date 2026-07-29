@@ -6,11 +6,11 @@
 //   - openPR(repo, title, body, branch, base) — POST /repos/{repo}/pulls
 //   - **NEVER merges** a PR (PDF §9.3.5 no-merge policy). There is no `merge`
 //     method on this connector. The PR is always left OPEN for human review.
-//   - Sandbox mode (SENTINEL_DRY_RUN=true): writes a JSON line to
-//     `examples/sandbox/github-actions.log`, returns a sandbox URL — no
+//   - Trace mode (SENTINEL_DRY_RUN=true): writes a JSON line to
+//     `examples/trace/github-actions.log`, returns a trace URL — no
 //     GitHub API call is made. This is the dry-run toggle (PDF §11.3).
 //
-// Token scope (PDF §10.3): a single PAT scoped to the sandbox demo repo
+// Token scope (PDF §10.3): a single PAT scoped to the demo repo
 // with `issues:write` + `pull_requests:write` only. We never ask for
 // `repo:admin` or `contents:write` — so we cannot push branches, cannot
 // merge, cannot delete.
@@ -19,7 +19,7 @@
 // call-time, never logged, never sent to client.
 // =============================================================================
 
-import { appendSandboxLog, isDryRun, requireEnv } from './_sandbox'
+import { appendTraceLog, isDryRun, requireEnv } from './_trace'
 
 const GITHUB_API = 'https://api.github.com'
 
@@ -37,7 +37,8 @@ export interface GitHubIssueResult {
   number: number
   url: string
   state: 'open'
-  sandbox: boolean
+  /** True when the action was logged to a trace file instead of hitting the live API. */
+  trace: boolean
   ts: string
 }
 
@@ -59,12 +60,13 @@ export interface GitHubPrResult {
   state: 'open'
   /** Sentinel NEVER merges — surfaced in UI as a NOT MERGED badge (PDF §9.3.5). */
   mergeable: boolean | null
-  sandbox: boolean
+  /** True when the action was logged to a trace file instead of hitting the live API. */
+  trace: boolean
   ts: string
 }
 
 export interface GitHubConnectorStatus {
-  mode: 'live' | 'sandbox'
+  mode: 'live' | 'trace'
   repo: string
   dryRun: boolean
   tokenPresent: boolean
@@ -128,7 +130,7 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
   const labels = (input.labels || []).filter(Boolean)
 
   if (isDryRun()) {
-    const sandboxRec = {
+    const traceRec = {
       kind: 'github.openIssue',
       repo,
       title: input.title,
@@ -136,14 +138,14 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
       labels,
       ts,
     }
-    await appendSandboxLog('github', sandboxRec)
+    await appendTraceLog('github', traceRec)
     return {
       kind: 'github.openIssue',
       repo,
       number: -1,
-      url: `sandbox://github/${repo}/issues/${Date.now()}`,
+      url: `trace://github/${repo}/issues/${Date.now()}`,
       state: 'open',
-      sandbox: true,
+      trace: true,
       ts,
     }
   }
@@ -171,7 +173,7 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
     number: issue.number,
     url: issue.html_url,
     state: 'open',
-    sandbox: false,
+    trace: false,
     ts,
   }
 }
@@ -187,7 +189,7 @@ export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
   const base = input.base || 'main'
 
   if (isDryRun()) {
-    const sandboxRec = {
+    const traceRec = {
       kind: 'github.openPR',
       repo,
       title: input.title,
@@ -197,15 +199,15 @@ export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
       neverMerged: true,
       ts,
     }
-    await appendSandboxLog('github', sandboxRec)
+    await appendTraceLog('github', traceRec)
     return {
       kind: 'github.openPR',
       repo,
       number: -1,
-      url: `sandbox://github/${repo}/pulls/${Date.now()}`,
+      url: `trace://github/${repo}/pulls/${Date.now()}`,
       state: 'open',
       mergeable: null,
-      sandbox: true,
+      trace: true,
       ts,
     }
   }
@@ -238,7 +240,7 @@ export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
     url: pr.html_url,
     state: 'open',
     mergeable: pr.mergeable,
-    sandbox: false,
+    trace: false,
     ts,
   }
 }
@@ -288,7 +290,7 @@ export async function githubStatus(): Promise<GitHubConnectorStatus> {
   const dryRun = isDryRun()
   const tokenPresent = Boolean(getToken())
   if (dryRun) {
-    return { mode: 'sandbox', repo, dryRun: true, tokenPresent, reachable: false }
+    return { mode: 'trace', repo, dryRun: true, tokenPresent, reachable: false }
   }
   if (!tokenPresent) {
     return { mode: 'live', repo, dryRun: false, tokenPresent: false, reachable: false, error: 'GITHUB_TOKEN not set' }

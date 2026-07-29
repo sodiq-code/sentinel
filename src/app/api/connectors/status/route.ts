@@ -5,13 +5,13 @@
 //   slack:   { mode, channel, tokenPresent, reachable, botUser, team, error }
 //   dryRun:  bool
 //
-// PDF §11.3 contingency plan: the demo shows live/sandbox chips so the
+// PDF §11.3 contingency plan: the demo shows live/trace chips so the
 // operator knows whether the next "Inject & run" will write to GitHub +
-// Slack or to the sandbox JSONL log.
+// Slack or to the trace JSONL log.
 import { NextResponse } from 'next/server'
 import { githubStatus } from '@/lib/connectors/github'
 import { slackStatus } from '@/lib/connectors/slack'
-import { isDryRun } from '@/lib/connectors/_sandbox'
+import { isDryRun } from '@/lib/connectors/_trace'
 import { isPreviewMode, previewFixture } from '@/lib/demo-mode'
 
 export const dynamic = 'force-dynamic'
