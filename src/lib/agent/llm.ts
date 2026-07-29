@@ -645,6 +645,92 @@ class GroqLlmClient implements ResilientLlmClient {
     return this.circuit.snapshot()
   }
 
+  /**
+   * One LLM call against a single Groq model, with retry/backoff but WITHOUT
+   * touching the shared circuit breaker. The circuit is only updated by the
+   * outer `complete()` orchestrator so a 429 on the heavy 70b model doesn't
+   * burn a circuit slot when the light 8b model can still serve the request.
+   *
+   * Returns a discriminated union so the caller can tell "rate limited, try
+   * another model" apart from "hard error, give up".
+   */
+  private async callModel(
+    model: string,
+    body: Record<string, unknown>,
+    apiKey: string,
+  ): Promise<
+    | { ok: true; completion: LlmCompletion }
+    | { ok: false; rateLimited: boolean; status: number; retryAfterMs: number | null; error: Error }
+  > {
+    let lastErr: Error | null = null
+    let sawRateLimit = false
+    let retryAfterMs: number | null = null
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        // Prefer the provider's Retry-After hint (capped at 15s to stay
+        // under the serverless function timeout). Fall back to the
+        // exponential curve with jitter.
+        const baseBackoff = retryAfterMs
+          ?? (sawRateLimit
+            ? Math.min(
+                RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                RATE_LIMIT_BACKOFF_MAX_MS,
+              )
+            : INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+        await sleep(jitter(baseBackoff))
+        retryAfterMs = null
+      }
+      await this.rateLimiter.acquire()
+      let res: Response
+      try {
+        res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ ...body, model }),
+        })
+      } catch (err) {
+        const e = err instanceof Error ? err : new Error(String(err))
+        lastErr = e
+        // Network error — let the outer orchestrator decide. Treat as a
+        // transient (not rate-limited) so the fallback model gets a turn.
+        if (attempt < MAX_RETRIES) continue
+        return { ok: false, rateLimited: false, status: 0, retryAfterMs: null, error: e }
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        if (res.status === 429) {
+          sawRateLimit = true
+          retryAfterMs = readRetryAfterMs(res.headers, 15_000)
+        }
+        lastErr = new Error(`LLM ${model} HTTP ${res.status}: ${text.slice(0, 300)}`)
+        // If we got rate-limited and still have retries, retry the SAME model
+        // after backoff. If we're out of retries OR it's a non-retryable
+        // error, bubble up so the outer orchestrator can try the fallback.
+        if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) continue
+        return {
+          ok: false,
+          rateLimited: res.status === 429,
+          status: res.status,
+          retryAfterMs,
+          error: lastErr,
+        }
+      }
+      // Success.
+      return { ok: true, completion: mapCompletion((await res.json()) as OpenAiResponse) }
+    }
+    return {
+      ok: false,
+      rateLimited: sawRateLimit,
+      status: 0,
+      retryAfterMs: null,
+      error: lastErr ?? new Error(`Groq ${model} call exhausted retries`),
+    }
+  }
+
   async complete(input: {
     messages: LlmMessage[]
     tools?: LlmTool[]
@@ -658,110 +744,107 @@ class GroqLlmClient implements ResilientLlmClient {
       )
     }
 
-    const model = process.env.LLM_MODEL || 'llama-3.3-70b-versatile'
+    const primaryModel = process.env.LLM_MODEL || 'llama-3.3-70b-versatile'
     const fallbackModel = process.env.LLM_FALLBACK_MODEL || 'llama-3.1-8b-instant'
     const apiKey = process.env.GROQ_API_KEY
     if (!apiKey) throw new Error('GROQ_API_KEY is not set in the environment')
 
-    const call = async (m: string): Promise<LlmCompletion> => {
-      const body = {
-        model: m,
-        messages: toWireMessages(input.messages),
-        tools: input.tools,
-        tool_choice: input.tools?.length ? 'auto' : undefined,
-        temperature: input.temperature ?? DEFAULT_TEMP,
-        max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
-        stream: false,
-      }
-      let lastErr: Error | null = null
-      let sawRateLimit = false
-      let retryAfterMs: number | null = null
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (attempt > 0) {
-          // Prefer the provider's Retry-After hint (capped at 15s to stay
-          // under the serverless function timeout). Fall back to the
-          // exponential curve with jitter.
-          const baseBackoff = retryAfterMs
-            ?? (sawRateLimit
-              ? Math.min(
-                  RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
-                  RATE_LIMIT_BACKOFF_MAX_MS,
-                )
-              : INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
-          await sleep(jitter(baseBackoff))
-          retryAfterMs = null
-        }
-        await this.rateLimiter.acquire()
-        let res: Response
-        try {
-          res = await fetch(`${GROQ_BASE_URL}/chat/completions`, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
-            },
-            body: JSON.stringify(body),
-          })
-        } catch (err) {
-          const openedNow = this.circuit.recordFailure(503)
-          const e = err instanceof Error ? err : new Error(String(err))
-          if (openedNow) {
-            throw new CircuitOpenError(
-              `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
-                `failures (last: network error: ${e.message.slice(0, 120)})`,
-            )
-          }
-          lastErr = e
-          if (attempt < MAX_RETRIES) continue
-          throw lastErr
-        }
-        if (!res.ok) {
-          const text = await res.text().catch(() => '')
-          if (res.status === 429) {
-            sawRateLimit = true
-            // Groq tells us when the per-minute rate-limit window resets.
-            // Use that as the next-attempt backoff (capped at 15s).
-            retryAfterMs = readRetryAfterMs(res.headers, 15_000)
-          }
-          const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
-          const openedNow = this.circuit.recordFailure(res.status)
-          if (openedNow) {
-            const hint = retryAfterMs ? ` (Retry-After: ${Math.round(retryAfterMs / 1000)}s)` : ''
-            throw new CircuitOpenError(
-              `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
-                `Last error: HTTP ${res.status}${hint}. Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
-            )
-          }
-          if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
-            lastErr = err
-            continue
-          }
-          throw err
-        }
-        this.circuit.recordSuccess()
-        return mapCompletion((await res.json()) as OpenAiResponse)
-      }
-      throw lastErr ?? new Error('Groq LLM call failed after retries')
+    const body = {
+      messages: toWireMessages(input.messages),
+      tools: input.tools,
+      tool_choice: input.tools?.length ? 'auto' : undefined,
+      temperature: input.temperature ?? DEFAULT_TEMP,
+      max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
+      stream: false,
     }
 
-    try {
-      return await call(model)
-    } catch (primaryErr) {
-      if (primaryErr instanceof CircuitOpenError) throw primaryErr
-      if (model === fallbackModel) throw primaryErr
-      try {
-        return await call(fallbackModel)
-      } catch (fallbackErr) {
-        if (fallbackErr instanceof CircuitOpenError) throw fallbackErr
-        const pm = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
-        const fm = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
-        throw new Error(
-          `LLM unavailable: primary '${model}' (${pm.slice(0, 160)}) and ` +
-            `fallback '${fallbackModel}' (${fm.slice(0, 160)}) both failed.`,
+    // Try the primary (heavy 70b) model first. On a 429, IMMEDIATELY try the
+    // fallback (light 8b) model WITHOUT recording a circuit failure — the
+    // fallback model has its own, much higher per-minute budget on Groq's
+    // free tier, so the request almost always still succeeds. Only when
+    // BOTH models 429 do we count one failure against the circuit breaker.
+    const primary = await this.callModel(primaryModel, body, apiKey)
+    if (primary.ok) {
+      this.circuit.recordSuccess()
+      return primary.completion
+    }
+
+    // Primary failed. If it was a rate limit (429) and we have a different
+    // fallback model, try it transparently — do NOT touch the circuit yet.
+    if (primary.rateLimited && fallbackModel !== primaryModel) {
+      const secondary = await this.callModel(fallbackModel, body, apiKey)
+      if (secondary.ok) {
+        // The fallback model served the request — treat as success and
+        // RESET the circuit's failure counter (the heavy model's 429 was
+        // a transient rate-limit, not a hard outage).
+        this.circuit.recordSuccess()
+        return secondary.completion
+      }
+      // Both models failed. If BOTH were rate-limited, this is a genuine
+      // shared-gateway throttle — record ONE failure (not two).
+      if (secondary.rateLimited) {
+        const openedNow = this.circuit.recordFailure(429)
+        if (openedNow) {
+          const hint = secondary.retryAfterMs
+            ? ` (Retry-After: ${Math.round(secondary.retryAfterMs / 1000)}s)`
+            : primary.retryAfterMs
+              ? ` (Retry-After: ${Math.round(primary.retryAfterMs / 1000)}s)`
+              : ''
+          throw new CircuitOpenError(
+            `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
+              `429/5xx (both '${primaryModel}' and '${fallbackModel}' rate-limited).` +
+              ` Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s${hint}.`,
+          )
+        }
+        throw secondary.error
+      }
+      // Fallback failed with a hard (non-429) error — record it and bubble.
+      const openedNow = this.circuit.recordFailure(secondary.status || 500)
+      if (openedNow) {
+        throw new CircuitOpenError(
+          `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+            `Last error: ${secondary.error.message.slice(0, 160)}. ` +
+            `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
         )
       }
+      throw secondary.error
     }
+
+    // Primary failed with a non-429 error. If it's a hard (non-retryable)
+    // error like 401/403, don't bother with the fallback — it'll fail the
+    // same way. Only try fallback on 5xx/network errors.
+    if (primary.status >= 500 || primary.status === 0) {
+      try {
+        const secondary = await this.callModel(fallbackModel, body, apiKey)
+        if (secondary.ok) {
+          this.circuit.recordSuccess()
+          return secondary.completion
+        }
+        const openedNow = this.circuit.recordFailure(secondary.status || primary.status || 500)
+        if (openedNow) {
+          throw new CircuitOpenError(
+            `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx ` +
+              `(primary ${primaryModel} HTTP ${primary.status}, fallback ${fallbackModel} HTTP ${secondary.status}). ` +
+              `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
+          )
+        }
+        throw secondary.error
+      } catch (err) {
+        if (err instanceof CircuitOpenError) throw err
+        // Fall through to throw the primary error.
+      }
+    }
+
+    // Primary failed with a 4xx (non-429) error — record and bubble.
+    const openedNow = this.circuit.recordFailure(primary.status || 500)
+    if (openedNow) {
+      throw new CircuitOpenError(
+        `groq circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+          `Last error: ${primary.error.message.slice(0, 160)}. ` +
+          `Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
+      )
+    }
+    throw primary.error
   }
 }
 

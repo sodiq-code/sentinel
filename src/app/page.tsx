@@ -49,6 +49,7 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { Skeleton } from "@/components/ui/skeleton";
 
 // ---------------------------------------------------------------------------
 // Types (mirror the API responses)
@@ -300,6 +301,109 @@ export default function Page() {
 // ---------------------------------------------------------------------------
 // Console
 // ---------------------------------------------------------------------------
+
+// SystemClock — live UTC time, updates every second. Sits in the header to
+// give the dashboard a "live mission-control" feel. Monospace, slate-500,
+// tabular-nums so the seconds column doesn't shift width as it ticks.
+function SystemClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const time = now
+    ? now.toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: "UTC",
+        hour12: false,
+      })
+    : "--:--:--";
+  return (
+    <span
+      className="hidden lg:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 tabular-nums"
+      title="Current UTC time"
+    >
+      <Clock className="h-3 w-3 text-emerald-400" />
+      <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">UTC</span>
+      <span className="font-mono text-[11px] text-slate-300">{time}</span>
+    </span>
+  );
+}
+
+// SectionLabel — small uppercase heading with a left emerald accent bar.
+// Used by every section to give the dashboard a consistent typographic
+// hierarchy: hero > section-label > body. The ::before accent bar is in
+// emerald; the icon keeps its semantic color; the label is uppercase mono.
+function SectionLabel({
+  icon: Icon,
+  children,
+  accent = "emerald",
+  className = "",
+}: {
+  icon?: typeof Activity;
+  children: React.ReactNode;
+  accent?: "emerald" | "amber" | "rose" | "slate";
+  className?: string;
+}) {
+  const accentText =
+    accent === "amber"
+      ? "text-amber-300"
+      : accent === "rose"
+        ? "text-rose-300"
+        : accent === "slate"
+          ? "text-slate-300"
+          : "text-emerald-300";
+  const accentIcon =
+    accent === "amber"
+      ? "text-amber-400"
+      : accent === "rose"
+        ? "text-rose-400"
+        : accent === "slate"
+          ? "text-slate-400"
+          : "text-emerald-400";
+  return (
+    <h2
+      className={`sentinel-section-label text-[11px] font-mono uppercase tracking-[0.15em] ${accentText} flex items-center gap-2 ${className}`}
+    >
+      {Icon && <Icon className={`h-3.5 w-3.5 ${accentIcon}`} />}
+      <span>{children}</span>
+    </h2>
+  );
+}
+
+// Sparkline — 7-bar histogram placeholder. When `values` is empty, the bars
+// render as faint slate-700 placeholders so the card looks "live" even before
+// a run. When values are present, each bar's height is scaled to the max.
+function Sparkline({
+  values,
+  className = "",
+}: {
+  values: number[];
+  className?: string;
+}) {
+  const max = Math.max(1, ...values);
+  const hasData = values.length > 0;
+  const bars = hasData ? values : [0, 0, 0, 0, 0, 0, 0];
+  return (
+    <div className={`flex items-end gap-[3px] h-6 ${className}`} aria-hidden="true">
+      {bars.map((v, i) => (
+        <span
+          key={i}
+          className={`block w-[5px] rounded-sm transition-all duration-300 ${
+            hasData
+              ? v === 0
+                ? "bg-slate-700/40 h-[3px]"
+                : "bg-emerald-400/70 shadow-[0_0_6px_rgb(16_185_129/0.4)]"
+              : "bg-slate-700/40 h-[3px]"
+          }`}
+          style={hasData && v > 0 ? { height: `${Math.max(3, (v / max) * 100)}%` } : undefined}
+        />
+      ))}
+    </div>
+  );
+}
 
 function Console() {
   const [selectedSignalId, setSelectedSignalId] = useState<string | null>(null);
@@ -588,6 +692,7 @@ function Console() {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Operational
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
+            <SystemClock />
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "llama-3.3-70b-versatile"} mono />
             <Chip icon={Database} label="Provider" value={result?.llmProvider ?? "groq"} mono />
             <LlmCircuitChip status={llmStatus.data} />
@@ -828,11 +933,27 @@ function SignalInjector({
     "showcase-ecommerce": "border-emerald-500/40 bg-emerald-500/5",
     "pii": "border-rose-500/40 bg-rose-500/5",
   };
+  // Press Enter to run — only when a signal is selected, not already running,
+  // and the circuit isn't open. Watch for Enter on the window so it works
+  // even when the inject button isn't focused.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Enter") return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (!selectedId || running || circuitOpen) return;
+      // Don't hijack Enter if a button/link has focus (let the native click fire).
+      const tag = (document.activeElement?.tagName ?? "").toLowerCase();
+      if (tag === "button" || tag === "a") return;
+      e.preventDefault();
+      onRun();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId, running, circuitOpen, onRun]);
+
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 premium-card">
-      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
-        <Radar className="h-4 w-4 text-emerald-400" /> Inject a DataHub signal
-      </h2>
+      <SectionLabel icon={Radar} className="mb-3">Inject a DataHub signal</SectionLabel>
       {circuitOpen && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-rose-500/10 p-3 flex items-start gap-3">
           <div className="mt-0.5 h-7 w-7 rounded-md bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
@@ -856,7 +977,7 @@ function SignalInjector({
       {loading && (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-16 rounded-md sentinel-shimmer" />
+            <Skeleton key={i} className="h-16 w-full rounded-md bg-slate-800/40" />
           ))}
         </div>
       )}
@@ -867,24 +988,24 @@ function SignalInjector({
             <button
               key={s.id}
               onClick={() => onSelect(s.id)}
-              className={`text-left rounded-lg border p-3 transition-all ${
+              className={`text-left rounded-lg border p-3 min-w-0 transition-all ${
                 active
-                  ? `${scenarioColor[s.scenarioId] ?? "border-slate-700 bg-slate-800/40"} ring-1 ring-emerald-500/30`
-                  : "border-slate-800 bg-slate-900/40 hover:bg-slate-800/40"
+                  ? `${scenarioColor[s.scenarioId] ?? "border-slate-700 bg-slate-800/40"} ring-1 ring-emerald-500/30 shadow-[0_0_0_1px_rgb(16_185_129/0.1)_inset]`
+                  : "border-slate-800 bg-slate-900/40 hover:bg-slate-800/40 hover:border-slate-700"
               }`}
             >
               <div className="flex items-center gap-2 mb-1">
                 {s.scenarioId === "pii" ? (
-                  <Lock className="h-3.5 w-3.5 text-rose-400" />
+                  <Lock className="h-3.5 w-3.5 text-rose-300" />
                 ) : s.scenarioId === "showcase-ecommerce" ? (
-                  <Database className="h-3.5 w-3.5 text-emerald-400" />
+                  <Database className="h-3.5 w-3.5 text-emerald-300" />
                 ) : (
-                  <Clock className="h-3.5 w-3.5 text-amber-400" />
+                  <Clock className="h-3.5 w-3.5 text-amber-300" />
                 )}
                 <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{s.type}</span>
               </div>
-              <div className="text-sm font-semibold text-slate-100">{s.label}</div>
-              <div className="text-xs text-slate-400 mt-1 line-clamp-3">{s.description}</div>
+              <div className="text-sm font-semibold text-slate-100 line-clamp-2 leading-snug">{s.label}</div>
+              <div className="text-xs text-slate-400 mt-1 line-clamp-3 leading-relaxed break-words">{s.description}</div>
             </button>
           );
         })}
@@ -894,11 +1015,17 @@ function SignalInjector({
           type="button"
           disabled={!selectedId || running || circuitOpen}
           onClick={onRun}
-          className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 transition-all"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
           {running ? "Investigating…" : circuitOpen ? "Circuit cooling down…" : "Inject & run Sentinel"}
         </button>
+        {!running && !circuitOpen && selectedId && (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
+            <kbd className="sentinel-kbd">Enter</kbd>
+            <span>to run</span>
+          </span>
+        )}
         <span className="text-xs text-slate-500">
           {running
             ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
@@ -1698,14 +1825,53 @@ function MetricsCard({
         <Activity className="h-4 w-4 text-emerald-400" /> Live metrics
       </h2>
       <div className="grid grid-cols-2 gap-2">
-        <Stat label="Incidents" value={String(historyCount)} icon={Radar} />
-        <Stat label="Reasoning steps" value={String(result?.steps.length ?? 0)} icon={BrainCircuit} />
-        <Stat label="Prompt tokens" value={tokens ? tokens.promptTokens.toLocaleString() : "—"} icon={BookOpen} />
-        <Stat label="Completion tokens" value={tokens ? tokens.completionTokens.toLocaleString() : "—"} icon={Zap} />
-        <Stat label="Total tokens" value={total ? total.toLocaleString() : "—"} icon={Activity} highlight />
-        <Stat label="LLM model" value={result ? "gpt-4o" : "—"} icon={Database} />
+        <Stat label="Incidents" value={String(historyCount)} icon={Radar} spark={historyCount} />
+        <Stat label="Reasoning steps" value={String(result?.steps.length ?? 0)} icon={BrainCircuit} spark={result?.steps.length ?? 0} />
+        <Stat label="Prompt tokens" value={tokens ? tokens.promptTokens.toLocaleString() : "—"} icon={BookOpen} spark={tokens?.promptTokens ?? 0} />
+        <Stat label="Completion tokens" value={tokens ? tokens.completionTokens.toLocaleString() : "—"} icon={Zap} spark={tokens?.completionTokens ?? 0} />
+        <Stat label="Total tokens" value={total ? total.toLocaleString() : "—"} icon={Activity} highlight spark={total} />
+        <Stat label="LLM model" value={result?.llmModel ?? "—"} icon={Database} mono />
       </div>
     </section>
+  );
+}
+
+/**
+ * MiniSparkline — a tiny 7-bar SVG histogram that sits behind a metric value.
+ * Bars are scaled to the value (log scale so small + large values both render).
+ * When the value is 0 / null, the bars render as faint slate-700 placeholders
+ * so the card never looks "empty" — a premium "standing by" affordance.
+ */
+function MiniSparkline({ value, highlight }: { value: number; highlight?: boolean }) {
+  // Generate 7 pseudo-random bars seeded by the value so they're stable per
+  // render (no flicker). The right-most bar is always the current value's
+  // share, the others decay backward — like a recent-activity histogram.
+  const bars = Array.from({ length: 7 }, (_, i) => {
+    const seed = (value * (i + 1) * 2654435761) % 1000
+    const ratio = value > 0 ? (0.4 + (seed / 1000) * 0.6) * (1 - i * 0.08) : 0.15 + (i / 7) * 0.1
+    return Math.max(0.08, Math.min(1, ratio))
+  });
+  const accent = highlight ? "rgb(16 185 129)" : "rgb(100 116 139)";
+  const accentFade = highlight ? "rgb(16 185 129 / 0.35)" : "rgb(100 116 139 / 0.35)";
+  return (
+    <svg
+      viewBox="0 0 70 24"
+      preserveAspectRatio="none"
+      className="absolute right-2.5 top-2.5 h-6 w-[70px] opacity-70 pointer-events-none"
+      aria-hidden="true"
+    >
+      {bars.map((h, i) => (
+        <rect
+          key={i}
+          x={i * 10}
+          y={24 - h * 22 - 1}
+          width="6"
+          height={h * 22}
+          rx="1"
+          fill={value > 0 ? (i === bars.length - 1 ? accent : accentFade) : "rgb(51 65 85 / 0.4)"}
+        />
+      ))}
+    </svg>
   );
 }
 
@@ -1714,18 +1880,23 @@ function Stat({
   value,
   icon: Icon,
   highlight,
+  mono,
+  spark,
 }: {
   label: string;
   value: string;
   icon: typeof Activity;
   highlight?: boolean;
+  mono?: boolean;
+  spark?: number;
 }) {
   return (
-    <div className={`rounded-lg border p-2.5 ${highlight ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-900/40"}`}>
-      <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+    <div className={`relative overflow-hidden rounded-lg border p-2.5 ${highlight ? "border-emerald-500/30 bg-emerald-500/5" : "border-slate-800 bg-slate-900/40"}`}>
+      {spark !== undefined && <MiniSparkline value={spark} highlight={highlight} />}
+      <div className="relative flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
         <Icon className="h-3 w-3" /> {label}
       </div>
-      <div className={`mt-1 font-mono text-lg font-bold tabular-nums ${highlight ? "text-emerald-300" : "text-slate-100"}`}>{value}</div>
+      <div className={`relative mt-1 font-mono text-lg font-bold tabular-nums ${highlight ? "text-emerald-300" : "text-slate-100"} ${mono ? "text-sm truncate" : ""}`} title={value}>{value}</div>
     </div>
   );
 }
@@ -2032,16 +2203,19 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
   if (open) {
     return (
       <div
-        className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-rose-500/40 bg-rose-500/10 px-2 py-1"
-        title={`Circuit open after ${circuit?.consecutiveFailures ?? 0} consecutive 429/5xx. Sentinel fails over to NVIDIA if a key is present, otherwise the orchestrator's fallback post-mortem path runs.`}
+        className="sentinel-circuit-pulse hidden md:inline-flex items-center gap-1.5 rounded-md border border-rose-500/50 bg-rose-500/15 px-2 py-1"
+        title={`Circuit open after ${circuit?.consecutiveFailures ?? 0} consecutive 429/5xx. Sentinel fails over to NVIDIA if a key is present, otherwise the orchestrator's fallback post-mortem path runs. Cooldown resets in ${secs}s.`}
       >
         <span className="relative inline-flex h-2.5 w-2.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/60" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
         </span>
         <ShieldAlert className="h-3 w-3 text-rose-400" />
-        <span className="text-rose-300">Throttled</span>
-        <span className="text-rose-400/80 font-mono">{secs}s</span>
+        <span className="text-rose-200 font-semibold">Throttled</span>
+        <span className="inline-flex items-center gap-1 text-rose-300/90 font-mono tabular-nums">
+          <Clock className="h-2.5 w-2.5" />
+          {secs}s
+        </span>
       </div>
     );
   }
@@ -2051,6 +2225,10 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
       className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1"
       title={`LLM circuit healthy on provider '${status?.provider}'. Failover ${status?.failoverEnabled ? "armed (NVIDIA key present)" : "off"}.`}
     >
+      <span className="relative inline-flex h-2 w-2">
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/50" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+      </span>
       <ShieldCheck className="h-3 w-3 text-emerald-500" />
       <span className="text-slate-500">Circuit</span>
       <span className="text-emerald-300">Healthy</span>
