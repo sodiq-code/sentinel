@@ -8,10 +8,10 @@
 //   • TokenBucket pace limiter (default 1 req / 6s per provider) — keeps
 //     the agent from bursting into 429s and contributing to a shared-gateway
 //     throttle.
-//   • 429-specific backoff with jitter (8s → 18s → 40s ± 25%) — long enough
+//   • 429-specific backoff with jitter (8s → 15s cap) — one retry fits
 //     for the Groq free-tier per-minute rate-limit window to reset. When the
 //     provider returns a `Retry-After` header, that value is used instead
-//     (capped at 60s to stay under the serverless function timeout).
+//     (capped at 15s to stay under the Vercel Hobby 60s serverless function timeout).
 //   • CircuitBreaker — opens after 5 consecutive 429/5xx, stays open for 90s.
 //     While open, calls throw CircuitOpenError immediately (no retry burn).
 //     Threshold 5 (was 3) tolerates transient bursts; cooldown 90s (was 60s)
@@ -78,14 +78,20 @@ export type LlmProvider = 'zai' | 'nvidia' | 'groq'
 
 const DEFAULT_TEMP = Number(process.env.LLM_TEMPERATURE ?? 0)
 const DEFAULT_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? 1500)
-const MAX_RETRIES = 3
+// MAX_RETRIES = 1 (2 total attempts). On the Vercel Hobby 60s function
+// timeout, 3 retries (4 attempts) with 429 backoff eat the entire budget
+// before the agent loop runs. 1 retry gives the rate-limit window one
+// chance to reset; if still 429, the circuit opens + the orchestrator
+// marks the incident 'degraded' (partial investigation). This keeps the
+// worst-case 429 path under 25s, leaving 35s for the agent loop.
+const MAX_RETRIES = 1
 
 // General backoff (network / 5xx) — keeps the original aggressive curve.
 const INITIAL_BACKOFF_MS = 800
 
 // 429-specific backoff with jitter — long enough for the Groq free-tier
 // per-minute rate-limit window to reset. When the provider returns a
-// `Retry-After` header, that value is used instead (capped at 60s to stay
+// `Retry-After` header, that value is used instead (capped at 15s to stay
 // under the Vercel serverless function timeout).
 const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 8000)
 const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 45000)
@@ -142,11 +148,11 @@ function extractStatusFromMessage(msg: string): number | null {
 /**
  * Read the `Retry-After` header (seconds or HTTP-date) from a 429/503 response.
  * Returns the delay in ms, capped at `capMs` (to stay under the serverless
- * function timeout — Vercel Hobby max is 60s, so we cap at 35s to leave room
+ * function timeout — Vercel Hobby max is 60s, so we cap at 15s so ONE retry
  * for the actual call + remaining work). Groq sends this header on 429s to
  * indicate when the per-minute rate-limit window resets.
  */
-function readRetryAfterMs(headers: Headers, capMs: number = 35_000): number | null {
+function readRetryAfterMs(headers: Headers, capMs: number = 15_000): number | null {
   const raw = headers.get('retry-after')
   if (!raw) return null
   const asNum = Number(raw)
@@ -568,7 +574,7 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
           const text = await res.text().catch(() => '')
           if (res.status === 429) {
             sawRateLimit = true
-            retryAfterMs = readRetryAfterMs(res.headers, 35_000)
+            retryAfterMs = readRetryAfterMs(res.headers, 15_000)
           }
           const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
           const openedNow = this.circuit.recordFailure(res.status)
@@ -672,7 +678,7 @@ class GroqLlmClient implements ResilientLlmClient {
       let retryAfterMs: number | null = null
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         if (attempt > 0) {
-          // Prefer the provider's Retry-After hint (capped at 60s to stay
+          // Prefer the provider's Retry-After hint (capped at 15s to stay
           // under the serverless function timeout). Fall back to the
           // exponential curve with jitter.
           const baseBackoff = retryAfterMs
@@ -715,8 +721,8 @@ class GroqLlmClient implements ResilientLlmClient {
           if (res.status === 429) {
             sawRateLimit = true
             // Groq tells us when the per-minute rate-limit window resets.
-            // Use that as the next-attempt backoff (capped at 60s).
-            retryAfterMs = readRetryAfterMs(res.headers, 35_000)
+            // Use that as the next-attempt backoff (capped at 15s).
+            retryAfterMs = readRetryAfterMs(res.headers, 15_000)
           }
           const err = new Error(`LLM ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
           const openedNow = this.circuit.recordFailure(res.status)
