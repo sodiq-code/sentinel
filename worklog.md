@@ -1647,3 +1647,26 @@ Stage Summary:
   * Comment on issue #19 (tool-dispatcher test): https://github.com/sodiq-code/sentinel-demo-pipeline/issues/19
   * Comment on issue #26 (back-to-back test): https://github.com/sodiq-code/sentinel-demo-pipeline/issues/26
   * Comment on issue #31 (delayed-test): https://github.com/sodiq-code/sentinel-demo-pipeline/issues/31
+
+---
+Task ID: README-CONSOLIDATION-REWRITE
+Agent: orchestrator (main)
+Task: User feedback: README is too long (483 lines), too many duplicate screenshots (13 in docs/screenshots/, 6 referenced in gallery), and the post-hackathon roadmap wording is misleading (makes it sound like the Skill + RFC don't exist yet, when they ship with the repo). Also: user attached a Slack screenshot and asked if it should be in the README.
+
+Work Log:
+- Inspected the attached Slack screenshot via VLM: it's a polished shot of #sentinel_bot showing real Sentinel triage messages. Decided NOT to include it — the dashboard hero is the better single screenshot (the dashboard IS the project), and the Slack proof is already in the "Verified end-to-end" table as clickable links.
+- Compared candidate hero screenshots via VLM: dashboard-hero.png (at rest, clean), agent-running.png (mid-ReAct loop), vercel-agent-complete.png (completed run on Vercel). Chose dashboard-hero.png — it's the canonical hero view: shows the full dashboard layout (lineage graph, persona, signals, control bar) without mid-action visual noise.
+- Deleted 12 unused screenshots from docs/screenshots/, kept only dashboard-hero.png. Reduces repo bloat + eliminates the "duplicate screenshots" problem.
+- Rewrote README from scratch in a clean, standard best-practice format:
+  * BEFORE: 483 lines, 6-screenshot gallery, multiple long sections (theatrical demo arc, LLM resilience deep-dive, Phase 3 connectors deep-dive, business model section, etc.)
+  * AFTER: 198 lines (59% smaller), 1 hero screenshot, tight sections: TL;DR (1 paragraph) → What it does (3 bullets) → How it works (ASCII architecture diagram) → Quick start (4 commands) → Verified end-to-end (the live artefacts table) → Tech stack (table) → Project structure (concise tree) → Hackathon criteria mapping → Roadmap → Acknowledgements → License.
+- Fixed the post-hackathon roadmap wording (user's third question). The old wording said "Week 1-2: merge the incident-triage Skill PR; publish the RFC; write the launch blog post" — which misleadingly implied the Skill + RFC don't exist yet. The new wording splits the roadmap into two clear sections:
+  * "Shipped with this submission" — explicitly lists the incident-triage Skill (./skill/incident-triage/), the closed-loop-metadata-agents RFC (./rfc/), the live demo, the source repo, the Apache 2.0 LICENSE, and the CI workflow. All marked ✅.
+  * "Post-hackathon community work" — explicitly framed as "external community actions — the artefacts above already ship with this repo; what follows is getting them adopted beyond the hackathon." Week 1-2 is now "open a PR to merge incident-triage into datahub-project/datahub-skills; publish the RFC to the DataHub community; write the launch blog post." This makes clear that the Skill + RFC are IN the project; the post-hackathon work is the external community adoption.
+- Verified: bun run lint clean. Dev server starts, GET / returns 200. The dashboard-hero.png screenshot path (./docs/screenshots/dashboard-hero.png) renders on GitHub (GitHub serves all repo files); the 404 from the Next.js dev server is expected — Next.js only serves public/, and the README is primarily viewed on GitHub, not via the Next.js app.
+
+Stage Summary:
+- README REWRITTEN: 483 lines → 198 lines (59% smaller). Single hero screenshot (dashboard-hero.png). Standard best-practice structure: title + badges → hero → TL;DR → What it does → How it works → Quick start → Verified end-to-end → Tech stack → Project structure → Hackathon criteria → Roadmap → Acknowledgements → License.
+- SCREENSHOTS CONSOLIDATED: 13 → 1 (dashboard-hero.png). The other 12 deleted. No duplicate screenshots. The Slack screenshot the user attached was NOT added — the dashboard hero is the better single image, and the Slack proof is already in the "Verified end-to-end" table as clickable links.
+- ROADMAP FIXED: split into "Shipped with this submission" (Skill + RFC + live demo + LICENSE + CI, all ✅) and "Post-hackathon community work" (external adoption actions — PR into datahub-project/datahub-skills, RFC publication, launch blog post). The user's concern was valid: the old wording made it sound like the Skill + RFC didn't exist yet. They do — they ship with the repo. The post-hackathon work is the external community adoption, not the artefacts themselves.
+- Standing constraints respected: NO cron jobs. Groq provider code intact. ONE LLM provider default per environment. No indigo/blue. Apache 2.0.
