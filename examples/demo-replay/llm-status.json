@@ -1,12 +1,18 @@
 {
-  "provider": "gemini",
-  "model": "gemini-2.0-flash",
+  "provider": "groq",
+  "model": "llama-3.3-70b-versatile",
   "failoverEnabled": true,
+  "fallbackProvider": "groq",
   "hasNvidiaKey": false,
+  "hasGeminiKey": false,
   "hasGroqKey": true,
+  "hasZaiKey": true,
   "circuit": {
     "isOpen": false,
     "consecutiveFailures": 0,
-    "msUntilReset": 0
-  }
+    "msUntilReset": 0,
+    "lastStatus": 0,
+    "lastOpenedAt": 0
+  },
+  "fallbackCircuit": null
 }

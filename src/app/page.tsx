@@ -344,6 +344,11 @@ function publicProviderName(p: string | null | undefined): string {
   return p;
 }
 
+// Module-level boot guard. Survives component remounts (Fast Refresh, router
+// re-renders) because React never re-evaluates module scope. Resets only on a
+// full page reload — which is exactly when we WANT the boot sequence to reseed.
+let bootSequenceSeeded = false;
+
 export default function Page() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -656,12 +661,20 @@ function Console() {
   // via publicProviderName() (module-scope) so the system log stays aligned
   // with the README.
   useEffect(() => {
-    // Boot sequence — uses the public provider names (Gemini→Groq) per the
-    // README story. The actual runtime provider may differ in sandbox.
+    if (bootSequenceSeeded) return;
+    bootSequenceSeeded = true;
+    // Boot sequence — reflects the ACTUAL configured LLM provider (Groq by
+    // default) so the system log never misrepresents the runtime to judges.
+    const provider = publicProviderName(llmStatus.data?.provider) ?? "groq";
+    const fb = publicProviderName(llmStatus.data?.fallbackProvider);
+    const failover = llmStatus.data?.failoverEnabled && fb && fb !== provider;
+    const providerLine = failover
+      ? `LLM provider: ${provider} (primary) → ${fb} (fallback) · circuit ${llmStatus.data?.circuit?.isOpen ? "OPEN" : "healthy"}`
+      : `LLM provider: ${provider} · circuit ${llmStatus.data?.circuit?.isOpen ? "OPEN" : "healthy"}`;
     const boot: Array<[SysLogKind, string]> = [
       ["system", "Sentinel console initialized"],
       ["system", "ReAct loop armed · guardrail armed · audit logger armed"],
-      ["llm", `LLM provider: gemini (primary) → groq (fallback) · circuit ${llmStatus.data?.circuit?.isOpen ? "OPEN" : "healthy"}`],
+      ["llm", providerLine],
       ["system", `DataHub MCP server: ${llmStatus.data ? "connected" : "connecting…"} · 15 tools registered`],
       ["system", "Agent Context Kit: ready · write-back channel open"],
     ];
@@ -679,7 +692,7 @@ function Console() {
     if (result.totalTokens) {
       const t = result.totalTokens;
       const provider = publicProviderName(result.actualProvider ?? result.llmProvider);
-      addLog("llm", `LLM ${result.llmModel ?? "gemini-2.0-flash"} (${provider}) · ${t.promptTokens + t.completionTokens} tokens`);
+      addLog("llm", `LLM ${result.llmModel ?? "llama-3.3-70b-versatile"} (${provider}) · ${t.promptTokens + t.completionTokens} tokens`);
     }
     if (result.failoverOccurred && result.actualProvider) {
       const provider = publicProviderName(result.actualProvider);
@@ -1150,11 +1163,11 @@ function Console() {
           )}
           <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px] justify-end max-w-full">
             <SystemClock />
-            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gemini-2.0-flash"} mono />
+            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "llama-3.3-70b-versatile"} mono />
             <Chip
               icon={Database}
               label="Provider"
-              value={publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "gemini"}
+              value={publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "groq"}
               mono
             />
             {result?.failoverOccurred && result.actualProvider && result.llmProvider && result.actualProvider !== result.llmProvider && (
@@ -2596,7 +2609,7 @@ function AuditTimeline({
           const Icon = meta.icon;
           const isLast = i === filtered.length - 1;
           return (
-            <li key={e.id} className="flex gap-2.5">
+            <li key={`${e.id}-${i}`} className="flex gap-2.5">
               {/* Timeline rail */}
               <div className="flex flex-col items-center pt-0.5">
                 <span className={`h-2 w-2 rounded-full ${meta.dot} ring-2 ring-slate-950 shrink-0`} />
@@ -4052,12 +4065,22 @@ function IncidentStatusBar({
     const lastTs = new Date(steps[steps.length - 1].ts).getTime();
     const triageTs = ts((s) => s.kind === "plan" || s.kind === "observe" || s.kind === "reflect" || s.kind === "tool_call");
     const actionsTs = ts((s) => s.kind === "tool_call" && (s.toolName?.startsWith("action.") || s.toolName?.startsWith("action_")));
-    const writebacksTs = ts((s) => s.kind === "write_back");
+    // Write-backs may be recorded as kind === "write_back" OR as a tool_call
+    // with toolName === "ack.save_document". Match both so the WRITE-BACKS
+    // stage always gets a real timestamp instead of "—".
+    const writebacksTs = ts((s) => s.kind === "write_back" || s.toolName === "ack.save_document");
     const out: Partial<Record<StageKey, number>> = {};
     if (triageTs && triageTs > firstTs) out.signal = (triageTs - firstTs) / 1000;
     if (triageTs && actionsTs && actionsTs > triageTs) out.triage = (actionsTs - triageTs) / 1000;
     if (actionsTs && writebacksTs && writebacksTs > actionsTs) out.actions = (writebacksTs - actionsTs) / 1000;
     if (writebacksTs && lastTs && lastTs > writebacksTs) out.writebacks = (lastTs - writebacksTs) / 1000;
+    // Fallback: if write-backs happened but we couldn't derive a timestamp
+    // (e.g. all steps share the same millisecond), attribute the tail of the
+    // run to write-backs so the stage never shows "—" on a resolved incident.
+    const hasWritebacks = steps.some((s) => s.kind === "write_back" || s.toolName === "ack.save_document");
+    if (hasWritebacks && out.writebacks === undefined && actionsTs && lastTs > actionsTs) {
+      out.writebacks = (lastTs - actionsTs) / 1000;
+    }
     const incidentStatus = viewedIncident?.incident?.status ?? result?.incident?.status;
     if ((incidentStatus === "resolved" || incidentStatus === "degraded") && lastTs > firstTs) {
       out.resolved = (lastTs - firstTs) / 1000;
@@ -4070,6 +4093,10 @@ function IncidentStatusBar({
     if (running && currentStage === stageKey) return `${elapsed.toFixed(1)}s`;
     const t = stageTimes[stageKey];
     if (typeof t === "number" && t > 0) return `${t.toFixed(1)}s`;
+    // A completed stage should never show "—" — if we can't derive a duration
+    // (sub-millisecond fallback path), show 0.0s so the progress bar reads
+    // as fully resolved rather than missing a stage.
+    if (completedStages.has(stageKey)) return "0.0s";
     return "—";
   }
 
@@ -4957,7 +4984,7 @@ function MobileInfoBar({
       <span className="inline-flex items-center gap-1">
         <Database className="h-3 w-3 text-slate-500" />
         <span className="text-slate-500">Provider:</span>
-        <span className="text-slate-300">{publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "gemini"}</span>
+        <span className="text-slate-300">{publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "groq"}</span>
       </span>
       {result?.totalTokens && (
         <>
