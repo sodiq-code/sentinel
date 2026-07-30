@@ -1270,4 +1270,225 @@
 .sentinel-manager-summary {
   display: none;
 }
-/* trigger rebuild w6 */
+/* ───────────────────────────────────────────────────────────────────────────
+   Glassmorphism / Frosted Glass Panels — applied to key cards for a
+   premium, depth-rich look. Uses backdrop-filter: blur + semi-transparent bg.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-glass {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+/* Sentinel card — standardized card shell for consistent look & feel.
+   Every card gets: rounded-xl, border-slate-800, bg-slate-900/40, backdrop-blur.
+   Apply together with .premium-card for the hover lift effect. */
+.sentinel-card {
+  border-radius: 0.75rem;
+  border: 1px solid rgb(30 41 59);
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Summary Stat Banner — frosted glass stats bar below the header.
+   Shows "Last 24h: X Incidents | Y Auto-Resolved | $Zk Est. Saved"
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-stats-banner {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  background: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid rgb(30 41 59 / 0.6);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Demo Tour Overlay — step-by-step highlight overlay for hackathon demo.
+   Dark overlay with a cutout (box-shadow trick) for the highlighted element,
+   plus a tooltip card with description, Next/Prev/Skip buttons.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  pointer-events: auto;
+  transition: box-shadow 200ms ease-out;
+}
+.sentinel-tour-highlight {
+  position: relative;
+  z-index: 71;
+  pointer-events: auto;
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 4px rgba(16, 185, 129, 0.5),
+    0 0 0 9999px rgba(2, 6, 23, 0.82);
+}
+.sentinel-tour-tooltip {
+  position: fixed;
+  z-index: 72;
+  width: calc(100% - 2rem);
+  max-width: 380px;
+  border-radius: 12px;
+  border: 1px solid rgb(30 41 59);
+  background: rgba(15, 23, 42, 0.98);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow:
+    0 24px 60px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(16, 185, 129, 0.15) inset;
+  animation: sentinel-tour-tooltip-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes sentinel-tour-tooltip-in {
+  0% { opacity: 0; transform: translateY(8px) scale(0.97); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.sentinel-tour-step-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(51 65 81);
+  transition: all 150ms ease-out;
+}
+.sentinel-tour-step-dot[data-active="true"] {
+  background: rgb(16 185 129);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.5);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Demo Mode Badge — pulsing emerald badge in the header when demo mode
+   is active. Shows "DEMO" with a gentle pulse.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-demo-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+.sentinel-demo-badge {
+  animation: sentinel-demo-badge-pulse 1.8s ease-out infinite;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   SentinelTooltip — rich tooltip with frosted glass effect.
+   Used for LLM model, Provider, Circuit status, assertion tags, metric values.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-tooltip {
+  position: absolute;
+  z-index: 50;
+  border-radius: 8px;
+  border: 1px solid rgb(30 41 59);
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow:
+    0 12px 28px -8px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(16, 185, 129, 0.1) inset;
+  padding: 0.5rem 0.75rem;
+  max-width: 280px;
+  pointer-events: none;
+  animation: sentinel-tooltip-in 150ms ease-out;
+}
+@keyframes sentinel-tooltip-in {
+  0% { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Hero heading text-shadow — subtle depth for the main heading.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-hero-heading {
+  text-shadow: 0 2px 12px rgba(16, 185, 129, 0.12), 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Hide Next.js dev overlay — the "1 Issue" badge that overlaps cards.
+   ─────────────────────────────────────────────────────────────────────────── */
+.__next_dev_overlay__,
+[data-nextjs-dialog-overlay],
+[data-nextjs-toast] {
+  display: none !important;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   CTA Button Shimmer — animated gradient sweep on the primary action button.
+   Gives the "Inject & run Sentinel" button a premium, attention-grabbing effect.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-cta-shimmer {
+  0% { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.sentinel-cta-shimmer {
+  background-size: 200% 100%;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.12) 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.08) 75%,
+    transparent 100%
+  );
+  animation: sentinel-cta-shimmer 3s ease-in-out infinite;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   View Toggle — active state for Engineer/Manager toggle buttons.
+   Makes the active button clearly filled with a distinct background.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-view-toggle-btn[data-active="true"] {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: rgb(16, 185, 129);
+  font-weight: 600;
+}
+.sentinel-view-toggle-btn[data-active="false"] {
+  background: transparent;
+  border-color: rgba(51, 65, 85, 0.5);
+  color: rgb(148, 163, 184);
+}
+.sentinel-view-toggle-btn[data-active="false"]:hover {
+  background: rgba(51, 65, 85, 0.2);
+  border-color: rgba(51, 65, 85, 0.7);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Metric Empty State — "Awaiting data..." placeholder instead of bare dashes.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-metric-awaiting {
+  color: rgb(100, 116, 139);
+  font-style: italic;
+  font-size: 12px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Tooltip Arrow — small triangle pointer for the SentinelTooltip.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-tooltip-arrow {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: rgba(15, 23, 42, 0.96);
+  border: 1px solid rgb(30 41 59);
+  transform: rotate(45deg);
+}
+.sentinel-tooltip-arrow[data-side="bottom"] {
+  top: -5px;
+  border-right: none;
+  border-bottom: none;
+}
+.sentinel-tooltip-arrow[data-side="top"] {
+  bottom: -5px;
+  border-left: none;
+  border-top: none;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Lineage Edge Flow Animation — animated dash offset for data flow direction.
+   When the agent is running, edges show flowing particles to indicate
+   data directionality (left-to-right flow).
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-edge-flow {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -12; }
+}
+.sentinel-edge-flow {
+  animation: sentinel-edge-flow 0.8s linear infinite;
+}
