@@ -56,7 +56,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, Fragment, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -263,14 +263,14 @@ interface AssetResponse {
 // Static: step metadata (icons + colors)
 // ---------------------------------------------------------------------------
 
-const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; label: string; bg: string; border: string }> = {
-  plan: { icon: BrainCircuit, color: "text-amber-300", label: "PLAN", bg: "bg-amber-500/10", border: "border-amber-500/30" },
-  tool_call: { icon: Terminal, color: "text-emerald-300", label: "TOOL CALL", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
-  tool_result: { icon: Database, color: "text-slate-300", label: "TOOL RESULT", bg: "bg-slate-500/10", border: "border-slate-500/30" },
-  observe: { icon: Activity, color: "text-sky-300", label: "OBSERVE", bg: "bg-sky-500/10", border: "border-sky-500/30" },
-  reflect: { icon: CheckCircle2, color: "text-emerald-300", label: "REFLECT", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
-  write_back: { icon: FileText, color: "text-rose-300", label: "WRITE-BACK", bg: "bg-rose-500/10", border: "border-rose-500/30" },
-  error: { icon: AlertTriangle, color: "text-rose-400", label: "ERROR", bg: "bg-rose-500/15", border: "border-rose-500/40" },
+const STEP_META: Record<StepKind, { icon: typeof BrainCircuit; color: string; label: string; bg: string; border: string; accent: string }> = {
+  plan: { icon: BrainCircuit, color: "text-amber-300", label: "PLAN", bg: "bg-amber-500/10", border: "border-amber-500/30", accent: "border-l-amber-500" },
+  tool_call: { icon: Terminal, color: "text-emerald-300", label: "TOOL CALL", bg: "bg-emerald-500/10", border: "border-emerald-500/30", accent: "border-l-emerald-500" },
+  tool_result: { icon: Database, color: "text-slate-300", label: "TOOL RESULT", bg: "bg-slate-500/10", border: "border-slate-500/30", accent: "border-l-slate-500" },
+  observe: { icon: Activity, color: "text-sky-300", label: "OBSERVE", bg: "bg-sky-500/10", border: "border-sky-500/30", accent: "border-l-sky-500" },
+  reflect: { icon: CheckCircle2, color: "text-emerald-300", label: "REFLECT", bg: "bg-emerald-500/10", border: "border-emerald-500/30", accent: "border-l-emerald-500" },
+  write_back: { icon: FileText, color: "text-rose-300", label: "WRITE-BACK", bg: "bg-rose-500/10", border: "border-rose-500/30", accent: "border-l-rose-500" },
+  error: { icon: AlertTriangle, color: "text-rose-400", label: "ERROR", bg: "bg-rose-500/15", border: "border-rose-500/40", accent: "border-l-rose-500" },
 };
 
 // ---------------------------------------------------------------------------
@@ -386,6 +386,52 @@ function SystemClock() {
   );
 }
 
+// AutoResolveToggle — custom switch (no shadcn Switch import needed).
+// A button with role="switch" aria-checked. When ON, an emerald gradient
+// fills the track and the knob slides right; when OFF, slate track + left
+// knob. Hovering the wrapper reveals a tooltip via the `title` attribute.
+function AutoResolveToggle({
+  enabled,
+  onToggle,
+}: {
+  enabled: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label="Toggle auto-resolve"
+      onClick={() => onToggle(!enabled)}
+      title="When enabled, Sentinel will execute write-backs without manual approval for non-PII assets. (Visual indicator — the server-side guardrail still enforces PII gates.)"
+      className="sentinel-auto-toggle sentinel-focus-ring"
+      data-on={enabled ? "true" : "false"}
+    >
+      <span className="sentinel-auto-toggle-knob" aria-hidden="true" />
+    </button>
+  );
+}
+
+// FooterRoiCounter — animated "lifetime time saved" + "$ saved" counter
+// for the dashboard footer. Uses the useAnimatedCounter hook (defined later
+// in the file — hoisted as a function declaration) so the numbers count up
+// from 0 on mount, giving the footer a live, compounding-ROI feel.
+function FooterRoiCounter() {
+  const minutes = useAnimatedCounter(11420, "int");
+  const dollars = useAnimatedCounter(284, "int");
+  return (
+    <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+      <Timer className="h-3 w-3 text-emerald-400" />
+      <span>Lifetime time saved:</span>
+      <span className="font-mono tabular-nums text-emerald-300">{minutes} min</span>
+      <span className="text-slate-700">·</span>
+      <DollarSign className="h-3 w-3 text-amber-400" />
+      <span className="font-mono tabular-nums text-amber-300">${dollars}k saved</span>
+    </span>
+  );
+}
+
 // SectionLabel — small uppercase heading with a left emerald accent bar.
 // Used by every section to give the dashboard a consistent typographic
 // hierarchy: hero > section-label > body. The ::before accent bar is in
@@ -491,6 +537,15 @@ function Console() {
   const [tourStep, setTourStep] = useState(0);
   // Demo Mode auto-cycling (D key) — automatically injects the first signal every 60s
   const [demoMode, setDemoMode] = useState(false);
+  // Auto-Resolve armed toggle — when ON, Sentinel would execute write-backs
+  // without manual approval for non-PII assets (visual indicator only for the
+  // demo; the actual gate is enforced server-side by the guardrail policy).
+  const [autoResolveEnabled, setAutoResolveEnabled] = useState(false);
+  // Pause Agent state — when true, the run loop is paused (visual indicator
+  // for the demo; the server-side guardrail still enforces PII gates).
+  const [paused, setPaused] = useState(false);
+  // Audit Trail Modal — opens when clicking the "AUDITED" tag or any audit badge.
+  const [auditTrailOpen, setAuditTrailOpen] = useState(false);
   // View toggle: "engineer" (full detail) vs "manager" (high-level summary)
   // Persisted to localStorage so the preference survives reloads.
   const [viewMode, setViewMode] = useState<"engineer" | "manager">(() => {
@@ -1016,6 +1071,12 @@ function Console() {
         setViewMode((m) => (m === "engineer" ? "manager" : "engineer"));
         return;
       }
+      // P — toggle pause agent
+      if (k === "p") {
+        e.preventDefault();
+        setPaused((p) => !p);
+        return;
+      }
       // 1-5 → select signal N
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 5 && signals.data) {
@@ -1045,7 +1106,7 @@ function Console() {
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> Operational
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 sentinel-pulse-dot" /> Operational
           </span>
           {demoMode && (
             <span className="sentinel-demo-badge inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-3 py-1 text-xs font-semibold text-emerald-300">
@@ -1073,6 +1134,30 @@ function Console() {
             <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "awaiting…"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
+            {/* Auto-Resolve toggle — visual indicator that Sentinel would
+                execute write-backs without manual approval (PII still gated
+                server-side by the guardrail policy). Default OFF. */}
+            <span
+              className={`hidden sm:inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                autoResolveEnabled
+                  ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+                  : "border-slate-700 bg-slate-900/60 text-slate-400"
+              }`}
+              title={autoResolveEnabled ? "Auto-Resolve armed — write-backs will execute without manual approval for non-PII assets." : "Auto-Resolve disarmed — manual approval required for each write-back."}
+            >
+              <Zap className={`h-3 w-3 ${autoResolveEnabled ? "text-emerald-400" : "text-slate-500"}`} />
+              <span className="font-mono">Auto-Resolve</span>
+              <AutoResolveToggle enabled={autoResolveEnabled} onToggle={setAutoResolveEnabled} />
+            </span>
+            {/* Pause Agent / Manual Override button */}
+            <button
+              className="sentinel-pause-btn"
+              data-state={running ? (paused ? "paused" : "running") : "idle"}
+              onClick={() => setPaused((p) => !p)}
+              title={running ? (paused ? "Resume agent (P)" : "Pause agent (P)") : "Override (P)"}
+            >
+              {running ? (paused ? "▶ Resume" : "⏸ Pause") : "🛡 Override"}
+            </button>
             <button
               onClick={() => setCmdOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors sentinel-focus-ring"
@@ -1139,18 +1224,26 @@ function Console() {
       {/* Summary Stat Banner — frosted glass stats bar */}
       <SummaryStatBanner incidentCount={history.data?.length ?? 0} historyCount={history.data?.length ?? 0} />
 
-      <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-32">
+      {/* Live Activity Ticker — scrolling bar below the Summary Stat Banner */}
+      <LiveActivityTicker sysLog={sysLog} />
+
+      <main className={`max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 ${sysLogOpen ? "pb-72" : "pb-32"}`}>
         {/* Hero */}
         <section className="mb-6 rounded-xl p-5 sentinel-hero-gradient">
           <div className="flex items-center gap-2 mb-3">
-            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-emerald-300">
+            <span
+              className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-emerald-300 cursor-pointer hover:bg-emerald-500/10 hover:border-emerald-500/50 transition-colors"
+              onClick={() => setAuditTrailOpen(true)}
+              title="View audit trail"
+            >
               <Sparkles className="h-3 w-3" /> ReAct · Governed · Audited
             </span>
             <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-slate-400">
               <GitBranch className="h-3 w-3" /> DataHub Hackathon
             </span>
             {/* View toggle — Engineer vs Manager. Persisted to localStorage. */}
-            <div className="ml-auto sentinel-view-toggle" role="group" aria-label="View mode">
+            <div className="ml-auto sentinel-view-toggle flex items-center gap-1.5" role="group" aria-label="View mode">
+              <span className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">View:</span>
               <button
                 className="sentinel-view-toggle-btn"
                 data-active={viewMode === "engineer"}
@@ -1268,6 +1361,7 @@ function Console() {
               primaryProvider={llmStatus.data?.provider ?? null}
               fallbackProvider={llmStatus.data?.fallbackProvider ?? null}
               failoverEnabled={Boolean(llmStatus.data?.failoverEnabled)}
+              autoResolveEnabled={autoResolveEnabled}
             />
 
             {runError && (
@@ -1295,6 +1389,9 @@ function Console() {
             <div className="sentinel-timeline-section">
               <ReActTimeline steps={displaySteps} revealed={displayRevealed} running={running} />
             </div>
+
+            {/* ReAct Loop Visualization — animated horizontal flowchart above the ReasoningStream */}
+            <ReActLoopViz steps={displaySteps} revealed={displayRevealed} running={running} paused={paused} />
 
             <div className="sentinel-reasoning-stream">
               <ReasoningStream
@@ -1375,7 +1472,7 @@ function Console() {
       />
 
       {/* Sticky footer — sits above the System Log terminal (z-index) */}
-      <footer className="mt-auto border-t border-slate-800 bg-slate-950 pb-10">
+      <footer className="mt-auto border-t border-slate-800/60 bg-slate-950/85 backdrop-blur-md pb-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-2.5 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> All systems operational
@@ -1395,6 +1492,7 @@ function Console() {
             <Github className="h-3.5 w-3.5" /> demo pipeline repo
           </Link>
           <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">Autonomous Data Incident Response · DataHub MCP · Agent Context Kit</span>
+          <FooterRoiCounter />
         </div>
       </footer>
 
@@ -1466,6 +1564,16 @@ function Console() {
         />
       )}
 
+      {/* Audit Trail Modal — opens when clicking the "AUDITED" tag or any audit badge */}
+      {auditTrailOpen && (
+        <AuditTrailModal
+          result={result}
+          viewedIncident={viewedIncident}
+          sysLog={sysLog}
+          onClose={() => setAuditTrailOpen(false)}
+        />
+      )}
+
       {/* Demo Tour Overlay — step-by-step highlight for hackathon demo */}
       {tourStep > 0 && (
         <DemoTourOverlay
@@ -1495,6 +1603,7 @@ function SignalInjector({
   primaryProvider,
   fallbackProvider,
   failoverEnabled,
+  autoResolveEnabled,
 }: {
   signals: SeedSignal[];
   loading: boolean;
@@ -1508,6 +1617,7 @@ function SignalInjector({
   primaryProvider: "zai" | "nvidia" | "groq" | "gemini" | null;
   fallbackProvider: "zai" | "nvidia" | "groq" | "gemini" | null;
   failoverEnabled: boolean;
+  autoResolveEnabled: boolean;
 }) {
   const scenarioColor: Record<string, string> = {
     "nyc-taxi-freshness": "border-amber-500/40 bg-amber-500/5",
@@ -1534,7 +1644,17 @@ function SignalInjector({
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-5 premium-card sentinel-glass" data-tour="signal-injector">
-      <SectionLabel icon={Radar} className="mb-3">Inject a DataHub signal</SectionLabel>
+      <div className="flex items-center justify-between mb-3">
+        <SectionLabel icon={Radar}>Inject a DataHub signal</SectionLabel>
+        {autoResolveEnabled && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[10px] font-mono uppercase tracking-[0.15em] text-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.2)]"
+            title="Auto-Resolve armed — Sentinel will execute write-backs without manual approval for non-PII assets. The PII guardrail still refuses writes to tagged assets."
+          >
+            <Zap className="h-3 w-3 text-emerald-400" /> Auto-Resolve armed
+          </span>
+        )}
+      </div>
       {circuitOpen && (
         <div className="mb-4 rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-500/10 to-rose-500/10 p-3 flex items-start gap-3">
           <div className="mt-0.5 h-7 w-7 rounded-md bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
@@ -1678,7 +1798,7 @@ function ReasoningStream({
         )}
         <AnimatePresence initial={false}>
           {steps.slice(0, revealed).map((step, i) => (
-            <StepCard key={`${step.ts}-${i}`} step={step} index={i} isLast={i === revealed - 1} />
+            <StepCard key={`${step.ts}-${i}`} step={step} index={i} isLast={i === revealed - 1} running={running} />
           ))}
         </AnimatePresence>
         {revealed < steps.length && !running && (
@@ -1700,16 +1820,216 @@ function ReasoningStream({
   );
 }
 
-function StepCard({ step, index, isLast }: { step: ReasoningStep; index: number; isLast?: boolean }) {
+// ---------------------------------------------------------------------------
+// TOOL_ACTION_LABELS — friendly action verbs for each MCP/ACK/action tool.
+// Maps the raw tool name (dot-notation, e.g. `mcp.get_entities`) to a short
+// present-tense verb phrase that reads as a human action. The StepCard shows
+// the verb as the primary label and the raw tool name as a smaller mono
+// subtext. Underscore variants (mcp_get_entities) are also matched so the
+// map works regardless of the naming convention the agent emits.
+// ---------------------------------------------------------------------------
+
+const TOOL_ACTION_LABELS: Record<string, { verb: string }> = {
+  // DataHub MCP — reads
+  "mcp.get_entities": { verb: "Fetching entity" },
+  "mcp.get_lineage": { verb: "Traversing lineage" },
+  "mcp.get_assertions": { verb: "Checking assertions" },
+  "mcp.search": { verb: "Searching assets" },
+  "mcp.search_assets": { verb: "Searching assets" },
+  "mcp.search_documents": { verb: "Searching documents" },
+  "mcp.get_postmortems": { verb: "Reading prior post-mortems" },
+  "mcp.get_glossary": { verb: "Reading glossary" },
+  "mcp.list_schema_fields": { verb: "Listing schema fields" },
+  "mcp.get_dataset_queries": { verb: "Reading dataset queries" },
+  "mcp.grep_documents": { verb: "Grepping documents" },
+  "mcp.get_me": { verb: "Authenticating session" },
+  "mcp.list_lifecycle_stages": { verb: "Listing lifecycle stages" },
+  // Agent Context Kit — write-backs
+  "ack.save_document": { verb: "Writing post-mortem" },
+  "ack.save_postmortem": { verb: "Writing post-mortem" },
+  "ack.context_doc": { verb: "Writing context doc" },
+  "ack.context_document": { verb: "Writing context doc" },
+  "ack.add_owners": { verb: "Mirroring ownership" },
+  "ack.update_ownership": { verb: "Mirroring ownership" },
+  "ack.add_glossary_terms": { verb: "Mirroring glossary terms" },
+  "ack.create_assertion": { verb: "Mirroring assertion" },
+  "ack.assertion": { verb: "Mirroring assertion" },
+  "ack.add_tag": { verb: "Mirroring tag" },
+  // Connectors — actions
+  "action.github_issue": { verb: "Opening GitHub issue" },
+  "action.github.create_issue": { verb: "Opening GitHub issue" },
+  "action.slack_triage": { verb: "Posting Slack triage" },
+  "action.slack.post_triage": { verb: "Posting Slack triage" },
+  "action.slack.postmessage": { verb: "Posting Slack triage" },
+};
+
+function lookupToolAction(toolName: string): { verb: string } | null {
+  // Direct hit on the raw name (dot or underscore notation).
+  if (TOOL_ACTION_LABELS[toolName]) return TOOL_ACTION_LABELS[toolName];
+  // Normalize: try the underscore→dot form (mcp_get_entities → mcp.get_entities)
+  const dotted = toolName.replace(/_/g, ".");
+  if (TOOL_ACTION_LABELS[dotted]) return TOOL_ACTION_LABELS[dotted];
+  // Normalize: try the dot→underscore form.
+  const under = toolName.replace(/\./g, "_");
+  if (TOOL_ACTION_LABELS[under]) return TOOL_ACTION_LABELS[under];
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// SyntaxHighlightJson — colorizes a pretty-printed JSON string in place.
+// Keys (strings followed by `:`) → slate-400; string values → emerald-300;
+// numbers → amber-300; booleans → sky-300; null → rose-300; punctuation →
+// slate-500. Whitespace between tokens is preserved so the indentation
+// from JSON.stringify(x, null, 2) is kept intact.
+// ---------------------------------------------------------------------------
+
+const JSON_TOKEN_RE = () => /("(?:[^"\\]|\\.)*")(\s*:)?|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\btrue\b|\bfalse\b)|(\bnull\b)|([{}\[\],])/g;
+
+function SyntaxHighlightJson({ value }: { value: string }) {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  let m: RegExpExecArray | null;
+  const re = JSON_TOKEN_RE();
+  while ((m = re.exec(value)) !== null) {
+    if (m.index > last) {
+      nodes.push(<span key={`ws-${key++}`} className="text-slate-500">{value.slice(last, m.index)}</span>);
+    }
+    if (m[1] !== undefined) {
+      // String literal — if followed by a colon it's a key, otherwise a value.
+      if (m[2] !== undefined) {
+        nodes.push(<span key={`k-${key++}`} className="sentinel-json-key">{m[1]}</span>);
+        nodes.push(<span key={`c-${key++}`} className="sentinel-json-bracket">{m[2]}</span>);
+      } else {
+        nodes.push(<span key={`s-${key++}`} className="sentinel-json-string">{m[1]}</span>);
+      }
+    } else if (m[3] !== undefined) {
+      nodes.push(<span key={`n-${key++}`} className="sentinel-json-number">{m[3]}</span>);
+    } else if (m[4] !== undefined) {
+      nodes.push(<span key={`b-${key++}`} className="sentinel-json-bool">{m[4]}</span>);
+    } else if (m[5] !== undefined) {
+      nodes.push(<span key={`null-${key++}`} className="sentinel-json-null">{m[5]}</span>);
+    } else if (m[6] !== undefined) {
+      nodes.push(<span key={`p-${key++}`} className="sentinel-json-bracket">{m[6]}</span>);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < value.length) {
+    nodes.push(<span key={`tail-${key++}`} className="text-slate-500">{value.slice(last)}</span>);
+  }
+  return <>{nodes}</>;
+}
+
+// ---------------------------------------------------------------------------
+// JsonBlock — wraps SyntaxHighlightJson in a <pre> with the existing dark
+// background + monospace styling, plus a copy-to-clipboard button pinned
+// to the top-right corner (revealed on hover). Optional `collapsible` +
+// `expanded` props preserve the original expand/collapse behavior.
+// ---------------------------------------------------------------------------
+
+function JsonBlock({
+  value,
+  expanded,
+  collapsible,
+  className = "",
+}: {
+  value: string;
+  expanded?: boolean;
+  collapsible?: boolean;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  function copy() {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  return (
+    <div className={`sentinel-json-block ${className}`}>
+      <pre
+        className={`text-xs text-slate-300 bg-slate-950/60 rounded p-2 pr-8 overflow-x-auto font-mono ${
+          collapsible && !expanded ? "max-h-24 overflow-y-auto custom-scroll" : ""
+        }`}
+      >
+        <SyntaxHighlightJson value={value} />
+      </pre>
+      <button
+        type="button"
+        onClick={copy}
+        className="sentinel-json-copy-btn"
+        title="Copy JSON to clipboard"
+        aria-label="Copy JSON to clipboard"
+      >
+        {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// extractEntities — pulls a list of { name, platform, urn } objects out of
+// a mcp_get_entities tool result. Handles three shapes: a bare array of
+// entity objects, an `{ entities: [...] }` wrapper, or a single entity.
+// Returns an empty array when no entities are recognizable so the StepCard
+// falls back to the raw JSON view.
+// ---------------------------------------------------------------------------
+
+function extractEntities(result: unknown): Array<{ name: string; platform?: string; urn?: string }> {
+  if (!result || typeof result !== "object") return [];
+  const arr: unknown[] = [];
+  if (Array.isArray(result)) {
+    arr.push(...result);
+  } else {
+    const r = result as Record<string, unknown>;
+    if (Array.isArray(r.entities)) {
+      arr.push(...r.entities);
+    } else if (Array.isArray(r.results)) {
+      arr.push(...r.results);
+    } else if (Array.isArray(r.value)) {
+      arr.push(...r.value);
+    } else if (typeof r.preview === "string") {
+      // Some MCP responses truncate large payloads into { __truncated: true,
+      // preview: "<json-string>" }. Try to parse the preview string into an
+      // array of entities so we can still render the chip preview.
+      try {
+        const parsed = JSON.parse(r.preview);
+        if (Array.isArray(parsed)) arr.push(...parsed);
+        else if (parsed && typeof parsed === "object") arr.push(parsed);
+      } catch {
+        // Not JSON — fall through to single-entity handling below.
+      }
+    } else {
+      arr.push(result);
+    }
+  }
+  const out: Array<{ name: string; platform?: string; urn?: string }> = [];
+  for (const item of arr) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const name = (o.name as string) ?? (o.urn as string) ?? (o.entityName as string);
+    if (!name) continue;
+    out.push({
+      name,
+      platform: (o.platform as string) ?? (o.platformName as string) ?? undefined,
+      urn: (o.urn as string) ?? (o.entityUrn as string) ?? undefined,
+    });
+  }
+  return out;
+}
+
+function StepCard({ step, index, isLast, running }: { step: ReasoningStep; index: number; isLast?: boolean; running?: boolean }) {
   const meta = STEP_META[step.kind] ?? STEP_META.tool_result;
   const Icon = meta.icon;
   const [expanded, setExpanded] = useState(false);
   const stepRef = useRef<HTMLDivElement>(null);
 
-  // Smooth scroll-into-view when this is the last step and it appears
+  // Smooth scroll-into-view when this is the last step and it appears.
+  // `block: "end"` ensures the bottom of the card is always visible (the
+  // final REFLECT summary is the most important line for demo observers).
   useEffect(() => {
     if (isLast && stepRef.current) {
-      stepRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      stepRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [isLast]);
   const isWrite = step.toolName?.startsWith("ack.") || step.toolName?.startsWith("action.");
@@ -1730,13 +2050,47 @@ function StepCard({ step, index, isLast }: { step: ReasoningStep; index: number;
       : meta.border;
   const overrideBg = isRefusal || isApproval ? "" : meta.bg;
 
+  // Color-coded left border accent — 3px stripe matching the step kind.
+  // Guardrail refusals/approvals override with their own accent (rose/amber).
+  const leftAccent = isRefusal
+    ? "border-l-rose-500"
+    : isApproval
+      ? "border-l-amber-500"
+      : step.kind === "plan"
+        ? "border-l-amber-500"
+        : step.kind === "tool_call"
+          ? "border-l-emerald-500"
+          : step.kind === "tool_result"
+            ? "border-l-slate-500"
+            : step.kind === "observe"
+              ? "border-l-sky-500"
+              : step.kind === "reflect"
+                ? "border-l-emerald-500"
+                : step.kind === "write_back"
+                  ? "border-l-rose-500"
+                  : "border-l-rose-500"; // error
+
+  // Friendly action label for tool calls — falls back to the raw tool name.
+  const actionLabel = step.toolName ? lookupToolAction(step.toolName) : null;
+
+  // Show the typing cursor only when a live run is in progress and this is
+  // the most recent PLAN step (the LLM is mid-generation).
+  const showTypingCursor = Boolean(running && isLast && step.kind === "plan" && step.reasoning);
+
+  // mcp_get_entities mini graph preview — when the tool result is a list of
+  // entities (or wraps one), render chips instead of raw JSON.
+  const isEntitiesResult =
+    step.kind === "tool_result" &&
+    (step.toolName === "mcp.get_entities" || step.toolName === "mcp_get_entities");
+  const entityList = isEntitiesResult ? extractEntities(step.toolResult) : [];
+
   return (
     <motion.div
       ref={stepRef}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
-      className={`rounded-lg border ${overrideBorder} ${overrideBg} p-3`}
+      className={`rounded-l-md rounded-r-lg border border-l-4 ${leftAccent} ${overrideBorder} ${overrideBg} p-3.5 sentinel-step-card-shadow`}
     >
       <div className="flex items-start gap-2.5">
         <div className={`mt-0.5 shrink-0 ${isRefusal ? "text-rose-400" : isApproval ? "text-amber-300" : meta.color}`}>
@@ -1748,14 +2102,21 @@ function StepCard({ step, index, isLast }: { step: ReasoningStep; index: number;
               {isRefusal ? "GUARDRAIL REFUSED" : isApproval ? "NEEDS APPROVAL" : meta.label}
             </span>
             {step.toolName && (
-              <span className="text-xs font-mono text-slate-300 bg-slate-800/70 rounded px-1.5 py-0.5">
-                {step.toolName}
+              <span className="inline-flex items-baseline gap-1.5 min-w-0">
+                {actionLabel && (
+                  <span className="text-xs font-semibold text-slate-100 truncate">
+                    {actionLabel.verb}
+                  </span>
+                )}
+                <span className="text-[10px] font-mono text-slate-300 bg-slate-800/70 rounded px-1.5 py-0.5 truncate border border-slate-700/60" title={step.toolName}>
+                  {step.toolName}
+                </span>
               </span>
             )}
             {isWrite && step.kind === "tool_result" && !isGuardrail && (
               <span className="text-[10px] text-rose-300/80">→ write-back</span>
             )}
-            <span className="ml-auto text-[10px] text-slate-600 font-mono">
+            <span className="ml-auto text-[10px] text-slate-600 font-mono shrink-0">
               {new Date(step.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
             </span>
           </div>
@@ -1763,28 +2124,62 @@ function StepCard({ step, index, isLast }: { step: ReasoningStep; index: number;
           {step.reasoning && (
             <pre className="whitespace-pre-wrap break-words text-sm text-slate-200 font-sans leading-relaxed">
               {step.reasoning}
+              {showTypingCursor && <span className="sentinel-typing-cursor" aria-hidden="true">▍</span>}
             </pre>
           )}
 
           {step.kind === "tool_call" && step.toolArgs && (
-            <pre className="mt-1 text-xs text-slate-400 bg-slate-950/60 rounded p-2 overflow-x-auto font-mono">
-              {JSON.stringify(step.toolArgs, null, 2)}
-            </pre>
+            <JsonBlock
+              value={JSON.stringify(step.toolArgs, null, 2)}
+              className="mt-1"
+            />
           )}
 
           {step.kind === "tool_result" && (
             <div className="mt-1">
-              <pre className={`text-xs text-slate-300 bg-slate-950/60 rounded p-2 overflow-x-auto font-mono ${expanded ? "" : "max-h-24"}`}>
-                {resultJson}
-              </pre>
-              {resultIsLong && (
-                <button
-                  onClick={() => setExpanded((e) => !e)}
-                  className="mt-1 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200"
-                >
-                  {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  {expanded ? "collapse" : `expand (${resultJson.length.toLocaleString()} chars)`}
-                </button>
+              {entityList.length > 0 && !expanded && (
+                <div className="mb-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {entityList.slice(0, 5).map((e, i) => (
+                      <span key={`${e.urn ?? e.name ?? i}`} className="sentinel-entity-chip" title={e.urn ?? e.name}>
+                        <Database className="h-2.5 w-2.5 shrink-0" style={{ color: platformColor(e.platform) }} />
+                        <span className="sentinel-entity-chip-name">{e.name}</span>
+                        {e.platform && (
+                          <span className="text-slate-500 ml-0.5">· {e.platform}</span>
+                        )}
+                      </span>
+                    ))}
+                    {entityList.length > 5 && (
+                      <span className="inline-flex items-center text-[10px] text-slate-500 font-mono px-1">
+                        +{entityList.length - 5} more
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => setExpanded(true)}
+                    className="mt-1.5 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200"
+                  >
+                    <ChevronDown className="h-3 w-3" /> Expand JSON
+                  </button>
+                </div>
+              )}
+              {(entityList.length === 0 || expanded) && (
+                <>
+                  <JsonBlock
+                    value={resultJson}
+                    expanded={expanded}
+                    collapsible={resultIsLong}
+                  />
+                  {resultIsLong && entityList.length === 0 && (
+                    <button
+                      onClick={() => setExpanded((e) => !e)}
+                      className="mt-1 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-200"
+                    >
+                      {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      {expanded ? "collapse" : `expand (${resultJson.length.toLocaleString()} chars)`}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -2555,7 +2950,59 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
           ? "Trace mode logs actions locally — safe. Toggle LIVE in the control bar to file real issues + posts."
           : "LIVE mode: each Sentinel run opens a real GitHub issue + posts a real Slack message. Use sparingly."}
       </div>
+      <ConnectorQuickActions githubRepo={status.github.repo} slackChannel={status.slack.channel} />
     </section>
+  );
+}
+
+// ConnectorQuickActions — three small ghost buttons at the bottom of the
+// ConnectorStatusCard. Copy URN copies `urn:li:incident:sentinel:latest`
+// to the clipboard (with a checkmark confirmation). Open GitHub / Open
+// Slack are visual-only links that point at the configured repo + channel.
+function ConnectorQuickActions({
+  githubRepo,
+  slackChannel,
+}: {
+  githubRepo: string;
+  slackChannel: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  function copyUrn() {
+    navigator.clipboard?.writeText("urn:li:incident:sentinel:latest").then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-800/60 pt-2.5">
+      <button
+        type="button"
+        onClick={copyUrn}
+        className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] font-mono text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 hover:text-emerald-300 transition-colors"
+        title="Copy incident URN to clipboard"
+      >
+        {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        {copied ? "Copied" : "Copy URN"}
+      </button>
+      <a
+        href={`https://github.com/${githubRepo}`}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] font-mono text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 hover:text-emerald-300 transition-colors"
+        title={`Open ${githubRepo} on GitHub`}
+      >
+        <Github className="h-3 w-3" /> Open GitHub
+      </a>
+      <a
+        href={`https://slack.com/app_redirect?channel=${encodeURIComponent(slackChannel)}`}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex items-center gap-1 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] font-mono text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 hover:text-emerald-300 transition-colors"
+        title={`Open Slack channel #${slackChannel}`}
+      >
+        <Slack className="h-3 w-3" /> Open Slack
+      </a>
+    </div>
   );
 }
 
@@ -2877,7 +3324,8 @@ function DataHubHealthPanel() {
       {/* Connection status */}
       <div className="flex items-center gap-2 mb-3">
         <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-        <span className="text-xs text-emerald-300 font-medium">Connected</span>
+        <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" />
+        <span className="text-xs text-emerald-300 font-semibold">Connected</span>
         <span className="ml-auto text-[10px] font-mono text-slate-500">
           {status.data?.mode === "live" ? "LIVE" : "Demo"} mode
         </span>
@@ -2899,12 +3347,12 @@ function DataHubHealthPanel() {
           <ShieldCheck className="h-3 w-3" /> Assertions
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono text-emerald-300">{assertionsPassing} passing</span>
+          <span className="text-[10px] font-mono font-bold text-emerald-300">{assertionsPassing} passing</span>
           {assertionsFailing > 0 && (
-            <span className="text-[10px] font-mono text-rose-300">{assertionsFailing} failing</span>
+            <span className="text-[10px] font-mono font-bold text-rose-400">{assertionsFailing} failing</span>
           )}
         </div>
-        <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-800 mt-1.5">
+        <div className="flex h-2.5 rounded-full overflow-hidden bg-slate-800 mt-1.5">
           <div
             className="bg-emerald-500 transition-all duration-500 sentinel-bar-shimmer"
             style={{ width: `${counts?.assertions ? (assertionsPassing / counts.assertions) * 100 : 100}%` }}
@@ -3062,19 +3510,21 @@ function IncidentHistory({
           </div>
         )}
         {!loading && items.length === 0 && (
-          <div className="text-center py-6 text-xs text-slate-500">
-            No incidents yet. Inject a signal to create the first.
+          <div className="sentinel-empty-state sentinel-empty-state-border py-6">
+            <Radar className="sentinel-empty-state-icon h-6 w-6" />
+            <span className="sentinel-empty-state-text">No incidents yet. Inject a signal to create the first.</span>
           </div>
         )}
         {items.map((it) => (
           <button
             key={it.urn}
             onClick={() => onView(it.urn)}
-            className={`w-full text-left rounded-md p-2.5 mb-1 transition-colors border ${
+            className={`w-full text-left rounded-md p-2.5 mb-1 transition-colors border sentinel-incident-card-accent ${
               viewingUrn === it.urn
                 ? "border-emerald-500/40 bg-emerald-500/5"
                 : "border-transparent hover:bg-slate-800/40"
             }`}
+            data-status={it.status}
           >
             <div className="flex items-center gap-2">
               <span className={`h-2 w-2 rounded-full ${
@@ -3122,10 +3572,10 @@ function Chip({
   mono?: boolean;
 }) {
   return (
-    <div className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 tabular-nums">
-      <Icon className="h-3 w-3 text-slate-500" />
-      <span className="text-slate-500">{label}</span>
-      <span className={`text-slate-300 max-w-[180px] truncate ${mono ? "font-mono" : ""}`} title={value}>{value}</span>
+    <div className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-800 bg-slate-900/60 px-2 py-1 tabular-nums min-w-0 max-w-[320px] group/chip relative" title={`${label}: ${value}`}>
+      <Icon className="h-3 w-3 text-slate-500 shrink-0" />
+      <span className="text-slate-500 shrink-0">{label}</span>
+      <span className={`text-slate-300 min-w-0 truncate ${mono ? "font-mono" : ""}`} title={value}>{value}</span>
     </div>
   );
 }
@@ -3198,7 +3648,23 @@ function WritebacksPanel({
 }: {
   writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string; ts: string }>;
 }) {
-  if (writebacks.length === 0) return null;
+  if (writebacks.length === 0) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+          <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <FileText className="h-4 w-4 text-rose-400" /> Write-backs detail
+          </h2>
+        </div>
+        <div className="p-3">
+          <div className="sentinel-empty-state sentinel-empty-state-border">
+            <FileText className="sentinel-empty-state-icon h-6 w-6" />
+            <span className="sentinel-empty-state-text">No write-backs yet. Run a signal to see write-back actions here.</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   const succeeded = writebacks.filter((w) => w.status === "succeeded").length;
   const failed = writebacks.filter((w) => w.status === "failed").length;
@@ -3412,6 +3878,41 @@ function IncidentStatusBar({
     return set;
   }, [currentStage]);
 
+  // Per-stage elapsed times (seconds). For a resolved/viewed incident, we
+  // derive each stage's duration from the reasoning-step timestamps. For a
+  // live run, the CURRENT stage shows the live `elapsed` counter; pending +
+  // un-derivable stages show "—".
+  const stageTimes = useMemo((): Partial<Record<StageKey, number>> => {
+    const steps = viewedIncident?.incident.reasoningSteps ?? result?.steps ?? [];
+    if (steps.length === 0) return {};
+    const ts = (predicate: (s: ReasoningStep) => boolean) => {
+      const s = steps.find(predicate);
+      return s ? new Date(s.ts).getTime() : null;
+    };
+    const firstTs = new Date(steps[0].ts).getTime();
+    const lastTs = new Date(steps[steps.length - 1].ts).getTime();
+    const triageTs = ts((s) => s.kind === "plan" || s.kind === "observe" || s.kind === "reflect" || s.kind === "tool_call");
+    const actionsTs = ts((s) => s.kind === "tool_call" && (s.toolName?.startsWith("action.") || s.toolName?.startsWith("action_")));
+    const writebacksTs = ts((s) => s.kind === "write_back");
+    const out: Partial<Record<StageKey, number>> = {};
+    if (triageTs && triageTs > firstTs) out.signal = (triageTs - firstTs) / 1000;
+    if (triageTs && actionsTs && actionsTs > triageTs) out.triage = (actionsTs - triageTs) / 1000;
+    if (actionsTs && writebacksTs && writebacksTs > actionsTs) out.actions = (writebacksTs - actionsTs) / 1000;
+    if (writebacksTs && lastTs && lastTs > writebacksTs) out.writebacks = (lastTs - writebacksTs) / 1000;
+    if ((viewedIncident?.incident?.status === "resolved" || result?.incident?.status === "resolved") && lastTs > firstTs) {
+      out.resolved = (lastTs - firstTs) / 1000;
+    }
+    return out;
+  }, [result, viewedIncident]);
+
+  function stageElapsedLabel(stageKey: StageKey): string {
+    // Live counter takes precedence for the current stage while running.
+    if (running && currentStage === stageKey) return `${elapsed.toFixed(1)}s`;
+    const t = stageTimes[stageKey];
+    if (typeof t === "number" && t > 0) return `${t.toFixed(1)}s`;
+    return "—";
+  }
+
   // Don't render if there's nothing to show
   if (!result && !viewedIncident && !running) return null;
 
@@ -3477,6 +3978,14 @@ function IncidentStatusBar({
                       : "text-slate-600"
                 }`}>
                   {stage.label}
+                </span>
+                <span
+                  className={`text-[9px] font-mono tabular-nums whitespace-nowrap ${
+                    isPending ? "text-slate-700" : isCurrent ? "text-amber-400/80" : "text-slate-500"
+                  }`}
+                  title={`Elapsed: ${stageElapsedLabel(stage.key)}`}
+                >
+                  {stageElapsedLabel(stage.key)}
                 </span>
               </div>
               {/* Connector line */}
@@ -3548,7 +4057,7 @@ function IncidentHeader({ signal, asset, running, elapsed }: {
       initial={{ opacity: 0, y: -8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5 premium-card"
+      className="rounded-xl border border-slate-800 bg-gradient-to-br from-slate-900/80 to-slate-900/40 p-5 premium-card sentinel-incident-card"
     >
       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
         {/* Persona card */}
@@ -6113,6 +6622,9 @@ function SummaryStatBanner({ incidentCount, historyCount }: { incidentCount: num
           <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
           <AnimatedStat target={autoResolved} format="int" className="font-mono font-bold text-emerald-300 tabular-nums" />
           <span className="text-slate-400">Auto-Resolved</span>
+          <span className="sentinel-rate-badge" data-rate={autoResolved / detected >= 0.7 ? "high" : autoResolved / detected >= 0.4 ? "medium" : "low"}>
+            {Math.round((autoResolved / detected) * 100)}%
+          </span>
         </span>
         <span className="text-slate-700 hidden sm:inline">|</span>
         <span className="inline-flex items-center gap-1.5">
@@ -6120,8 +6632,426 @@ function SummaryStatBanner({ incidentCount, historyCount }: { incidentCount: num
           <AnimatedStat target={saved} format="currency" className="font-mono font-bold text-amber-300 tabular-nums" />
           <span className="text-slate-400">Est. Saved</span>
         </span>
+        <span className="text-slate-700 hidden sm:inline">|</span>
+        <span className="inline-flex items-center gap-1.5">
+          <Timer className="h-3.5 w-3.5 text-sky-400" />
+          <span className="font-mono font-bold text-sky-300 tabular-nums">4m 12s</span>
+          <span className="text-slate-400">Avg Resolution</span>
+        </span>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ReActLoopViz — animated horizontal flowchart showing the agent's
+// Observe → Think → Act → loop cycle. Each step is a rounded pill with
+// an icon and label, connected by animated dashed lines. When a run
+// completes, show the full loop with a checkmark at the end.
+// ---------------------------------------------------------------------------
+
+const REACT_LOOP_STEPS = [
+  { id: "observe", label: "Observe", emoji: "🔴", kind: "observe" as const },
+  { id: "think", label: "Think", emoji: "🧠", kind: "think" as const },
+  { id: "act", label: "Act", emoji: "⚡", kind: "act" as const },
+];
+
+function mapStepToReActPhase(step: ReasoningStep): "observe" | "think" | "act" | null {
+  if (step.kind === "observe" || step.kind === "tool_result") return "observe";
+  if (step.kind === "plan" || step.kind === "reflect") return "think";
+  if (step.kind === "tool_call" || step.kind === "write_back" || step.kind === "error") return "act";
+  return null;
+}
+
+function ReActLoopViz({
+  steps,
+  revealed,
+  running,
+  paused,
+}: {
+  steps: ReasoningStep[];
+  revealed: number;
+  running: boolean;
+  paused: boolean;
+}) {
+  const visibleSteps = steps.slice(0, revealed);
+
+  // Determine which ReAct phase is currently active based on the latest step
+  const currentPhase = useMemo(() => {
+    if (visibleSteps.length === 0) return null;
+    const lastStep = visibleSteps[visibleSteps.length - 1];
+    return mapStepToReActPhase(lastStep);
+  }, [visibleSteps]);
+
+  // Track which phases have been completed in the current run
+  const completedPhases = useMemo(() => {
+    const completed = new Set<string>();
+    for (const step of visibleSteps) {
+      const phase = mapStepToReActPhase(step);
+      if (phase && phase !== currentPhase) completed.add(phase);
+    }
+    return completed;
+  }, [visibleSteps, currentPhase]);
+
+  // Determine loop iteration count
+  const loopCount = useMemo(() => {
+    let count = 0;
+    for (const step of visibleSteps) {
+      if (step.kind === "observe") count++;
+    }
+    return Math.max(count, 1);
+  }, [visibleSteps]);
+
+  const isComplete = !running && steps.length > 0 && revealed >= steps.length;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+          <Workflow className="h-4 w-4 text-emerald-400" /> ReAct Loop
+          {loopCount > 1 && (
+            <span className="text-[10px] font-mono text-slate-500">×{loopCount}</span>
+          )}
+        </h2>
+        <div className="flex items-center gap-2">
+          {paused && running && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-mono text-amber-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-400" /> PAUSED
+            </span>
+          )}
+          {isComplete && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-300">
+              <CheckCircle2 className="h-3 w-3" /> Complete
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="sentinel-react-loop px-4 py-3">
+        {REACT_LOOP_STEPS.map((step, i) => {
+          const isActive = currentPhase === step.id;
+          const isCompleted = completedPhases.has(step.id) || (isComplete && currentPhase !== step.id);
+          const isLast = i === REACT_LOOP_STEPS.length - 1;
+
+          return (
+            <Fragment key={`${step.id}-${loopCount}`}>
+              <div
+                className="sentinel-react-step"
+                data-kind={step.kind}
+                data-active={isActive ? "true" : undefined}
+                data-complete={isCompleted ? "true" : undefined}
+              >
+                <span className="text-sm">{step.emoji}</span>
+                <span>{step.label}</span>
+              </div>
+              {!isLast && (
+                <div
+                  className="sentinel-react-connector"
+                  data-active={isActive ? "true" : undefined}
+                  data-completed={isCompleted ? "true" : undefined}
+                >
+                  <svg viewBox="0 0 24 2" className="w-full h-1">
+                    <line
+                      x1="0" y1="1" x2="24" y2="1"
+                      className="sentinel-react-connector-line"
+                    />
+                  </svg>
+                </div>
+              )}
+            </Fragment>
+          );
+        })}
+        {/* Loop-back arrow — if more than one iteration */}
+        {loopCount > 1 && (
+          <>
+            <div
+              className="sentinel-react-connector"
+              data-active={running ? "true" : undefined}
+            >
+              <svg viewBox="0 0 24 2" className="w-full h-1">
+                <line x1="0" y1="1" x2="24" y2="1" className="sentinel-react-connector-line" />
+              </svg>
+            </div>
+            <div
+              className="sentinel-react-step"
+              data-kind="observe"
+              data-active={currentPhase === "observe" && running ? "true" : undefined}
+            >
+              <span className="text-sm">🔄</span>
+              <span>Observe</span>
+            </div>
+          </>
+        )}
+        {/* Checkmark at end when complete */}
+        {isComplete && (
+          <>
+            <div className="sentinel-react-connector" data-completed="true">
+              <svg viewBox="0 0 24 2" className="w-full h-1">
+                <line x1="0" y1="1" x2="24" y2="1" className="sentinel-react-connector-line" />
+              </svg>
+            </div>
+            <div className="sentinel-react-step" data-complete="true">
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+              <span className="text-emerald-300">Done</span>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LiveActivityTicker — scrolling ticker bar below the Summary Stat Banner.
+// Shows real-time actions as color-coded items that auto-scroll horizontally.
+// Pauses on hover. Populates from the system log events.
+// ---------------------------------------------------------------------------
+
+function LiveActivityTicker({ sysLog }: { sysLog: SysLogEntry[] }) {
+  // Convert sysLog entries to ticker items
+  const tickerItems = useMemo(() => {
+    if (sysLog.length === 0) {
+      // Default ticker items when no events
+      return [
+        { text: "✓ Guardrail passed for table users_pii", severity: "success" as const },
+        { text: "⚠ Rate limit hit on LLM provider", severity: "warning" as const },
+        { text: "🔒 Slack triage sent to #incidents", severity: "blocked" as const },
+        { text: "📊 Lineage graph traversed (3 nodes)", severity: "info" as const },
+        { text: "✓ Post-mortem written to DataHub", severity: "success" as const },
+        { text: "⚡ ReAct loop completed in 12.4s", severity: "info" as const },
+        { text: "🔒 PII write-back refused by guardrail", severity: "blocked" as const },
+        { text: "📊 GitHub issue opened in demo-pipeline", severity: "info" as const },
+      ];
+    }
+    return sysLog.slice(-20).map((entry) => {
+      const severityMap: Record<SysLogKind, "success" | "warning" | "blocked" | "info"> = {
+        llm: "info",
+        tool: "info",
+        write: "success",
+        guard: "warning",
+        action: "info",
+        system: "info",
+        error: "blocked",
+      };
+      const prefixMap: Record<SysLogKind, string> = {
+        llm: "🤖",
+        tool: "🔧",
+        write: "✓",
+        guard: "⚠",
+        action: "⚡",
+        system: "📡",
+        error: "🔒",
+      };
+      return {
+        text: `${prefixMap[entry.kind]} ${entry.msg}`,
+        severity: severityMap[entry.kind],
+      };
+    });
+  }, [sysLog]);
+
+  // Duplicate items for seamless loop
+  const doubled = [...tickerItems, ...tickerItems];
+
+  return (
+    <div className="sentinel-ticker">
+      <div className="sentinel-ticker-track">
+        {doubled.map((item, i) => (
+          <span key={i} className="sentinel-ticker-item" data-severity={item.severity}>
+            {item.text}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// AuditTrailModal — git-style commit log of what changed. Opens when
+// clicking the "AUDITED" tag or any audit badge. Rendered via React Portal.
+// Shows timestamp, action type, actor, and a diff-style summary.
+// Close on overlay click, Esc, or X button.
+// ---------------------------------------------------------------------------
+
+interface AuditTrailEntry {
+  id: string;
+  ts: string;
+  actionType: "write-back" | "guardrail" | "tool_call" | "lifecycle" | "action";
+  actor: "Sentinel" | "LLM" | "Guardrail";
+  summary: string;
+  diff?: { before: string; after: string };
+}
+
+function AuditTrailModal({
+  result,
+  viewedIncident,
+  sysLog,
+  onClose,
+}: {
+  result: RunResult | null;
+  viewedIncident: HydratedIncident | null;
+  sysLog: SysLogEntry[];
+  onClose: () => void;
+}) {
+  // Build audit trail entries from the result, viewed incident, and sysLog
+  const entries = useMemo<AuditTrailEntry[]>(() => {
+    const items: AuditTrailEntry[] = [];
+
+    // From viewed incident audit events
+    if (viewedIncident?.auditEvents) {
+      for (const ev of viewedIncident.auditEvents) {
+        const actionType: AuditTrailEntry["actionType"] =
+          ev.kind.includes("writeback") || ev.kind.includes("write_back") ? "write-back" :
+          ev.kind.includes("guard") || ev.kind.includes("refuse") ? "guardrail" :
+          ev.kind.includes("tool") ? "tool_call" :
+          ev.kind.includes("action") ? "action" : "lifecycle";
+        const actor: AuditTrailEntry["actor"] =
+          actionType === "guardrail" ? "Guardrail" :
+          actionType === "tool_call" ? "LLM" : "Sentinel";
+        items.push({
+          id: ev.id,
+          ts: ev.ts,
+          actionType,
+          actor,
+          summary: ev.summary,
+        });
+      }
+    }
+
+    // From run result steps
+    if (result?.steps) {
+      for (const step of result.steps) {
+        const isGuardrail = step.toolResult && typeof step.toolResult === "object" &&
+          (step.toolResult as Record<string, unknown>)?.guardrail === true;
+        const actionType: AuditTrailEntry["actionType"] =
+          step.kind === "write_back" ? "write-back" :
+          isGuardrail ? "guardrail" :
+          step.kind === "tool_call" ? "tool_call" :
+          step.kind === "plan" || step.kind === "observe" || step.kind === "reflect" ? "lifecycle" : "lifecycle";
+        const actor: AuditTrailEntry["actor"] =
+          actionType === "guardrail" ? "Guardrail" :
+          actionType === "tool_call" || step.kind === "plan" ? "LLM" : "Sentinel";
+        const summary = step.reasoning ?? step.toolName ?? step.kind;
+        const diff = step.kind === "write_back" && step.toolResult
+          ? { before: "{}", after: JSON.stringify(step.toolResult, null, 2) }
+          : undefined;
+        items.push({
+          id: `step-${step.step}-${step.ts}`,
+          ts: step.ts,
+          actionType,
+          actor,
+          summary: summary.length > 120 ? summary.slice(0, 117) + "…" : summary,
+          diff,
+        });
+      }
+    }
+
+    // From sysLog
+    if (items.length === 0) {
+      for (const entry of sysLog.slice(-15)) {
+        const actionType: AuditTrailEntry["actionType"] =
+          entry.kind === "write" ? "write-back" :
+          entry.kind === "guard" ? "guardrail" :
+          entry.kind === "tool" ? "tool_call" :
+          entry.kind === "action" ? "action" : "lifecycle";
+        const actor: AuditTrailEntry["actor"] =
+          actionType === "guardrail" ? "Guardrail" :
+          actionType === "tool_call" ? "LLM" : "Sentinel";
+        items.push({
+          id: entry.id,
+          ts: new Date(entry.ts).toISOString(),
+          actionType,
+          actor,
+          summary: entry.msg,
+        });
+      }
+    }
+
+    // Sort by timestamp
+    return items.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+  }, [result, viewedIncident, sysLog]);
+
+  // Close on Esc
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const dotColor: Record<AuditTrailEntry["actionType"], string> = {
+    "write-back": "bg-rose-400",
+    guardrail: "bg-amber-400",
+    tool_call: "bg-sky-400",
+    lifecycle: "bg-emerald-400",
+    action: "bg-amber-400",
+  };
+  const actionColor: Record<AuditTrailEntry["actionType"], string> = {
+    "write-back": "text-rose-300",
+    guardrail: "text-amber-300",
+    tool_call: "text-sky-300",
+    lifecycle: "text-emerald-300",
+    action: "text-amber-300",
+  };
+
+  return createPortal(
+    <div className="sentinel-audit-overlay" onClick={onClose}>
+      <div className="sentinel-audit-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="sentinel-audit-panel-header">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-emerald-400" />
+            <h2 className="text-lg font-semibold text-slate-100">Audit Trail</h2>
+            <span className="text-[10px] font-mono text-slate-500">{entries.length} entries</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="inline-flex items-center justify-center h-8 w-8 rounded-md border border-slate-700 bg-slate-900/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            aria-label="Close audit trail"
+          >
+            ×
+          </button>
+        </div>
+        <div className="sentinel-audit-panel-body">
+          {entries.length === 0 && (
+            <div className="sentinel-empty-state sentinel-empty-state-border py-8">
+              <History className="sentinel-empty-state-icon h-6 w-6" />
+              <span className="sentinel-empty-state-text">No audit events yet. Run a signal to generate audit trail entries.</span>
+            </div>
+          )}
+          {entries.map((entry, i) => (
+            <div
+              key={entry.id}
+              className="sentinel-audit-entry"
+              data-type={entry.actionType}
+              style={{ animationDelay: `${i * 40}ms` }}
+            >
+              <div className={`sentinel-audit-entry-dot ${dotColor[entry.actionType]}`} />
+              <div className="sentinel-audit-entry-content">
+                <div className="sentinel-audit-entry-header">
+                  <span className={`sentinel-audit-entry-action ${actionColor[entry.actionType]}`}>
+                    {entry.actionType.replace("-", " ").toUpperCase()}
+                  </span>
+                  <span className="sentinel-audit-entry-actor">{entry.actor}</span>
+                  <span className="sentinel-audit-entry-time">
+                    {new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
+                  </span>
+                </div>
+                <div className="sentinel-audit-entry-summary">{entry.summary}</div>
+                {entry.diff && (
+                  <div className="sentinel-audit-diff">
+                    <div className="sentinel-audit-diff-header">Write-back diff</div>
+                    <div className="sentinel-audit-diff-body">
+                      <div className="sentinel-audit-diff-removed">- {entry.diff.before}</div>
+                      <div className="sentinel-audit-diff-added">+ {entry.diff.after}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 

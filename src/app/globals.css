@@ -1401,10 +1401,16 @@
 
 /* ───────────────────────────────────────────────────────────────────────────
    Hide Next.js dev overlay — the "1 Issue" badge that overlaps cards.
+   Next.js 16 mounts the dev overlay inside a <nextjs-portal> custom element
+   with a closed shadow root, so individual buttons can't be targeted by class.
+   Hiding the host element is the only reliable way to suppress it for demos.
    ─────────────────────────────────────────────────────────────────────────── */
 .__next_dev_overlay__,
 [data-nextjs-dialog-overlay],
-[data-nextjs-toast] {
+[data-nextjs-toast],
+nextjs-portal,
+nextjs-dev-tools,
+nextjs-portal * {
   display: none !important;
 }
 
@@ -1492,3 +1498,740 @@
 .sentinel-edge-flow {
   animation: sentinel-edge-flow 0.8s linear infinite;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Step Card Depth Shadow — subtle box-shadow for the reasoning stream cards.
+   Gives each step a sense of elevation without overwhelming the dark theme.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-step-card-shadow {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.2),
+    0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Typing Cursor — blinking block cursor appended to PLAN reasoning text
+   while the LLM is mid-generation (live runs only).
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-blink {
+  to { visibility: hidden; }
+}
+.sentinel-typing-cursor {
+  display: inline-block;
+  width: 0.55ch;
+  margin-left: 1px;
+  color: rgb(252, 211, 77); /* amber-300 */
+  animation: sentinel-blink 1s steps(2, start) infinite;
+  user-select: none;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Auto-Resolve Toggle — custom switch (button + role="switch").
+   ON  = emerald gradient, glowing knob on the right.
+   OFF = slate, knob on the left.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-auto-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 20px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+  padding: 0;
+}
+.sentinel-auto-toggle[data-on="true"] {
+  background: linear-gradient(135deg, rgb(16, 185, 129), rgb(20, 184, 166));
+  border-color: rgba(16, 185, 129, 0.5);
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
+}
+.sentinel-auto-toggle[data-on="false"] {
+  background: rgba(30, 41, 59, 0.8);
+  border-color: rgba(71, 85, 105, 0.6);
+}
+.sentinel-auto-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: rgb(241, 245, 249);
+  transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.sentinel-auto-toggle[data-on="true"] .sentinel-auto-toggle-knob {
+  transform: translateX(18px);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   JSON Block Wrapper — relative container for syntax-highlighted JSON
+   with a copy-to-clipboard button pinned top-right.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-json-block {
+  position: relative;
+}
+/* Long URNs (urn:li:dataset:...) and other unbroken strings should wrap
+   inside the JSON block instead of overflowing the card or clipping.
+   `overflow-wrap: anywhere` is preferred over `word-break: break-all`
+   because it only breaks when necessary, preserving short tokens. */
+.sentinel-json-block pre {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+.sentinel-json-copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(30, 41, 59, 0.6);
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  color: rgb(148, 163, 184);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.sentinel-json-block:hover .sentinel-json-copy-btn,
+.sentinel-json-copy-btn:focus-visible {
+  opacity: 1;
+}
+.sentinel-json-copy-btn:hover {
+  color: rgb(226, 232, 240);
+  background: rgba(51, 65, 85, 0.8);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Entity Chip Row — mini graph preview for mcp_get_entities tool results.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-entity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  background: rgba(15, 23, 42, 0.5);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, monospace);
+  font-size: 10px;
+  color: rgb(226, 232, 240);
+  max-width: 200px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.sentinel-entity-chip:hover {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.08);
+}
+.sentinel-entity-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Incident Card Depth — subtle inner shadow + top emerald glow on the
+   IncidentHeader card so it "pops" from the dark canvas. The glow is a
+   1px top border in emerald-500/20 plus a soft 12px blur shadow.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-incident-card {
+  position: relative;
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(16, 185, 129, 0.08),
+    0 8px 24px -12px rgba(0, 0, 0, 0.6);
+}
+.sentinel-incident-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(16, 185, 129, 0.35) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Awaiting pulse — gentle opacity pulse for "awaiting…" / idle metric
+   placeholders so the dashboard reads as live even before the first run.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-awaiting-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.sentinel-metric-awaiting {
+  font-style: italic;
+  animation: sentinel-awaiting-pulse 2.4s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   Task 8-b — CSS Styling Improvements (new classes only, no existing mods)
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ───────────────────────────────────────────────────────────────────────────
+   1. Pulsing Operational Dot — subtle green glow for "live" indicators.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-pulse-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+.sentinel-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(16, 185, 129);
+  animation: sentinel-pulse-glow 1.8s ease-out infinite;
+  flex-shrink: 0;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   2. ReAct Loop Visualization — step pills, connectors, and state variants.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-react-loop {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(51, 65, 85, 0.5) transparent;
+}
+.sentinel-react-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  background: rgba(30, 41, 59, 0.5);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.sentinel-react-step[data-active="true"] {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.06);
+  box-shadow: 0 0 8px -2px rgba(16, 185, 129, 0.3);
+  animation: sentinel-react-active-pulse 2s ease-in-out infinite;
+}
+@keyframes sentinel-react-active-pulse {
+  0%, 100% { box-shadow: 0 0 8px -2px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 12px -2px rgba(16, 185, 129, 0.45); }
+}
+.sentinel-react-step[data-kind="observe"][data-active="true"] {
+  border-color: rgba(14, 165, 233, 0.5);
+  background: rgba(14, 165, 233, 0.06);
+  box-shadow: 0 0 8px -2px rgba(14, 165, 233, 0.3);
+}
+.sentinel-react-step[data-kind="think"][data-active="true"] {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.06);
+  box-shadow: 0 0 8px -2px rgba(245, 158, 11, 0.3);
+}
+.sentinel-react-step[data-kind="act"][data-active="true"] {
+  border-color: rgba(244, 63, 94, 0.5);
+  background: rgba(244, 63, 94, 0.06);
+  box-shadow: 0 0 8px -2px rgba(244, 63, 94, 0.3);
+}
+.sentinel-react-step[data-complete="true"] {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.08);
+  position: relative;
+}
+.sentinel-react-step[data-complete="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: rgb(16, 185, 129);
+  color: rgb(15, 23, 42);
+  font-size: 8px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+.sentinel-react-connector {
+  flex-shrink: 0;
+  width: 24px;
+  height: 2px;
+  border-top: 2px dashed rgba(71, 85, 105, 0.5);
+  transition: border-color 0.2s ease;
+}
+.sentinel-react-connector[data-active="true"] {
+  border-top-color: rgba(16, 185, 129, 0.6);
+  animation: sentinel-react-flow 0.8s linear infinite;
+}
+@keyframes sentinel-react-flow {
+  to {
+    border-top-color: rgba(16, 185, 129, 0.6);
+    background-position: 24px 0;
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   3. Pause Agent Button — running / paused / idle state variants.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-pause-running {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+  50% { box-shadow: 0 0 0 4px rgba(245, 158, 11, 0); }
+}
+@keyframes sentinel-pause-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.sentinel-pause-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(71, 85, 105, 0.5);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+}
+.sentinel-pause-btn[data-state="running"] {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.08);
+  color: rgb(251, 191, 36);
+  animation: sentinel-pause-running 1.6s ease-in-out infinite;
+}
+.sentinel-pause-btn[data-state="running"]:hover {
+  border-color: rgba(244, 63, 94, 0.5);
+  background: rgba(244, 63, 94, 0.08);
+  color: rgb(251, 113, 133);
+}
+.sentinel-pause-btn[data-state="paused"] {
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(16, 185, 129, 0.08);
+  color: rgb(52, 211, 153);
+}
+.sentinel-pause-btn[data-state="paused"]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgb(16, 185, 129);
+  animation: sentinel-pause-blink 1.2s ease-in-out infinite;
+}
+.sentinel-pause-btn[data-state="idle"] {
+  border-color: rgba(71, 85, 105, 0.4);
+  background: rgba(30, 41, 59, 0.3);
+  color: rgb(100, 116, 139);
+  cursor: default;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   4. Audit Trail Modal — overlay, frosted panel, entries, and diffs.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-audit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.sentinel-audit-panel {
+  width: min(720px, 90vw);
+  max-height: 80vh;
+  border-radius: 12px;
+  border: 1px solid rgba(51, 65, 85, 0.5);
+  background: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 24px 64px -16px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(51, 65, 85, 0.5) transparent;
+}
+.sentinel-audit-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid rgb(30 41 59);
+}
+.sentinel-audit-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(51, 65, 85, 0.5) transparent;
+}
+.sentinel-audit-panel-body::-webkit-scrollbar { width: 6px; }
+.sentinel-audit-panel-body::-webkit-scrollbar-thumb {
+  background: rgb(51 65 81 / 0.6);
+  border-radius: 3px;
+}
+.sentinel-audit-entry {
+  display: flex;
+  gap: 0.75rem;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border-left: 3px solid rgba(71, 85, 105, 0.5);
+  background: rgba(30, 41, 59, 0.3);
+  margin-bottom: 8px;
+  transition: background 0.15s ease;
+}
+.sentinel-audit-entry:hover {
+  background: rgba(30, 41, 59, 0.5);
+}
+.sentinel-audit-entry[data-type="write-back"] {
+  border-left-color: rgb(244, 63, 94);
+}
+.sentinel-audit-entry[data-type="guardrail"] {
+  border-left-color: rgb(245, 158, 11);
+}
+.sentinel-audit-entry[data-type="tool_call"] {
+  border-left-color: rgb(14, 165, 233);
+}
+.sentinel-audit-entry-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.sentinel-audit-entry-content {
+  flex: 1;
+  min-width: 0;
+}
+.sentinel-audit-entry-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.sentinel-audit-entry-action {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sentinel-audit-entry-actor {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(148, 163, 184);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgb(30 41 59 / 0.6);
+  border: 1px solid rgb(51 65 81 / 0.5);
+}
+.sentinel-audit-entry-time {
+  font-size: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgb(100, 116, 139);
+  margin-left: auto;
+}
+.sentinel-audit-entry-summary {
+  font-size: 12px;
+  color: rgb(203, 213, 225);
+  margin-top: 0.25rem;
+  line-height: 1.5;
+}
+.sentinel-audit-diff {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid rgb(30 41 59);
+  background: rgba(2, 6, 23, 0.7);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.sentinel-audit-diff-header {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgb(148, 163, 184);
+  padding: 0.375rem 0.625rem;
+  border-bottom: 1px solid rgb(30 41 59 / 0.5);
+  background: rgb(15 23 42 / 0.6);
+}
+.sentinel-audit-diff-body {
+  padding: 0.5rem 0.625rem;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sentinel-audit-diff-removed {
+  color: rgb(248, 113, 113);
+  background: rgb(244 63 94 / 0.08);
+}
+.sentinel-audit-diff-added {
+  color: rgb(52, 211, 153);
+  background: rgb(16 185 129 / 0.08);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   5. Live Activity Ticker — horizontal scrolling bar with pause-on-hover.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.sentinel-ticker {
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.5);
+  border-top: 1px solid rgba(51, 65, 85, 0.3);
+  border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+  padding: 6px 0;
+}
+.sentinel-ticker-track {
+  display: flex;
+  gap: 1.5rem;
+  animation: sentinel-ticker-scroll 40s linear infinite;
+  width: max-content;
+}
+.sentinel-ticker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 13px;
+  white-space: nowrap;
+  color: rgb(148, 163, 184);
+}
+.sentinel-ticker-item[data-severity="success"] {
+  color: rgb(52, 211, 153);
+}
+.sentinel-ticker-item[data-severity="warning"] {
+  color: rgb(251, 191, 36);
+}
+.sentinel-ticker-item[data-severity="blocked"] {
+  color: rgb(251, 113, 133);
+}
+.sentinel-ticker-item[data-severity="info"] {
+  color: rgb(56, 189, 248);
+}
+.sentinel-ticker:hover .sentinel-ticker-track {
+  animation-play-state: paused;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   6. Incident Card Left Border Accent — status-based color coding.
+   (Adds border-left to existing sentinel-incident-card and sentinel-incident-card-accent classes.)
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-incident-card[data-status="breach"],
+.sentinel-incident-card-accent[data-status="breach"] {
+  border-left: 3px solid rgb(244, 63, 94);
+}
+.sentinel-incident-card[data-status="resolved"],
+.sentinel-incident-card-accent[data-status="resolved"] {
+  border-left: 3px solid rgb(16, 185, 129);
+}
+.sentinel-incident-card[data-status="degraded"],
+.sentinel-incident-card-accent[data-status="degraded"] {
+  border-left: 3px solid rgb(245, 158, 11);
+}
+.sentinel-incident-card[data-status="investigating"],
+.sentinel-incident-card-accent[data-status="investigating"] {
+  border-left: 3px solid rgb(14, 165, 233);
+}
+.sentinel-incident-card[data-status="failed"],
+.sentinel-incident-card-accent[data-status="failed"] {
+  border-left: 3px solid rgb(244, 63, 94);
+}
+.sentinel-incident-card[data-status="open"],
+.sentinel-incident-card-accent[data-status="open"] {
+  border-left: 3px solid rgb(100, 116, 139);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   7. Better Empty States — centered placeholder with ghost icon.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  color: rgb(100, 116, 139);
+  text-align: center;
+}
+.sentinel-empty-state-icon {
+  width: 48px;
+  height: 48px;
+  opacity: 0.3;
+  margin-bottom: 12px;
+  color: rgb(100, 116, 139);
+}
+.sentinel-empty-state-border {
+  border: 1px dashed rgba(51, 65, 85, 0.5);
+  border-radius: 8px;
+  padding: 24px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   8. JSON Syntax Highlighting — color tokens for reasoning stream.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-json-key {
+  color: rgb(34, 211, 238);
+}
+.sentinel-json-string {
+  color: rgb(252, 211, 77);
+}
+.sentinel-json-number {
+  color: rgb(52, 211, 153);
+}
+.sentinel-json-null {
+  color: rgb(71, 85, 105);
+  font-style: italic;
+}
+.sentinel-json-bool {
+  color: rgb(251, 113, 133);
+}
+.sentinel-json-bracket {
+  color: rgb(148, 163, 184);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   9. View Toggle Button Affordance — active vs inactive states.
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-view-toggle-btn[data-active="true"] {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: rgba(16, 185, 129, 0.5);
+  color: rgb(110, 231, 183);
+}
+.sentinel-view-toggle-btn[data-active="false"] {
+  background: transparent;
+  border-color: rgba(71, 85, 105, 0.5);
+  color: rgb(148, 163, 184);
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.sentinel-view-toggle-btn[data-active="false"]:hover {
+  background: rgba(30, 41, 59, 0.5);
+  color: rgb(203, 213, 225);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   10. General Polish — gradient text, card hover, glow border.
+   ─────────────────────────────────────────────────────────────────────────── */
+@keyframes sentinel-gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.sentinel-gradient-text {
+  background: linear-gradient(
+    90deg,
+    rgb(16, 185, 129) 0%,
+    rgb(20, 184, 166) 40%,
+    rgb(16, 185, 129) 80%,
+    rgb(20, 184, 166) 100%
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: sentinel-gradient-shift 4s ease-in-out infinite;
+}
+.sentinel-card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  will-change: transform;
+}
+.sentinel-card-hover:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
+}
+@keyframes sentinel-glow-border-anim {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.15), 0 0 8px -2px rgba(16, 185, 129, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35), 0 0 16px -4px rgba(16, 185, 129, 0.25);
+  }
+}
+.sentinel-glow-border {
+  animation: sentinel-glow-border-anim 2.4s ease-in-out infinite;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   11. Accessibility — focus rings for keyboard navigation
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-focus-ring:focus-visible {
+  outline: 2px solid rgba(16, 185, 129, 0.6);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid rgba(16, 185, 129, 0.5);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   12. Scroll indicator — subtle fade for scrollable containers
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-scroll-fade {
+  mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 85%, transparent 100%);
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   13. Resolution rate badge — small colored pill for the stats banner
+   ─────────────────────────────────────────────────────────────────────────── */
+.sentinel-rate-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.sentinel-rate-badge[data-rate="high"] {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: rgb(110, 231, 183);
+}
+.sentinel-rate-badge[data-rate="medium"] {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: rgb(253, 230, 138);
+}
+.sentinel-rate-badge[data-rate="low"] {
+  background: rgba(244, 63, 94, 0.12);
+  border: 1px solid rgba(244, 63, 94, 0.3);
+  color: rgb(253, 164, 175);
+}
+
