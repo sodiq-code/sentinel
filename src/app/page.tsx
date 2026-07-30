@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   ArrowLeftRight,
   ArrowRight,
+  ArrowUp,
   BookOpen,
   BrainCircuit,
   CheckCircle2,
@@ -436,8 +437,29 @@ function Console() {
   const [replayRun, setReplayRun] = useState<0 | 1 | 2>(0); // 0 = idle, 1 = run 1, 2 = run 2
   const [replayBusy, setReplayBusy] = useState(false);
   const [priorPostMortem, setPriorPostMortem] = useState<{ title: string; urn: string } | null>(null);
+  // Toast notification state
+  const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: "success" | "warning" | "error" }>>([]);
+  const [scrolledDown, setScrolledDown] = useState(false);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
+
+  // Toast helper — add a toast with auto-dismiss after 4 seconds
+  function addToast(message: string, type: "success" | "warning" | "error" = "success") {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts((t) => [...t, { id, message, type }]);
+    setTimeout(() => {
+      setToasts((t) => t.filter((x) => x.id !== id));
+    }, 4000);
+  }
+
+  // Scroll-to-top detection for mobile
+  useEffect(() => {
+    function onScroll() {
+      setScrolledDown(window.scrollY > 400);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   const signals = useQuery<SeedSignal[]>({
     queryKey: ["agent-signals"],
@@ -540,6 +562,7 @@ function Console() {
       setElapsed(0);
       setViewedIncident(null);
       runStartRef.current = Date.now();
+      addToast("Investigating signal…", "warning");
     },
     onSuccess: (data) => {
       runStartRef.current = 0;
@@ -548,10 +571,24 @@ function Console() {
       queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
       queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] });
       queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
+      // Toast: resolution status
+      const status = data.incident?.status;
+      if (status === "resolved") addToast("Incident resolved", "success");
+      else if (status === "degraded") addToast("Incident degraded", "warning");
+      else if (status === "failed") addToast("Incident failed", "error");
+      // Toast: write-backs
+      const writebackSteps = data.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document");
+      if (writebackSteps.length > 0) addToast("Post-mortem written to DataHub", "success");
+      // Toast: guardrail refusals
+      const guardrailRefusals = data.steps.filter(
+        (s) => s.toolResult && typeof s.toolResult === "object" && (s.toolResult as Record<string, unknown>)?.guardrail === true && (s.toolResult as Record<string, unknown>)?.decision === "refuse",
+      );
+      if (guardrailRefusals.length > 0) addToast("Guardrail: PII write refused", "error");
     },
     onError: (err: Error) => {
       runStartRef.current = 0;
       setRunError(err.message);
+      addToast("Run failed: " + err.message, "error");
     },
   });
 
@@ -782,6 +819,17 @@ function Console() {
           elapsed={elapsed}
         />
 
+        {/* Run Summary Card — hero moment after a run completes */}
+        <RunSummaryCard result={result} viewedIncident={viewedIncident} />
+
+        {/* Mobile info bar — compact key info on small screens */}
+        <MobileInfoBar
+          result={result}
+          llmStatus={llmStatus.data ?? null}
+          running={running}
+          elapsed={elapsed}
+        />
+
         {/* Compounding-context banner — surfaces when the agent re-runs the
             same scenario and reads its own prior post-mortem. */}
         {(replayRun !== 0 || priorPostMortem || priorPostMortemFromTrace) && (
@@ -872,7 +920,7 @@ function Console() {
 
           {/* Right column: metrics + history + connectors */}
           <div className="space-y-5">
-            <MetricsCard result={result} historyCount={history.data?.length ?? 0} />
+            <MetricsCard result={result} historyCount={history.data?.length ?? 0} running={running} />
             <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
             <IncidentHistory
               items={history.data ?? []}
@@ -903,9 +951,11 @@ function Console() {
             if (!r.ok) throw new Error(j.error ?? "Test failed");
             queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
             queryClient.invalidateQueries({ queryKey: ["trace-log"] });
+            addToast("Connectors tested", "success");
             return j;
           } catch (err) {
             setRunError((err as Error).message);
+            addToast("Connector test failed", "error");
             return null;
           }
         }}
@@ -942,6 +992,20 @@ function Console() {
         events={viewedIncident?.auditEvents ?? []}
         incidentUrn={viewedIncident?.incident.urn ?? null}
       />
+
+      {/* Toast notification container */}
+      <ToastContainer toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
+
+      {/* Scroll-to-top button for mobile */}
+      {scrolledDown && (
+        <button
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          className="fixed bottom-16 right-4 z-40 md:hidden h-10 w-10 rounded-full border border-slate-700 bg-slate-900/90 text-slate-300 shadow-lg shadow-slate-900/50 hover:bg-slate-800 hover:text-emerald-300 transition-colors sentinel-scroll-btn flex items-center justify-center"
+          aria-label="Scroll to top"
+        >
+          <ArrowUp className="h-4 w-4" />
+        </button>
+      )}
     </div>
   );
 }
@@ -1139,7 +1203,12 @@ function ReasoningStream({
         {running && steps.length === 0 && (
           <div className="flex items-center gap-3 py-6 text-slate-400">
             <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
-            <span className="text-sm">Calling the LLM…</span>
+            <span className="text-sm">Calling the LLM</span>
+            <span className="flex items-center gap-1">
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </span>
           </div>
         )}
         <AnimatePresence initial={false}>
@@ -1872,14 +1941,16 @@ function GuardrailCard({
 function MetricsCard({
   result,
   historyCount,
+  running,
 }: {
   result: RunResult | null;
   historyCount: number;
+  running?: boolean;
 }) {
   const tokens = result?.totalTokens;
   const total = tokens ? tokens.promptTokens + tokens.completionTokens : 0;
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
+    <section className={`rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card ${running ? "sentinel-metrics-glow" : ""}`}>
       <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
         <Activity className="h-4 w-4 text-emerald-400" /> Live metrics
       </h2>
@@ -2198,8 +2269,11 @@ function IncidentHistory({
                 {new Date(it.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}
               </span>
             </div>
-            <div className="mt-1 text-xs text-slate-400 font-mono truncate">
+            <div className="mt-1 text-xs text-slate-400 font-mono truncate" title={it.assetUrn}>
               {it.assetUrn.replace(/^urn:li:dataset:\(urn:li:dataPlatform:[^,]+,([^,]+),.*$/, "$1")}
+            </div>
+            <div className="mt-0.5 text-[10px] text-slate-600 font-mono truncate" title={it.urn}>
+              {it.urn.length > 60 ? it.urn.slice(0, 57) + "…" : it.urn}
             </div>
             <div className="mt-0.5 text-[10px] text-slate-500 flex gap-2">
               <span>{it.stepCount} steps</span>
@@ -2463,9 +2537,7 @@ function WritebackDetailCard({
 
       {/* DataHub URN */}
       {writeback.datahubUrn && (
-        <div className="text-[10px] text-slate-400 font-mono truncate mt-1" title={writeback.datahubUrn}>
-          {writeback.datahubUrn}
-        </div>
+        <CopyableUrn value={writeback.datahubUrn} />
       )}
     </motion.div>
   );
@@ -2666,6 +2738,7 @@ function IncidentHeader({ signal, asset, running, elapsed }: {
             <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">On-call data engineer</div>
             <div className="text-sm font-semibold text-slate-100 truncate">{ownerName}</div>
             <div className="text-[11px] font-mono text-slate-500 truncate">{owner?.ownerUrn ?? "urn:li:corpUser:priya.patel"}</div>
+            <CopyableUrn value={owner?.ownerUrn ?? "urn:li:corpUser:priya.patel"} />
             <div className="mt-1 inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/5 px-1.5 py-0.5 text-[10px] font-mono text-rose-300">
               <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-pulse" /> paged · 03:14 UTC
             </div>
@@ -2879,7 +2952,9 @@ function LineageGraph({ rootUrn, steps, running }: {
         </div>
       </div>
 
-      <div className="overflow-x-auto custom-scroll rounded-lg border border-slate-800 bg-slate-950/40">
+      <div className="relative overflow-x-auto custom-scroll rounded-lg border border-slate-800 bg-slate-950/40">
+        {/* CRT scanline overlay */}
+        <div className="sentinel-lineage-scanline" />
         <svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto" style={{ minWidth: svgWidth }}>
           {/* Edges */}
           {edges.map((e, i) => {
@@ -3043,6 +3118,303 @@ function AuditLogDrawer({
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// RunSummaryCard — hero moment after a run completes
+// Shows resolution status, key metrics, actions taken, write-backs, and
+// compounding note. Only appears when a run is complete (not during running,
+// not when viewing an incident).
+// ---------------------------------------------------------------------------
+
+function RunSummaryCard({
+  result,
+  viewedIncident,
+}: {
+  result: RunResult | null;
+  viewedIncident: HydratedIncident | null;
+}) {
+  // Only show when a run is complete (not during running, not when viewing an incident)
+  if (!result || viewedIncident) return null;
+
+  const status = result.incident?.status ?? "unknown";
+  const isResolved = status === "resolved";
+  const isDegraded = status === "degraded";
+  const isFailed = status === "failed";
+
+  // Resolution time
+  const created = result.incident?.createdAt ? new Date(result.incident.createdAt).getTime() : 0;
+  const resolved = result.incident?.resolvedAt ? new Date(result.incident.resolvedAt).getTime() : 0;
+  const resolutionTime = resolved && created ? ((resolved - created) / 1000).toFixed(1) : null;
+
+  // Key metrics
+  const reasoningSteps = result.steps.length;
+  const toolCalls = result.steps.filter((s) => s.kind === "tool_call").length;
+  const writebacks = result.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document").length;
+
+  // Actions taken — extract from tool_call steps
+  const actionsTaken: string[] = [];
+  for (const s of result.steps) {
+    if (s.kind === "tool_call" && s.toolName) {
+      if (s.toolName === "github.openIssue" || s.toolName === "action.github.openIssue") {
+        const num = s.toolArgs?.number as number | undefined;
+        actionsTaken.push(`GitHub issue #${num ?? "?"} opened`);
+      } else if (s.toolName === "slack.postMessage" || s.toolName === "action.slack.postMessage") {
+        actionsTaken.push("Slack triage posted");
+      } else if (s.toolName === "github.openPR" || s.toolName === "action.github.openPR") {
+        actionsTaken.push("Remediation PR opened");
+      }
+    }
+  }
+
+  // Write-backs — brief list
+  const writebackItems: string[] = [];
+  for (const s of result.steps) {
+    if (s.kind === "write_back" || s.toolName === "ack.save_document") {
+      const tr = s.toolResult as Record<string, unknown> | undefined;
+      const title = tr?.title ? String(tr.title) : "";
+      if (title.toLowerCase().includes("post-mortem") || title.toLowerCase().includes("postmortem")) {
+        writebackItems.push("Post-mortem written to DataHub");
+      } else if (s.toolName === "ack.create_assertion" || (tr?.assertionType)) {
+        writebackItems.push("SLA assertion tightened");
+      } else if (title) {
+        writebackItems.push(title);
+      } else {
+        writebackItems.push("Write-back to DataHub");
+      }
+    }
+  }
+
+  // Compounding note — check if a prior post-mortem was found
+  const priorFound = result.steps.some(
+    (s) => s.kind === "tool_result" && s.toolName === "mcp.search_documents" && Array.isArray(s.toolResult),
+  );
+
+  // Color palette
+  const statusColor = isResolved
+    ? { icon: CheckCircle2, text: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30", dot: "bg-emerald-400", ring: "ring-emerald-500/30" }
+    : isDegraded
+      ? { icon: AlertTriangle, text: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-400", ring: "ring-amber-500/30" }
+      : { icon: XCircle, text: "text-rose-300", bg: "bg-rose-500/10", border: "border-rose-500/30", dot: "bg-rose-400", ring: "ring-rose-500/30" };
+
+  const StatusIcon = statusColor.icon;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: "easeOut" }}
+      className={`mt-4 rounded-xl border ${statusColor.border} ${statusColor.bg} p-5`}
+    >
+      {/* Status header */}
+      <div className="flex items-center gap-3 mb-4">
+        <div className={`h-12 w-12 rounded-xl ${statusColor.bg} border ${statusColor.border} flex items-center justify-center ring-2 ${statusColor.ring}`}>
+          <StatusIcon className={`h-6 w-6 ${statusColor.text}`} />
+        </div>
+        <div>
+          <div className={`text-lg font-bold ${statusColor.text} uppercase tracking-wide`}>
+            {isResolved ? "Incident Resolved" : isDegraded ? "Incident Degraded" : "Incident Failed"}
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            {resolutionTime ? `Resolved in ${resolutionTime}s` : "Resolution complete"} · {result.llmModel}
+            {result.actualProvider && result.actualProvider !== result.llmProvider && ` → ${result.actualProvider} (failover)`}
+          </div>
+        </div>
+      </div>
+
+      {/* Key metrics row */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-center">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Resolution time</div>
+          <div className="text-lg font-bold font-mono text-slate-100 tabular-nums">{resolutionTime ?? "—"}s</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-center">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Reasoning steps</div>
+          <div className="text-lg font-bold font-mono text-slate-100 tabular-nums">{reasoningSteps}</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-center">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Tool calls</div>
+          <div className="text-lg font-bold font-mono text-slate-100 tabular-nums">{toolCalls}</div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-3 text-center">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Write-backs</div>
+          <div className="text-lg font-bold font-mono text-slate-100 tabular-nums">{writebacks}</div>
+        </div>
+      </div>
+
+      {/* Actions taken */}
+      {actionsTaken.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-2">Actions taken</div>
+          <div className="flex flex-wrap gap-2">
+            {actionsTaken.map((a, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs font-mono text-amber-200">
+                <Send className="h-3 w-3 text-amber-400" /> {a}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Write-backs */}
+      {writebackItems.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-rose-300 mb-2">Write-backs</div>
+          <div className="flex flex-wrap gap-2">
+            {writebackItems.map((w, i) => (
+              <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/5 px-2.5 py-1 text-xs font-mono text-rose-200">
+                <FileText className="h-3 w-3 text-rose-400" /> {w}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Compounding note */}
+      {priorFound && (
+        <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
+          <div className="flex items-center gap-2 text-xs text-emerald-200">
+            <Sparkles className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="font-medium">Compounding context detected</span>
+            <span className="text-emerald-300/70">— Sentinel read a prior post-mortem before reasoning, producing a shorter, more informed trace.</span>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ToastContainer — bottom-right toast notifications
+// ---------------------------------------------------------------------------
+
+function ToastContainer({
+  toasts,
+  onDismiss,
+}: {
+  toasts: Array<{ id: string; message: string; type: "success" | "warning" | "error" }>;
+  onDismiss: (id: string) => void;
+}) {
+  const colorMap = {
+    success: { border: "border-emerald-500/40", bg: "bg-emerald-500/10", text: "text-emerald-200", icon: CheckCircle2, iconColor: "text-emerald-400" },
+    warning: { border: "border-amber-500/40", bg: "bg-amber-500/10", text: "text-amber-200", icon: AlertTriangle, iconColor: "text-amber-400" },
+    error: { border: "border-rose-500/40", bg: "bg-rose-500/10", text: "text-rose-200", icon: XCircle, iconColor: "text-rose-400" },
+  };
+
+  return (
+    <div className="fixed bottom-16 right-4 z-50 flex flex-col gap-2 pointer-events-none" aria-live="polite">
+      <AnimatePresence>
+        {toasts.map((toast) => {
+          const c = colorMap[toast.type];
+          const Icon = c.icon;
+          return (
+            <motion.div
+              key={toast.id}
+              initial={{ opacity: 0, x: 80, scale: 0.95 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 80, scale: 0.95 }}
+              transition={{ duration: 0.25, ease: "easeOut" }}
+              className={`pointer-events-auto rounded-lg border ${c.border} ${c.bg} backdrop-blur-sm px-4 py-3 shadow-lg shadow-slate-950/50 flex items-center gap-2.5 max-w-xs`}
+            >
+              <Icon className={`h-4 w-4 ${c.iconColor} shrink-0`} />
+              <span className={`text-sm ${c.text} leading-snug`}>{toast.message}</span>
+              <button
+                onClick={() => onDismiss(toast.id)}
+                className="ml-1 text-slate-500 hover:text-slate-300 transition-colors shrink-0"
+                aria-label="Dismiss"
+              >
+                <XCircle className="h-3.5 w-3.5" />
+              </button>
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MobileInfoBar — compact key info on small screens (hidden on md+)
+// ---------------------------------------------------------------------------
+
+function MobileInfoBar({
+  result,
+  llmStatus,
+  running,
+  elapsed,
+}: {
+  result: RunResult | null;
+  llmStatus: LlmResilienceStatus | null;
+  running: boolean;
+  elapsed: number;
+}) {
+  const circuitOpen = llmStatus?.circuit?.isOpen ?? false;
+  return (
+    <div className="md:hidden mt-3 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 flex flex-wrap items-center gap-2 text-[10px] font-mono">
+      <span className="inline-flex items-center gap-1">
+        <Zap className="h-3 w-3 text-slate-500" />
+        <span className="text-slate-500">LLM:</span>
+        <span className="text-slate-300">{result?.llmModel ?? "gemini-2.0-flash"}</span>
+      </span>
+      <span className="text-slate-700">·</span>
+      <span className="inline-flex items-center gap-1">
+        <Database className="h-3 w-3 text-slate-500" />
+        <span className="text-slate-500">Provider:</span>
+        <span className="text-slate-300">{result?.actualProvider ?? result?.llmProvider ?? "gemini"}</span>
+      </span>
+      {result?.totalTokens && (
+        <>
+          <span className="text-slate-700">·</span>
+          <span className="inline-flex items-center gap-1">
+            <Activity className="h-3 w-3 text-slate-500" />
+            <span className="text-slate-300">{(result.totalTokens.promptTokens + result.totalTokens.completionTokens).toLocaleString()} tokens</span>
+          </span>
+        </>
+      )}
+      {circuitOpen && (
+        <>
+          <span className="text-slate-700">·</span>
+          <span className="inline-flex items-center gap-1 text-rose-300">
+            <ShieldAlert className="h-3 w-3" /> throttled
+          </span>
+        </>
+      )}
+      {running && (
+        <>
+          <span className="text-slate-700">·</span>
+          <span className="inline-flex items-center gap-1 text-emerald-300">
+            <Loader2 className="h-3 w-3 animate-spin" /> {elapsed.toFixed(1)}s
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CopyableUrn — small inline URN display with copy-to-clipboard button
+// ---------------------------------------------------------------------------
+
+function CopyableUrn({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard?.writeText(value).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    });
+  }
+
+  return (
+    <button
+      onClick={copy}
+      className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono hover:text-slate-300 transition-colors w-full text-left mt-0.5"
+      title="Click to copy URN"
+    >
+      <span className="truncate">{value}</span>
+      {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-40" />}
+    </button>
   );
 }
 

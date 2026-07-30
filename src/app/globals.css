@@ -390,3 +390,83 @@
 .sentinel-stage-pulse {
   animation: sentinel-stage-pulse 1.8s ease-out infinite;
 }
+
+/* Lineage graph CRT scanline overlay — very faint horizontal lines */
+@keyframes sentinel-crt-scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+.sentinel-lineage-scanline {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+  z-index: 2;
+}
+.sentinel-lineage-scanline::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgb(16 185 129 / 0.08), transparent);
+  animation: sentinel-crt-scanline 4s linear infinite;
+}
+.sentinel-lineage-scanline::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgb(0 0 0 / 0.03) 2px,
+    rgb(0 0 0 / 0.03) 4px
+  );
+  pointer-events: none;
+}
+
+/* Typing indicator — three pulsing dots */
+@keyframes sentinel-typing-dot {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+.sentinel-typing-dot {
+  animation: sentinel-typing-dot 1.4s ease-in-out infinite;
+}
+.sentinel-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.sentinel-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* Metrics card active glow when a run is in progress */
+@keyframes sentinel-metrics-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0.2), 0 0 20px -6px rgb(16 185 129 / 0.15); }
+  50% { box-shadow: 0 0 0 3px rgb(16 185 129 / 0.1), 0 0 30px -4px rgb(16 185 129 / 0.25); }
+}
+.sentinel-metrics-glow {
+  animation: sentinel-metrics-glow 2s ease-in-out infinite;
+  border-color: rgb(16 185 129 / 0.4) !important;
+}
+
+/* Toast notification entrance/exit */
+@keyframes sentinel-toast-in {
+  0% { transform: translateX(100%); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+@keyframes sentinel-toast-out {
+  0% { transform: translateX(0); opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+/* Scroll-to-top button */
+@keyframes sentinel-scroll-btn-in {
+  0% { transform: scale(0.8); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+.sentinel-scroll-btn {
+  animation: sentinel-scroll-btn-in 0.2s ease-out;
+}
