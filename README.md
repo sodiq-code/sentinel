@@ -42,10 +42,10 @@ The full loop runs live: real GitHub issues, real Slack posts, real DataHub writ
                        DataHub signal (freshness / schema / quality)
                                     │
                                     ▼
-                          ┌─────────────────────┐
+                          ┌──────────────────────┐
                           │   Orchestrator       │  ReAct loop
                           │   (orchestrator.ts)  │  (observe → think → act)
-                          └──────────┬──────────┘
+                          └──────────┬───────────┘
                                      │
             ┌────────────────────────┼────────────────────────┐
             ▼                        ▼                        ▼
@@ -145,7 +145,7 @@ sentinel/
 ├── prisma/schema.prisma              # 5 core tables + seed fixtures
 ├── skill/incident-triage/            # 📦 packaged DataHub Skill (manifest + SKILL.md)
 ├── rfc/closed-loop-metadata-agents.md # 📐 RFC generalising the pattern beyond incidents
-├── examples/                         # sample issue, PR patch, post-mortem, assertion, demo-replay
+├── examples/                         # sample issue, PR patch, post-mortem, assertion, demo-replay fixtures
 ├── .github/workflows/ci.yml          # lint + type-check + integration demo
 └── .env.example                      # full config documentation
 ```
@@ -178,7 +178,7 @@ sentinel/
 
 ## Acknowledgements
 
-Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends that to **autonomous** response with a **write-back loop** — Block's prior art is sponsor-validated category, not a competitor. The `nyc-taxi` planted-freshness scenario is the sponsor-provided sample dataset from the hackathon Resources tab.
+Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends that to **autonomous** response with a **write-back loop** — Block's prior art is in the sponsor-validated category, not a competitor. The `nyc-taxi` planted-freshness scenario uses the sponsor-provided sample dataset from the hackathon Resources tab.
 
 ---
 
