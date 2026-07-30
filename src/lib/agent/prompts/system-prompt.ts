@@ -9,12 +9,15 @@
 // The .md files are the canonical, versioned source (PDF §10.2: "committed
 // to repo, versioned"). This module reads them at runtime from
 // `<cwd>/src/lib/agent/prompts/` so the repo's .md files are always the live
-// prompt. A read failure throws — fail-fast, never silently fall back to a
-// stale prompt.
+// prompt in local dev. On Vercel the serverless function filesystem is
+// read-only and has no src/ tree, so we fall back to the bundled inlined
+// copies in _inline.ts (regenerated from the .md files at build time).
+// A read failure NEVER crashes a run — the inlined copy always exists.
 // =============================================================================
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { PROMPT_LAYERS_INLINE } from './_inline'
 
 const PROMPTS_DIR = join(process.cwd(), 'src', 'lib', 'agent', 'prompts')
 
@@ -22,14 +25,20 @@ const PROMPTS_DIR = join(process.cwd(), 'src', 'lib', 'agent', 'prompts')
 export const PROMPT_VERSION = 'sentinel-v2-phase3-1'
 
 function readLayer(name: string): string {
+  // 1) Try the live .md file from disk (local dev — the canonical source).
   try {
-    return readFileSync(join(PROMPTS_DIR, name), 'utf8').trimEnd()
-  } catch (err) {
-    throw new Error(
-      `Sentinel system-prompt: could not read layer '${name}' from ${PROMPTS_DIR}. ` +
-        `Ensure the prompt files are committed. Cause: ${(err as Error).message}`,
-    )
+    return readFileSync(join(PROMPTS_DIR, `${name}.md`), 'utf8').trimEnd()
+  } catch {
+    // File missing or unreadable (e.g. Vercel serverless — no src/ tree).
+    // Fall through to the bundled inlined copy.
   }
+  // 2) Bundled fallback — always present, regenerated from the .md files.
+  const inlined = PROMPT_LAYERS_INLINE[name]
+  if (inlined) return inlined.trimEnd()
+  // Should never happen — every layer is in _inline.ts.
+  throw new Error(
+    `Sentinel system-prompt: could not load layer '${name}' from disk or inline bundle.`,
+  )
 }
 
 export interface SystemPromptParts {
@@ -40,13 +49,13 @@ export interface SystemPromptParts {
   version: string
 }
 
-/** Read each layer from disk. Called once per orchestrator run (cheap; small files). */
+/** Read each layer. Called once per orchestrator run (cheap; small files). */
 export function loadPromptParts(): SystemPromptParts {
   return {
-    role: readLayer('role.md'),
-    workflow: readLayer('workflow.md'),
-    governance: readLayer('governance.md'),
-    tools: readLayer('tools.md'),
+    role: readLayer('role'),
+    workflow: readLayer('workflow'),
+    governance: readLayer('governance'),
+    tools: readLayer('tools'),
     version: PROMPT_VERSION,
   }
 }
@@ -58,14 +67,19 @@ export function assembleSystemPrompt(): string {
     `# Sentinel — System prompt (${p.version})`,
     '',
     '---',
+    '',
     p.role,
+    '',
     '---',
+    '',
     p.workflow,
+    '',
     '---',
+    '',
     p.governance,
+    '',
     '---',
+    '',
     p.tools,
   ].join('\n')
 }
-
-export { PROMPTS_DIR }
