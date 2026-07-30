@@ -54,7 +54,7 @@ export interface GuardrailRule {
 export const NoMergeRule: GuardrailRule = {
   id: 'no-merge',
   description:
-    'Sentinel NEVER merges a PR. No merge tool exists; any merge-like argument is refused. (PDF §9.3.5)',
+    'Sentinel NEVER merges a PR. No merge tool exists; any merge-like argument is refused.',
   async check(toolName, args) {
     const name = toolName.toLowerCase()
     if (name.includes('merge') || name.includes('github.merge') || name.includes('github.close_pr')) {
@@ -62,7 +62,7 @@ export const NoMergeRule: GuardrailRule = {
         decision: 'refuse',
         ruleId: 'no-merge',
         reason:
-          'Sentinel never merges or closes pull requests (PDF §9.3.5 no-merge policy). PRs are left OPEN for human review.',
+          'Sentinel never merges or closes pull requests. PRs are left OPEN for human review.',
       }
     }
     // If the LLM smuggles a merge flag into openPR args, refuse.
@@ -93,7 +93,7 @@ export const DIRECT_WRITE_ALLOWLIST = new Set(['ack.save_document', 'ack.create_
 export const DirectWriteAllowlistRule: GuardrailRule = {
   id: 'direct-write-allowlist',
   description:
-    'Only save_document (post-mortem) and create_assertion (SLA) are direct writes. All other ack.* are proposals and surface an approval gate. (PDF §9.5.5)',
+    'Only save_document (post-mortem) and create_assertion (SLA) are direct writes. All other ack.* are proposals and surface an approval gate.',
   async check(toolName, _args, ctx) {
     const isAckWrite = toolName.startsWith('ack.') && toolName !== 'ack.save_document' && toolName !== 'ack.create_assertion'
     if (!isAckWrite) return null
@@ -111,7 +111,7 @@ export const DirectWriteAllowlistRule: GuardrailRule = {
     return {
       decision: 'needs_approval',
       ruleId: 'direct-write-allowlist',
-      reason: `${toolName} is a PROPOSAL (PDF §9.4.2 steps 12-14). Ownership / glossary / tags / description are enrichment only — humans approve. Reversible; surfaces a proposal card.`,
+      reason: `${toolName} is a PROPOSAL. Ownership / glossary / tags / description are enrichment only — humans approve. Reversible; surfaces a proposal card.`,
       proposedAction: proposed,
       approver: 'data owner',
     }
@@ -131,8 +131,8 @@ export const DirectWriteAllowlistRule: GuardrailRule = {
 export const ActionApprovalGateRule: GuardrailRule = {
   id: 'action-approval-gate',
   description:
-    'action.* tools (github + slack) target external systems. Logged by default; surfaces a proposal card in the UI. (PDF §11.1 beat 2:00–2:20)',
-  async check(toolName, args) {
+    'action.* tools (github + slack) target external systems. Logged by default; surfaces a proposal card in the UI.',
+  async check(toolName, _args) {
     if (!toolName.startsWith('action.')) return null
     // Allow action tools — the trace + dry-run toggle are the demo's approval
     // surface. We do NOT block them, but the orchestrator records the Action row

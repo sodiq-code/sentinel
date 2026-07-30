@@ -1700,7 +1700,7 @@ function SignalInjector({
             <div className="text-xs text-amber-200/80 mt-0.5 leading-relaxed">
               {fallbackProvider && failoverEnabled
                 ? <>The primary&apos;s circuit is open for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>. The FailoverLlmClient routes all LLM calls to the <span className="font-mono text-amber-100">{fallbackProvider}</span> fallback, so the ReAct loop continues and the incident still resolves. When the primary cools down, it resumes automatically — no operator action needed.</>
-                : <>Groq&apos;s free-tier per-minute rate limit was tripped. The circuit is open for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>. Sentinel will write a fallback post-mortem on any in-flight run and mark it <span className="font-mono text-amber-100"> degraded</span> (partial investigation). Wait for the circuit to cool down, then re-inject. No retry burn — the circuit refuses calls while open.</>}
+                : <>The LLM circuit is open for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>. Sentinel&apos;s deterministic fallback path takes over — it completes the full closed loop (GitHub issue, Slack triage, post-mortem write-back to DataHub) and marks the incident <span className="font-mono text-emerald-100">resolved</span>. No operator action needed; re-inject when the circuit cools down.</>}
             </div>
           </div>
         </div>

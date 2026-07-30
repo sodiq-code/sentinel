@@ -42,7 +42,7 @@ export function classifyTags(tags: GovernanceTag[]): PiiCheckResult {
     return {
       hasPii: true,
       tags: piiTags,
-      reason: `Asset carries PII governance tag(s): ${piiTags.map((t) => `'${t.name}'`).join(', ')}. Sentinel refuses write-back without explicit human approval. (PDF §12.3)`,
+      reason: `Asset carries PII governance tag(s): ${piiTags.map((t) => `'${t.name}'`).join(', ')}. Sentinel refuses write-back without explicit human approval.`,
     }
   }
   if (restrictedTags.length > 0) {
