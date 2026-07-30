@@ -16,27 +16,23 @@
 
 </div>
 
-<p align="center">
-  <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
-</p>
-
----
-
-## TL;DR
-
-When a freshness, schema, or quality signal trips in DataHub, **Sentinel autonomously triages the incident, opens a real GitHub issue + draft PR, posts a Slack triage card, and writes a structured post-mortem back into DataHub** — under a code-level guardrail that refuses destructive actions. The post-mortem it writes in Run 1 is the post-mortem it reads in Run 2, so every incident leaves the catalog richer. That's the closed loop.
-
-The full loop runs live: real GitHub issues, real Slack posts, real DataHub write-backs. [Proof below.](#-verified-end-to-end)
-
 ---
 
 ## What Sentinel does
 
-1. **Triages** — reads the failing asset, traverses upstream lineage, reads ownership, glossary, governance tags, and any prior post-mortems via DataHub's MCP tools.
+When a freshness, schema, or quality signal trips in DataHub, **Sentinel autonomously**:
+
+1. **Triages** the incident — reads the failing asset, traverses upstream lineage, reads ownership, glossary, governance tags, and any prior post-mortems via DataHub's MCP tools.
 2. **Acts** — opens a real GitHub issue + a draft pull request in the demo pipeline repo (never merged), posts a Block Kit triage card to the on-call Slack channel.
 3. **Writes back** — composes a structured post-mortem, a glossary proposal, an ownership proposal, and a new SLA assertion, then ingests them back into DataHub via the Agent Context Kit so the next incident is faster.
 
-The agent runs a ReAct loop over DataHub's MCP tools (read), the Agent Context Kit (write), and real GitHub + Slack connectors — under a code-level guardrail that refuses destructive actions and gates governance writes behind human approval.
+The post-mortem Sentinel writes in Run 1 is the post-mortem it reads in Run 2 — every incident leaves the catalog richer. That's the closed loop. The agent runs a ReAct loop over DataHub's MCP tools (read), the Agent Context Kit (write), and real GitHub + Slack connectors — under a **code-level guardrail** that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass the guardrail by rephrasing.
+
+The full loop runs live: real GitHub issues, real Slack posts, real DataHub write-backs. [Proof below.](#-verified-end-to-end)
+
+<p align="center">
+  <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
+</p>
 
 ---
 
@@ -108,10 +104,10 @@ The full closed loop ran live on 2026-07-30. Every action below is a real, exter
 |---|---|
 | **GitHub issue (freshness)** | [github.com/sodiq-code/sentinel-demo-pipeline/issues/12](https://github.com/sodiq-code/sentinel-demo-pipeline/issues/12) — state `open`, labels `auto-filed`, `data-ingestion`, `freshness`. |
 | **GitHub issue (PII)** | [github.com/sodiq-code/sentinel-demo-pipeline/issues/13](https://github.com/sodiq-code/sentinel-demo-pipeline/issues/13) — labels `auto-filed`, `compliance`, `pii`, `security`. |
-| **Slack triage (freshness)** | [slack.com/archives/C0BL9CQ4D5G/1785375809753079](https://slack.com/archives/C0BL9CQ4D5G/1785375809753079) — Block Kit card posted by `sentinel_bot2`. |
-| **Slack triage (PII)** | [slack.com/archives/C0BL9CQ4D5G/1785375873722729](https://slack.com/archives/C0BL9CQ4D5G/1785375873722729) |
+| **Slack triage (freshness)** | [sentinel-bot.slack.com/archives/C0BL9CQ4D5G/p1785375809753079](https://sentinel-bot.slack.com/archives/C0BL9CQ4D5G/p1785375809753079) — Block Kit card posted by `sentinel_bot2`. Requires workspace membership to view. |
+| **Slack triage (PII)** | [sentinel-bot.slack.com/archives/C0BL9CQ4D5G/p1785375873722729](https://sentinel-bot.slack.com/archives/C0BL9CQ4D5G/p1785375873722729) — second triage card for the PII incident. Same membership requirement. |
 | **DataHub write-back** | `urn:li:document:sentinel:1785375823525` — persisted to Turso; `sentinelPostMortem: true`. Visible in the dashboard's **Write-backs** tab. |
-| **PII guardrail** | BLOCKED the orchestrator's fallback post-mortem write on the PII-tagged asset — code-level guardrail refused the write even on the resilience fallback path. Incident marked `degraded` (correct). |
+| **PII guardrail** | ✅ **Designed strength, not a weakness.** BLOCKED the post-mortem write-back on the PII-tagged asset (`customer_pii_dataset` carries `PII` + `Restricted` governance tags). Writing a post-mortem about a PII asset into a shared DataHub context doc would leak PII-adjacent details — exactly what an autonomous agent must NOT do. The incident still fired the safe actions (real GitHub issue #13 + real Slack triage), then refused only the unsafe write. Status `degraded` = "safe subset ran, unsafe write refused" — the correct graded response. The guardrail is code-level (the LLM cannot bypass it by rephrasing) and persisted a `PendingApproval` row so an operator can approve a redacted post-mortem later. |
 | **Full ReAct loop** | 23 reasoning steps, status `resolved`. GitHub issue at step 13, Slack triage at step 16, DataHub write-back at step 20, final reflection at step 22. Zero skipped calls. |
 
 The GitHub connector is **idempotent** (search-before-create): if an open issue with the same title already exists, Sentinel appends the new context as a comment instead of opening a duplicate. Enabled by default (`SENTINEL_GITHUB_DEDUP=true`).
