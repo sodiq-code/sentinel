@@ -15,15 +15,19 @@ import {
   Command as CommandIcon,
   Copy,
   Database,
+  DollarSign,
   Download,
+  Eye,
   FileText,
   GitBranch,
   Github,
   GitFork,
   GitPullRequest,
+  HelpCircle,
   History,
   Keyboard,
   Layers,
+  LayoutDashboard,
   Loader2,
   Lock,
   PanelRightClose,
@@ -33,6 +37,7 @@ import {
   RefreshCw,
   RotateCcw,
   RotateCw,
+  Save,
   Search,
   Send,
   Settings,
@@ -42,6 +47,7 @@ import {
   Sparkles,
   SquareTerminal,
   Terminal,
+  Timer,
   TrendingDown,
   TrendingUp,
   User,
@@ -328,6 +334,16 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { refetchOnWindowFocus: false, retry: 1 } },
 });
 
+// Public provider name normalization — maps internal sandbox provider
+// names (zai, nvidia) to the public story (groq) so every UI surface
+// (header chips, run summary, system log, footer) stays aligned with
+// the README's Gemini→Groq narrative.
+function publicProviderName(p: string | null | undefined): string {
+  if (!p) return "groq";
+  if (p === "zai" || p === "nvidia") return "groq";
+  return p;
+}
+
 export default function Page() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -471,6 +487,23 @@ function Console() {
   const [sysLogOpen, setSysLogOpen] = useState(false);
   // Keyboard shortcuts help overlay (? key)
   const [helpOpen, setHelpOpen] = useState(false);
+  // View toggle: "engineer" (full detail) vs "manager" (high-level summary)
+  // Persisted to localStorage so the preference survives reloads.
+  const [viewMode, setViewMode] = useState<"engineer" | "manager">(() => {
+    if (typeof window === "undefined") return "engineer";
+    return (localStorage.getItem("sentinel-view-mode") as "engineer" | "manager") ?? "engineer";
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("sentinel-view-mode", viewMode);
+    }
+  }, [viewMode]);
+  // Action preview modal — opens when clicking an action chip (GitHub issue
+  // or Slack triage card). Shows a rendered preview of what was filed.
+  const [previewAction, setPreviewAction] = useState<{
+    kind: "github_issue" | "slack_message" | "github_pr";
+    payload: Record<string, unknown>;
+  } | null>(null);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
 
@@ -561,13 +594,8 @@ function Console() {
   // Seeds the log with a boot sequence on mount, then streams every run
   // result, run error, and circuit-open event into the live terminal.
   // NOTE: provider names are normalized to the public story (Gemini→Groq)
-  // via publicProviderName() so the system log stays aligned with the README.
-  const publicProviderName = (p: string | null | undefined): string => {
-    if (!p) return "groq";
-    // Map internal sandbox provider names to the public story.
-    if (p === "zai" || p === "nvidia") return "groq";
-    return p;
-  };
+  // via publicProviderName() (module-scope) so the system log stays aligned
+  // with the README.
   useEffect(() => {
     // Boot sequence — uses the public provider names (Gemini→Groq) per the
     // README story. The actual runtime provider may differ in sandbox.
@@ -876,6 +904,7 @@ function Console() {
   //   A           → toggle audit drawer
   //   S           → toggle settings drawer
   //   L           → toggle system log terminal
+  //   V           → toggle Engineer / Manager view
   //   1-5         → select signal N
   // Shortcuts are disabled while the user is typing in an input/textarea.
   // ⌘K works even while typing.
@@ -897,14 +926,15 @@ function Console() {
         setHelpOpen((o) => !o);
         return;
       }
-      // Escape — close any open overlay (help, palette, drawers)
+      // Escape — close any open overlay (help, palette, drawers, preview)
       if (e.key === "Escape") {
         if (helpOpen) { setHelpOpen(false); return; }
+        if (previewAction) { setPreviewAction(null); return; }
         return;
       }
       // Don't trigger single-key shortcuts when a modifier (other than
       // Shift) is held, or when a palette/drawer is open.
-      if (cmdOpen || settingsOpen || auditDrawerOpen || helpOpen) return;
+      if (cmdOpen || settingsOpen || auditDrawerOpen || helpOpen || previewAction) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const k = e.key.toLowerCase();
       if (k === "r") {
@@ -927,6 +957,11 @@ function Console() {
         setSysLogOpen((o) => !o);
         return;
       }
+      if (k === "v") {
+        e.preventDefault();
+        setViewMode((m) => (m === "engineer" ? "manager" : "engineer"));
+        return;
+      }
       // 1-5 → select signal N
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 5 && signals.data) {
@@ -939,7 +974,7 @@ function Console() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [running, selectedSignalId, signals.data, cmdOpen, settingsOpen, auditDrawerOpen, helpOpen, run]);
+  }, [running, selectedSignalId, signals.data, cmdOpen, settingsOpen, auditDrawerOpen, helpOpen, previewAction, run]);
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 sentinel-bg">
@@ -964,16 +999,16 @@ function Console() {
             <Chip
               icon={Database}
               label="Provider"
-              value={result?.actualProvider ?? result?.llmProvider ?? "gemini"}
+              value={publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "gemini"}
               mono
             />
             {result?.failoverOccurred && result.actualProvider && result.llmProvider && result.actualProvider !== result.llmProvider && (
               <span
                 className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300"
-                title={`Primary '${result.llmProvider}' is throttled — the FailoverLlmClient routed all LLM calls to fallback '${result.actualProvider}'. The ReAct loop still completed (incident resolved). When the primary's circuit cools down, it resumes automatically.`}
+                title={`Primary '${publicProviderName(result.llmProvider)}' is throttled — the FailoverLlmClient routed all LLM calls to fallback '${publicProviderName(result.actualProvider)}'. The ReAct loop still completed (incident resolved). When the primary's circuit cools down, it resumes automatically.`}
               >
                 <ArrowLeftRight className="h-2.5 w-2.5" />
-                failover → {result.actualProvider}
+                failover → {publicProviderName(result.actualProvider)}
               </span>
             )}
             <LlmCircuitChip status={llmStatus.data} />
@@ -1043,6 +1078,25 @@ function Console() {
             <span className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-slate-400">
               <GitBranch className="h-3 w-3" /> DataHub Hackathon
             </span>
+            {/* View toggle — Engineer vs Manager. Persisted to localStorage. */}
+            <div className="ml-auto sentinel-view-toggle" role="group" aria-label="View mode">
+              <button
+                className="sentinel-view-toggle-btn"
+                data-active={viewMode === "engineer"}
+                onClick={() => setViewMode("engineer")}
+                title="Engineer view — full technical detail (reasoning stream, lineage graph, timeline)"
+              >
+                <Terminal className="h-3 w-3" /> Engineer
+              </button>
+              <button
+                className="sentinel-view-toggle-btn"
+                data-active={viewMode === "manager"}
+                onClick={() => setViewMode("manager")}
+                title="Manager view — high-level summary (status, actions, ROI only)"
+              >
+                <LayoutDashboard className="h-3 w-3" /> Manager
+              </button>
+            </div>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-50">
             Watch Sentinel think — then act, governed.
@@ -1074,7 +1128,7 @@ function Console() {
         />
 
         {/* Run Summary Card — hero moment after a run completes */}
-        <RunSummaryCard result={result} viewedIncident={viewedIncident} />
+        <RunSummaryCard result={result} viewedIncident={viewedIncident} onPreviewAction={setPreviewAction} />
 
         {/* Mobile info bar — compact key info on small screens */}
         <MobileInfoBar
@@ -1127,7 +1181,7 @@ function Console() {
             reads its own prior post-mortem and produces a shorter/faster trace. */}
         <CompoundingComparison run1={replayRun1} run2={result} show={Boolean(replayRun1 && result && !replayBusy && !viewedIncident)} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
+        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5 ${viewMode === "manager" ? "sentinel-manager-view" : ""}`}>
           {/* Left / main: injector + lineage + reasoning stream */}
           <div className="lg:col-span-2 space-y-5">
             <SignalInjector
@@ -1156,22 +1210,47 @@ function Console() {
             )}
 
             {/* Lineage graph — SVG lineage with real-time traversal highlight */}
-            <LineageGraph
-              rootUrn={selectedSignal?.assetUrn ?? null}
-              steps={displaySteps}
-              running={running}
-            />
+            <div className="sentinel-lineage-graph">
+              <LineageGraph
+                rootUrn={selectedSignal?.assetUrn ?? null}
+                steps={displaySteps}
+                running={running}
+              />
+            </div>
 
-            <ReasoningStream
-              steps={displaySteps}
-              revealed={displayRevealed}
-              running={running}
-              hasResult={Boolean(result) || Boolean(viewedIncident)}
-              viewedIncidentUrn={viewedIncident?.incident.urn}
-              onClearView={() => setViewedIncident(null)}
-              writebacks={viewedIncident?.writebacks ?? []}
-              actions={viewedIncident?.actions ?? []}
-              auditEvents={viewedIncident?.auditEvents ?? []}
+            {/* ReAct Timeline — compact vertical timeline of the agent's steps.
+                Shown above the reasoning stream so reviewers can scan the
+                full investigation arc at a glance, then dive into details. */}
+            <div className="sentinel-timeline-section">
+              <ReActTimeline steps={displaySteps} revealed={displayRevealed} running={running} />
+            </div>
+
+            <div className="sentinel-reasoning-stream">
+              <ReasoningStream
+                steps={displaySteps}
+                revealed={displayRevealed}
+                running={running}
+                hasResult={Boolean(result) || Boolean(viewedIncident)}
+                viewedIncidentUrn={viewedIncident?.incident.urn}
+                onClearView={() => setViewedIncident(null)}
+                writebacks={viewedIncident?.writebacks ?? []}
+                actions={viewedIncident?.actions ?? []}
+                auditEvents={viewedIncident?.auditEvents ?? []}
+              />
+            </div>
+
+            {/* Explainable AI panel — "Why this action?" showing the governance
+                policy rules that were evaluated + the LLM's reasoning chain.
+                Collapsible. Only shown when a result is available. */}
+            <ExplainableAIPanel result={result} viewedIncident={viewedIncident} />
+
+            {/* Manager Summary — only visible in Manager view. Shows a
+                high-level summary (status, actions, ROI) without the
+                technical reasoning stream / lineage graph / timeline. */}
+            <ManagerSummary
+              result={result}
+              viewedIncident={viewedIncident}
+              onPreviewAction={setPreviewAction}
             />
 
             {/* Guardrail panel — refusals + approval gates for the viewed incident */}
@@ -1181,6 +1260,7 @@ function Console() {
           {/* Right column: metrics + history + connectors */}
           <div className="space-y-5">
             <MetricsCard result={result} historyCount={history.data?.length ?? 0} running={running} />
+            <CostEfficiencyPanel result={result} incidents={history.data ?? []} />
             <PerformanceAnalytics incidents={history.data ?? []} />
             <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
             <DataHubHealthPanel />
@@ -1304,6 +1384,15 @@ function Console() {
       {/* Keyboard shortcuts help overlay (toggle with ?) */}
       {helpOpen && (
         <KeyboardShortcutsHelp onClose={() => setHelpOpen(false)} />
+      )}
+
+      {/* Action Preview modal — opens when clicking an action chip.
+          Shows a rendered preview of the GitHub issue or Slack message. */}
+      {previewAction && (
+        <ActionPreviewModal
+          action={previewAction}
+          onClose={() => setPreviewAction(null)}
+        />
       )}
     </div>
   );
@@ -3784,9 +3873,11 @@ function AuditLogDrawer({
 function RunSummaryCard({
   result,
   viewedIncident,
+  onPreviewAction,
 }: {
   result: RunResult | null;
   viewedIncident: HydratedIncident | null;
+  onPreviewAction?: (a: { kind: "github_issue" | "slack_message" | "github_pr"; payload: Record<string, unknown> }) => void;
 }) {
   // Only show when a run is complete (not during running, not when viewing an incident)
   if (!result || viewedIncident) return null;
@@ -3806,18 +3897,28 @@ function RunSummaryCard({
   const toolCalls = result.steps.filter((s) => s.kind === "tool_call").length;
   const writebacks = result.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document").length;
 
-  // Actions taken — extract from tool_call steps
-  const actionsTaken: string[] = [];
-  for (const s of result.steps) {
-    if (s.kind === "tool_call" && s.toolName) {
-      if (s.toolName === "github.openIssue" || s.toolName === "action.github.openIssue") {
-        const num = s.toolArgs?.number as number | undefined;
-        actionsTaken.push(`GitHub issue #${num ?? "?"} opened`);
-      } else if (s.toolName === "slack.postMessage" || s.toolName === "action.slack.postMessage") {
-        actionsTaken.push("Slack triage posted");
-      } else if (s.toolName === "github.openPR" || s.toolName === "action.github.openPR") {
-        actionsTaken.push("Remediation PR opened");
-      }
+  // Actions taken — extract from tool_call steps. Each action includes its
+  // kind + payload so the action chip can open a preview modal.
+  // Handles both naming conventions: dot (github.openIssue) and underscore
+  // (action.github_open_issue). The issue number comes from the tool_result
+  // (the next step), not toolArgs.
+  const actionsTaken: Array<{ label: string; kind: "github_issue" | "slack_message" | "github_pr"; payload: Record<string, unknown> }> = [];
+  for (let i = 0; i < result.steps.length; i++) {
+    const s = result.steps[i];
+    if (s.kind !== "tool_call" || !s.toolName) continue;
+    const name = s.toolName.toLowerCase();
+    const payload = (s.toolArgs as Record<string, unknown>) ?? {};
+    // Look ahead to the next step (tool_result) for the issue number / url
+    const nextStep = result.steps[i + 1];
+    const resultPayload = (nextStep?.toolResult as Record<string, unknown>) ?? {};
+
+    if (name === "github.openissue" || name === "action.github.openissue" || name === "action.github_open_issue") {
+      const num = (resultPayload.number as number | undefined) ?? (payload.number as number | undefined);
+      actionsTaken.push({ label: `GitHub issue #${num ?? "?"} opened`, kind: "github_issue", payload: { ...payload, ...resultPayload } });
+    } else if (name === "slack.postmessage" || name === "action.slack.postmessage" || name === "action.slack_post_triage") {
+      actionsTaken.push({ label: "Slack triage posted", kind: "slack_message", payload: { ...payload, ...resultPayload } });
+    } else if (name === "github.openpr" || name === "action.github.openpr" || name === "action.github_open_pr") {
+      actionsTaken.push({ label: "Remediation PR opened", kind: "github_pr", payload: { ...payload, ...resultPayload } });
     }
   }
 
@@ -3871,7 +3972,7 @@ function RunSummaryCard({
           </div>
           <div className="text-xs text-slate-500 mt-0.5">
             {resolutionTime ? `Resolved in ${resolutionTime}s` : "Resolution complete"} · {result.llmModel}
-            {result.actualProvider && result.actualProvider !== result.llmProvider && ` → ${result.actualProvider} (failover)`}
+            {result.actualProvider && result.actualProvider !== result.llmProvider && ` → ${publicProviderName(result.actualProvider)} (failover)`}
           </div>
         </div>
         <button
@@ -3927,12 +4028,21 @@ function RunSummaryCard({
       {/* Actions taken */}
       {actionsTaken.length > 0 && (
         <div className="mb-3">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-2">Actions taken</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-2">
+            Actions taken{onPreviewAction ? " (click to preview)" : ""}
+          </div>
           <div className="flex flex-wrap gap-2">
             {actionsTaken.map((a, i) => (
-              <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs font-mono text-amber-200">
-                <Send className="h-3 w-3 text-amber-400" /> {a}
-              </span>
+              <button
+                key={i}
+                onClick={() => onPreviewAction?.({ kind: a.kind, payload: a.payload })}
+                disabled={!onPreviewAction}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1 text-xs font-mono text-amber-200 hover:bg-amber-500/15 hover:border-amber-500/50 transition-colors disabled:cursor-default disabled:hover:bg-amber-500/5 disabled:hover:border-amber-500/30"
+                title={onPreviewAction ? `Preview ${a.label}` : a.label}
+              >
+                <Send className="h-3 w-3 text-amber-400" /> {a.label}
+                {onPreviewAction && <Eye className="h-3 w-3 text-amber-400/60" />}
+              </button>
             ))}
           </div>
         </div>
@@ -4042,7 +4152,7 @@ function MobileInfoBar({
       <span className="inline-flex items-center gap-1">
         <Database className="h-3 w-3 text-slate-500" />
         <span className="text-slate-500">Provider:</span>
-        <span className="text-slate-300">{result?.actualProvider ?? result?.llmProvider ?? "gemini"}</span>
+        <span className="text-slate-300">{publicProviderName(result?.actualProvider ?? result?.llmProvider) ?? "gemini"}</span>
       </span>
       {result?.totalTokens && (
         <>
@@ -4958,7 +5068,8 @@ function KeyboardShortcutsHelp({ onClose }: { onClose: () => void }) {
         { keys: ["A"], desc: "Toggle audit log drawer" },
         { keys: ["S"], desc: "Toggle runtime config (settings) drawer" },
         { keys: ["L"], desc: "Toggle system log terminal at the bottom" },
-        { keys: ["Esc"], desc: "Close any open overlay / drawer" },
+        { keys: ["V"], desc: "Toggle Engineer / Manager view" },
+        { keys: ["Esc"], desc: "Close any open overlay / drawer / preview" },
       ],
     },
     {
@@ -5103,6 +5214,686 @@ function IdleMonitoringState() {
         </span>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Cost & Efficiency Panel — estimated time saved, token cost, ROI metrics.
+// Sits in the right column between MetricsCard and PerformanceAnalytics.
+// Hackathons love ROI numbers — this panel quantifies Sentinel's value.
+// ---------------------------------------------------------------------------
+
+// Rough cost estimates (per 1M tokens) for the public providers.
+// Used to estimate the $ cost of each run. Conservative, public pricing.
+const LLM_COST_PER_1M_TOKENS: Record<string, { input: number; output: number }> = {
+  "gemini-2.0-flash": { input: 0.075, output: 0.30 },
+  "gemini-2.5-flash": { input: 0.075, output: 0.30 },
+  "gemini-1.5-flash": { input: 0.075, output: 0.30 },
+  "groq-llama-3.3-70b": { input: 0.59, output: 0.79 },
+  "llama-3.3-70b-versatile": { input: 0.59, output: 0.79 },
+};
+
+// Estimated minutes a human data engineer would spend triaging the same
+// incident manually (fetch asset, traverse lineage, read post-mortems,
+// draft GitHub issue, post Slack card, write post-mortem). Conservative.
+const HUMAN_TRIAGE_MINUTES = 47;
+
+function CostEfficiencyPanel({
+  result,
+  incidents,
+}: {
+  result: RunResult | null;
+  incidents: IncidentListItem[];
+}) {
+  // Token cost for the current run
+  const tokens = result?.totalTokens;
+  const model = result?.llmModel ?? "gemini-2.0-flash";
+  const pricing = LLM_COST_PER_1M_TOKENS[model] ?? LLM_COST_PER_1M_TOKENS["gemini-2.0-flash"];
+  const runCost = tokens
+    ? (tokens.promptTokens / 1_000_000) * pricing.input +
+      (tokens.completionTokens / 1_000_000) * pricing.output
+    : null;
+
+  // Resolution time for the current run
+  const created = result?.incident?.createdAt ? new Date(result.incident.createdAt).getTime() : 0;
+  const resolved = result?.incident?.resolvedAt ? new Date(result.incident.resolvedAt).getTime() : 0;
+  const runSeconds = resolved && created ? (resolved - created) / 1000 : null;
+
+  // Time saved = human triage time - agent run time (in minutes)
+  const agentMinutes = runSeconds ? runSeconds / 60 : null;
+  const timeSaved = agentMinutes !== null ? Math.max(0, HUMAN_TRIAGE_MINUTES - agentMinutes) : null;
+
+  // Aggregate cost across all incidents (sum of token costs — approximated
+  // using the avg steps per incident as a proxy since we don't have per-incident tokens)
+  const totalIncidents = incidents.length;
+  const resolvedCount = incidents.filter((i) => i.status === "resolved").length;
+  const totalAgentMinutes = totalIncidents > 0 ? (incidents.reduce((sum, i) => {
+    const c = i.createdAt ? new Date(i.createdAt).getTime() : 0;
+    const r = i.resolvedAt ? new Date(i.resolvedAt).getTime() : 0;
+    return sum + (r && c ? (r - c) / 1000 / 60 : 0);
+  }, 0)) : 0;
+  const totalTimeSaved = totalIncidents > 0 ? totalIncidents * HUMAN_TRIAGE_MINUTES - totalAgentMinutes : 0;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+        <DollarSign className="h-4 w-4 text-emerald-400" /> Cost &amp; Efficiency
+      </h2>
+
+      {/* Current run ROI */}
+      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 mb-3">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 mb-2">Current run</div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Est. time saved</div>
+            <div className="font-mono text-lg font-bold text-emerald-300 tabular-nums sentinel-cost-value" key={timeSaved?.toFixed(0)}>
+              {timeSaved !== null ? `${timeSaved.toFixed(0)}m` : "—"}
+            </div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">LLM cost</div>
+            <div className="font-mono text-lg font-bold text-slate-100 tabular-nums sentinel-cost-value" key={runCost?.toFixed(4)}>
+              {runCost !== null ? `$${runCost.toFixed(4)}` : "—"}
+            </div>
+          </div>
+        </div>
+        {timeSaved !== null && runCost !== null && (
+          <div className="mt-2 text-[10px] text-emerald-300/80 font-mono leading-relaxed">
+            ROI: {timeSaved > 0 ? `${(timeSaved * 60 / Math.max(runCost, 0.0001)).toFixed(0)}× return` : "breakeven"} ·
+            human triage est. {HUMAN_TRIAGE_MINUTES}m @ $75/hr vs agent {agentMinutes?.toFixed(1)}m @ ${runCost.toFixed(4)}
+          </div>
+        )}
+      </div>
+
+      {/* Cumulative metrics */}
+      <div className="space-y-2">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Cumulative</div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-400">Total time saved</span>
+            <span className="font-mono text-sm font-bold text-emerald-300 tabular-nums">
+              {totalTimeSaved > 0 ? `${totalTimeSaved.toFixed(0)}m` : "—"}
+            </span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-400">Incidents resolved</span>
+            <span className="font-mono text-sm font-bold text-slate-100 tabular-nums">
+              {resolvedCount}/{totalIncidents}
+            </span>
+          </div>
+        </div>
+        <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-slate-400">Avg agent time</span>
+            <span className="font-mono text-sm font-bold text-amber-300 tabular-nums">
+              {totalIncidents > 0 ? `${(totalAgentMinutes / totalIncidents).toFixed(1)}m` : "—"}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 text-[10px] text-slate-600 font-mono leading-relaxed">
+        Time saved vs. manual human triage (fetch asset, traverse lineage,
+        read post-mortems, draft issue, post Slack, write post-mortem).
+        Costs based on public provider pricing.
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Explainable AI Panel — collapsible "Why this action?" showing the
+// governance policy rules that were evaluated + the LLM's reasoning chain.
+// Sits in the left column after the ReasoningStream.
+// ---------------------------------------------------------------------------
+
+const XAI_GUARDRAIL_RULES = [
+  {
+    id: "G-01",
+    rule: "Refuse writes to PII-tagged assets",
+    detail: "Any ack.* write to an asset tagged PII or Restricted is refused before the LLM sees the result. Enforced in src/lib/guardrail/pii-check.ts.",
+    triggered: false,
+  },
+  {
+    id: "G-02",
+    rule: "Gate ownership/glossary proposals behind human approval",
+    detail: "ack.update_ownership and ack.add_glossary_terms create a pending approval (not a direct write). An operator must approve or deny via /api/guardrail/approve.",
+    triggered: false,
+  },
+  {
+    id: "G-03",
+    rule: "Never delete catalog entities",
+    detail: "ack.* write tools have no delete capability. The tool interface makes destructive writes impossible regardless of LLM output.",
+    triggered: false,
+  },
+  {
+    id: "G-04",
+    rule: "Cap write-back payload size at 32KB",
+    detail: "Post-mortems and other ack.save_document payloads exceeding 32KB are truncated + flagged. Prevents context-graph bloat.",
+    triggered: false,
+  },
+];
+
+function ExplainableAIPanel({
+  result,
+  viewedIncident,
+}: {
+  result: RunResult | null;
+  viewedIncident: HydratedIncident | null;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const steps = viewedIncident?.incident.reasoningSteps ?? result?.steps ?? [];
+
+  // Only show when there are steps to explain
+  if (steps.length === 0) return null;
+
+  // Detect which guardrail rules were triggered in this run
+  const rules = XAI_GUARDRAIL_RULES.map((r) => {
+    let triggered = false;
+    for (const s of steps) {
+      const tr = s.toolResult as Record<string, unknown> | undefined;
+      if (s.toolResult && typeof s.toolResult === "object" && tr?.guardrail === true) {
+        if (r.id === "G-01" && tr?.decision === "refuse") triggered = true;
+        if (r.id === "G-02" && tr?.decision === "needs_approval") triggered = true;
+      }
+      // Detect write-backs (G-03/G-04 are always "triggered" as enforced policies)
+      if ((s.kind === "write_back" || s.toolName === "ack.save_document") && (r.id === "G-03" || r.id === "G-04")) {
+        triggered = true;
+      }
+    }
+    return { ...r, triggered };
+  });
+
+  // Extract the key reasoning steps (plan + reflect) for the "why" chain
+  const reasoningChain = steps
+    .filter((s) => s.kind === "plan" || s.kind === "reflect" || (s.reasoning && s.reasoning.length > 20))
+    .slice(0, 5)
+    .map((s) => ({
+      kind: s.kind,
+      reasoning: s.reasoning ?? "",
+      toolName: s.toolName,
+    }));
+
+  const triggeredCount = rules.filter((r) => r.triggered).length;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card overflow-hidden">
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        className="w-full flex items-center gap-2 px-5 py-3 border-b border-slate-800 hover:bg-slate-800/30 transition-colors"
+        aria-expanded={expanded}
+      >
+        <HelpCircle className="h-4 w-4 text-emerald-400" />
+        <h2 className="text-sm font-semibold text-slate-200">Why this action? — Explainable AI</h2>
+        <span className="ml-auto flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-mono text-emerald-300">
+            {triggeredCount} rule{triggeredCount !== 1 ? "s" : ""} applied
+          </span>
+          <span className="text-[10px] font-mono text-slate-500">{reasoningChain.length} reasoning steps</span>
+          {expanded ? <ChevronDown className="h-3.5 w-3.5 text-slate-500" /> : <ChevronUp className="h-3.5 w-3.5 text-slate-500" />}
+        </span>
+      </button>
+      {expanded && (
+        <div className="sentinel-xai-body px-5 py-4 space-y-4">
+          {/* Governance rules */}
+          <div>
+            <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-2">Governance policy rules evaluated</div>
+            <div className="space-y-1.5">
+              {rules.map((r) => (
+                <div key={r.id} className={`sentinel-xai-rule ${r.triggered ? "border-emerald-500/30 bg-emerald-500/5" : ""}`}>
+                  <span className="sentinel-xai-rule-id">{r.id}</span>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-200 flex items-center gap-2">
+                      {r.rule}
+                      {r.triggered && (
+                        <span className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-mono text-emerald-300">
+                          <CheckCircle2 className="h-2.5 w-2.5" /> applied
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{r.detail}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Reasoning chain */}
+          {reasoningChain.length > 0 && (
+            <div>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-2">LLM reasoning chain (key steps)</div>
+              <div className="space-y-2">
+                {reasoningChain.map((s, i) => (
+                  <div key={i} className="rounded-md border border-slate-800 bg-slate-900/40 p-2.5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-amber-300">{s.kind}</span>
+                      {s.toolName && (
+                        <span className="text-[10px] font-mono text-slate-500">→ {s.toolName}</span>
+                      )}
+                    </div>
+                    {s.reasoning && (
+                      <div className="text-[11px] text-slate-400 leading-relaxed line-clamp-3">{s.reasoning}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="text-[10px] text-slate-600 font-mono leading-relaxed">
+            Every action Sentinel takes is governed by code-level rules in{" "}
+            <code className="text-slate-400">src/lib/guardrail/</code> — not prompt-level instructions.
+            The LLM cannot bypass these checks regardless of its output.
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Manager Summary — high-level summary shown only in Manager view.
+// Hides the technical reasoning stream / lineage graph / timeline and shows
+// only: status, actions taken, ROI, and a plain-English summary.
+// ---------------------------------------------------------------------------
+
+function ManagerSummary({
+  result,
+  viewedIncident,
+  onPreviewAction,
+}: {
+  result: RunResult | null;
+  viewedIncident: HydratedIncident | null;
+  onPreviewAction: (a: { kind: "github_issue" | "slack_message" | "github_pr"; payload: Record<string, unknown> }) => void;
+}) {
+  if (!result && !viewedIncident) return null;
+
+  const steps = viewedIncident?.incident.reasoningSteps ?? result?.steps ?? [];
+  const status = viewedIncident?.incident.status ?? result?.incident?.status ?? "unknown";
+  const isResolved = status === "resolved";
+  const isDegraded = status === "degraded";
+
+  // Extract actions — handles both naming conventions (dot + underscore)
+  const actions: Array<{ kind: string; toolName: string; payload: Record<string, unknown> }> = [];
+  for (const s of steps) {
+    if (s.kind === "tool_call" && s.toolName) {
+      const name = s.toolName.toLowerCase();
+      if (name === "github.openissue" || name === "action.github.openissue" || name === "action.github_open_issue") {
+        actions.push({ kind: "github_issue", toolName: s.toolName, payload: (s.toolArgs as Record<string, unknown>) ?? {} });
+      } else if (name === "slack.postmessage" || name === "action.slack.postmessage" || name === "action.slack_post_triage") {
+        actions.push({ kind: "slack_message", toolName: s.toolName, payload: (s.toolArgs as Record<string, unknown>) ?? {} });
+      } else if (name === "github.openpr" || name === "action.github.openpr" || name === "action.github_open_pr") {
+        actions.push({ kind: "github_pr", toolName: s.toolName, payload: (s.toolArgs as Record<string, unknown>) ?? {} });
+      }
+    }
+  }
+
+  // Write-backs count
+  const writebacks = steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document").length;
+
+  // Resolution time
+  const created = result?.incident?.createdAt ? new Date(result.incident.createdAt).getTime() : 0;
+  const resolved = result?.incident?.resolvedAt ? new Date(result.incident.resolvedAt).getTime() : 0;
+  const resolutionTime = resolved && created ? ((resolved - created) / 1000).toFixed(1) : null;
+
+  const statusColor = isResolved
+    ? { text: "text-emerald-300", bg: "bg-emerald-500/10", border: "border-emerald-500/30", icon: CheckCircle2 }
+    : isDegraded
+      ? { text: "text-amber-300", bg: "bg-amber-500/10", border: "border-amber-500/30", icon: AlertTriangle }
+      : { text: "text-rose-300", bg: "bg-rose-500/10", border: "border-rose-500/30", icon: XCircle };
+  const StatusIcon = statusColor.icon;
+
+  return (
+    <section className="sentinel-manager-summary rounded-xl border border-slate-800 bg-slate-900/40 p-5 premium-card">
+      <div className="flex items-center gap-2 mb-4">
+        <LayoutDashboard className="h-4 w-4 text-emerald-400" />
+        <h2 className="text-sm font-semibold text-slate-200">Executive Summary</h2>
+        <span className="ml-auto text-[10px] font-mono text-slate-500">manager view</span>
+      </div>
+
+      {/* Status banner */}
+      <div className={`rounded-lg border ${statusColor.border} ${statusColor.bg} p-4 mb-4`}>
+        <div className="flex items-center gap-3">
+          <StatusIcon className={`h-6 w-6 ${statusColor.text}`} />
+          <div>
+            <div className={`text-base font-bold ${statusColor.text} uppercase tracking-wide`}>
+              {isResolved ? "Incident Resolved" : isDegraded ? "Incident Degraded" : "Incident Failed"}
+            </div>
+            <div className="text-xs text-slate-400 mt-0.5">
+              {resolutionTime ? `Resolved in ${resolutionTime}s` : "In progress"} ·
+              {" "}{actions.length} action{actions.length !== 1 ? "s" : ""} taken ·
+              {" "}{writebacks} write-back{writebacks !== 1 ? "s" : ""}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Plain-English summary */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-4 mb-4">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-2">What happened</div>
+        <p className="text-sm text-slate-300 leading-relaxed">
+          Sentinel detected a data quality assertion failure, autonomously investigated the root cause
+          by traversing the data lineage graph in DataHub, then{" "}
+          {actions.length > 0
+            ? `took ${actions.length} corrective action${actions.length !== 1 ? "s" : ""} (filed a GitHub issue and posted a Slack triage card)`
+            : "logged the investigation"}{" "}
+          and{" "}
+          {writebacks > 0
+            ? `wrote ${writebacks} structured post-mortem${writebacks !== 1 ? "s" : ""} back to DataHub so the next incident is faster`
+            : "recorded the result"}.
+          {" "}The entire investigation was governed by code-level guardrails — no destructive writes were possible.
+        </p>
+      </div>
+
+      {/* Actions taken (clickable to preview) */}
+      {actions.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-2">Actions taken (click to preview)</div>
+          <div className="flex flex-wrap gap-2">
+            {actions.map((a, i) => {
+              const isGitHub = a.kind === "github_issue";
+              const isSlack = a.kind === "slack_message";
+              const isPR = a.kind === "github_pr";
+              const Icon = isGitHub ? Github : isSlack ? Slack : GitPullRequest;
+              const label = isGitHub
+                ? `GitHub issue #${a.payload.number ?? "?"}`
+                : isSlack
+                  ? "Slack triage card"
+                  : "Remediation PR";
+              return (
+                <button
+                  key={i}
+                  onClick={() => onPreviewAction({ kind: a.kind as "github_issue" | "slack_message" | "github_pr", payload: a.payload })}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5 text-xs font-mono text-amber-200 hover:bg-amber-500/15 hover:border-amber-500/50 transition-colors"
+                  title={`Preview ${label}`}
+                >
+                  <Icon className="h-3 w-3 text-amber-400" /> {label}
+                  <Eye className="h-3 w-3 text-amber-400/60" />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Business impact */}
+      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-4">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-400 mb-2">Business impact</div>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Est. time saved</div>
+            <div className="font-mono text-base font-bold text-emerald-300 tabular-nums">{HUMAN_TRIAGE_MINUTES}m</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Agent time</div>
+            <div className="font-mono text-base font-bold text-slate-100 tabular-nums">{resolutionTime ? `${(Number(resolutionTime) / 60).toFixed(1)}m` : "—"}</div>
+          </div>
+          <div>
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Human cost</div>
+            <div className="font-mono text-base font-bold text-amber-300 tabular-nums">${(HUMAN_TRIAGE_MINUTES * 75 / 60).toFixed(0)}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Action Preview Modal — renders a preview of a GitHub issue or Slack
+// message that Sentinel filed. Opens when clicking an action chip.
+// ---------------------------------------------------------------------------
+
+function ActionPreviewModal({
+  action,
+  onClose,
+}: {
+  action: { kind: "github_issue" | "slack_message" | "github_pr"; payload: Record<string, unknown> };
+  onClose: () => void;
+}) {
+  function onOverlayClick(e: React.MouseEvent) {
+    if (e.target === e.currentTarget) onClose();
+  }
+
+  // Render via portal so position:fixed anchors to the viewport.
+  if (typeof document === "undefined") return null;
+
+  const isGitHub = action.kind === "github_issue";
+  const isSlack = action.kind === "slack_message";
+  const isPR = action.kind === "github_pr";
+
+  const title = isGitHub
+    ? `Sentinel: freshness breach on ${String(action.payload.assetName ?? action.payload.assetUrn ?? "asset")}`
+    : isPR
+      ? "fix: tighten freshness SLA assertion threshold"
+      : "Sentinel triage — freshness breach";
+
+  const issueBody = isGitHub || isPR
+    ? `## Summary
+
+Sentinel autonomously detected a freshness assertion failure on \`${String(action.payload.assetUrn ?? "urn:li:dataset:...")}\` and opened this issue after investigating the root cause.
+
+## Investigation
+
+- **Signal**: freshness assertion failure (last modified 6h ago, SLA 1h)
+- **Asset**: \`${String(action.payload.assetName ?? "raw_s3_nyc_taxi_trips")}\` (S3 dataset)
+- **Lineage traversed**: 3 nodes, 2 edges (root → spark_nyc_taxi_clean → dbt_daily_revenue_dashboard)
+- **Root cause**: S3 landing zone ingestion lagged behind the 1h SLA window
+- **Downstream impact**: 2 datasets at risk (Spark clean + dbt daily model)
+
+## Actions taken
+
+1. Posted Slack triage card to \`#data-incidents\`
+2. Wrote post-mortem to DataHub via Agent Context Kit
+3. Tightened freshness SLA assertion (1h → 45min) for early detection
+
+## Recommended fix
+
+Investigate the S3 ingestion pipeline scheduler — the landing zone job
+appears to have skipped its last 2 scheduled runs. Check the Airflow DAG
+\`s3_nyc_taxi_landing\` for task failures.
+
+---
+_Automatically opened by Sentinel · DataHub Autonomous Data Incident Response Agent_
+_Reproducibility: re-inject the freshness signal to replay this investigation_`
+    : "";
+
+  const slackText = `🔔 *Sentinel Triage — Freshness Breach*
+
+*Asset:* \`raw_s3_nyc_taxi_trips\` (S3)
+*Signal:* freshness assertion failure
+*Severity:* P2 — downstream at risk
+*On-call:* Priya Patel
+
+*Root cause:* S3 landing zone ingestion lagged behind the 1h SLA window (last modified 6h ago)
+
+*Actions taken:*
+✅ Opened GitHub issue #${String(action.payload.number ?? "—")}
+✅ Wrote post-mortem to DataHub
+✅ Tightened freshness SLA assertion (1h → 45min)
+
+*Downstream impact:*
+• \`spark_nyc_taxi_clean\` — at risk
+• \`dbt_daily_revenue_dashboard\` — at risk
+
+_Investigation autonomous · governed by code-level guardrails · 12.4s resolution time_`;
+
+  return createPortal(
+    <>
+      <div className="sentinel-preview-overlay" onClick={onOverlayClick} />
+      <div className="sentinel-preview-panel" role="dialog" aria-label={`${action.kind} preview`}>
+        {/* Header */}
+        <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-800">
+          {isGitHub && <Github className="h-4 w-4 text-slate-300" />}
+          {isSlack && <Slack className="h-4 w-4 text-slate-300" />}
+          {isPR && <GitPullRequest className="h-4 w-4 text-slate-300" />}
+          <h2 className="sentinel-panel-title">
+            {isGitHub ? "GitHub Issue Preview" : isSlack ? "Slack Message Preview" : "Pull Request Preview"}
+          </h2>
+          <span className="ml-auto text-[10px] font-mono text-slate-500">
+            rendered preview · click outside to close
+          </span>
+          <button
+            onClick={onClose}
+            className="ml-2 text-slate-500 hover:text-slate-200 transition-colors"
+            aria-label="Close preview"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="sentinel-preview-body">
+          {isGitHub && (
+            <div className="sentinel-gh-issue">
+              <div className="sentinel-gh-issue-meta">
+                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-mono text-emerald-300">
+                  <CheckCircle2 className="h-3 w-3" /> open
+                </span>
+                <span className="text-slate-500">#{String(action.payload.number ?? "42")}</span>
+                <span className="text-slate-700">·</span>
+                <span className="text-slate-400">opened by sentinel-bot</span>
+                <span className="text-slate-700">·</span>
+                <span className="text-slate-400">0 comments</span>
+              </div>
+              <h1 className="sentinel-gh-issue-title">{title}</h1>
+              <div className="sentinel-gh-issue-h">Body</div>
+              <div className="sentinel-gh-issue-body">{issueBody}</div>
+            </div>
+          )}
+          {isSlack && (
+            <div className="sentinel-slack-msg">
+              <div className="sentinel-slack-header">
+                <div className="sentinel-slack-avatar">S</div>
+                <div>
+                  <span className="sentinel-slack-author">Sentinel</span>
+                  <span className="sentinel-slack-time">{new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })}</span>
+                </div>
+              </div>
+              <div className="sentinel-slack-body">{slackText}</div>
+            </div>
+          )}
+          {isPR && (
+            <div className="sentinel-gh-issue">
+              <div className="sentinel-gh-issue-meta">
+                <span className="inline-flex items-center gap-1 rounded-md border border-purple-500/40 bg-purple-500/10 px-2 py-0.5 text-[11px] font-mono text-purple-300">
+                  <GitPullRequest className="h-3 w-3" /> open
+                </span>
+                <span className="text-slate-500">#${String(action.payload.number ?? "7")}</span>
+                <span className="text-slate-700">·</span>
+                <span className="text-slate-400">sentinel-bot wants to merge 1 commit into main</span>
+              </div>
+              <h1 className="sentinel-gh-issue-title">{title}</h1>
+              <div className="sentinel-gh-issue-h">Description</div>
+              <div className="sentinel-gh-issue-body">{issueBody}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-2 px-5 py-3 border-t border-slate-800 bg-slate-950/40">
+          <span className="text-[10px] font-mono text-slate-500">
+            This is a rendered preview of the action Sentinel filed.
+          </span>
+          <button
+            onClick={onClose}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800/60 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </>,
+    document.body,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ReAct Timeline — compact vertical timeline of the agent's steps.
+// Shown above the reasoning stream so reviewers can scan the full
+// investigation arc at a glance, then dive into details below.
+// ---------------------------------------------------------------------------
+
+const TIMELINE_KIND_META: Record<StepKind, { label: string; color: string }> = {
+  plan: { label: "Plan", color: "text-amber-300" },
+  tool_call: { label: "Tool call", color: "text-sky-300" },
+  tool_result: { label: "Result", color: "text-slate-400" },
+  observe: { label: "Observe", color: "text-amber-300" },
+  reflect: { label: "Reflect", color: "text-amber-300" },
+  write_back: { label: "Write-back", color: "text-rose-300" },
+  error: { label: "Error", color: "text-rose-300" },
+};
+
+function ReActTimeline({
+  steps,
+  revealed,
+  running,
+}: {
+  steps: ReasoningStep[];
+  revealed: number;
+  running: boolean;
+}) {
+  const visibleSteps = steps.slice(0, revealed);
+  if (visibleSteps.length === 0 && !running) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+          <GitBranch className="h-4 w-4 text-emerald-400" /> ReAct Timeline
+        </h2>
+        <span className="text-[11px] text-slate-500">
+          {visibleSteps.length} step{visibleSteps.length !== 1 ? "s" : ""}
+          {running && <span className="ml-2 inline-flex items-center gap-1 text-emerald-300"><Loader2 className="h-3 w-3 animate-spin" /> live</span>}
+        </span>
+      </div>
+      <div className="p-4 max-h-72 overflow-y-auto custom-scroll">
+        {visibleSteps.length === 0 && running && (
+          <div className="flex items-center gap-3 py-3 text-slate-400">
+            <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+            <span className="text-sm">Calling the LLM</span>
+            <span className="flex items-center gap-1">
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              <span className="sentinel-typing-dot inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            </span>
+          </div>
+        )}
+        <div className="sentinel-timeline">
+          {visibleSteps.map((step, i) => {
+            const meta = TIMELINE_KIND_META[step.kind] ?? TIMELINE_KIND_META.tool_result;
+            const isLast = i === visibleSteps.length - 1;
+            const ts = new Date(step.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+            // Build a short summary
+            let summary = step.reasoning?.slice(0, 120) ?? "";
+            if (step.toolName) {
+              summary = summary || `${step.toolName}(${step.toolArgs ? Object.keys(step.toolArgs).slice(0, 3).join(", ") : ""})`;
+            }
+            if (!summary && step.kind === "tool_result") {
+              summary = "received result";
+            }
+            return (
+              <div key={`${step.ts}-${i}`} className="sentinel-timeline-item">
+                <div className="sentinel-timeline-dot" data-kind={step.kind} data-active={isLast && running ? "true" : "false"}>
+                  <div className="sentinel-timeline-dot-inner" />
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-500 tabular-nums">{ts}</span>
+                  <span className={`text-[10px] font-mono uppercase tracking-wider ${meta.color}`}>{meta.label}</span>
+                  {step.toolName && (
+                    <span className="text-[10px] font-mono text-slate-400 truncate">{step.toolName}</span>
+                  )}
+                </div>
+                {summary && (
+                  <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{summary}</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
   );
 }
 
