@@ -1547,6 +1547,7 @@ function Console() {
         onClose={() => setAuditDrawerOpen(false)}
         events={viewedIncident?.auditEvents ?? []}
         incidentUrn={viewedIncident?.incident.urn ?? null}
+        liveResult={result}
       />
 
       {/* Command palette (⌘K) — quick actions: run, select signal, open drawers */}
@@ -2751,20 +2752,27 @@ function ActionCard({
 function GuardrailPanel({ incidentUrn }: { incidentUrn: string | null }) {
   const queryClient = useQueryClient();
   const [approverUrn, setApproverUrn] = useState("urn:li:corpUser:operator");
+  // Only query approvals for the CURRENT incident. When incidentUrn is null
+  // (no live run, no viewed incident — e.g. right after starting a new inject),
+  // the panel hides entirely so stale guardrail messages from a previous
+  // incident do NOT persist into the next run. This is the fix for "the
+  // guardrail message doesn't disappear after re-injecting".
   const approvals = useQuery<PendingApproval[]>({
     queryKey: ["guardrail-pending", incidentUrn ?? ""],
     queryFn: async () => {
-      const url = incidentUrn
-        ? `/api/guardrail/pending?incidentUrn=${encodeURIComponent(incidentUrn)}&limit=20`
-        : "/api/guardrail/pending?limit=20";
-      const r = await fetch(url);
+      if (!incidentUrn) return [] as PendingApproval[];
+      const r = await fetch(`/api/guardrail/pending?incidentUrn=${encodeURIComponent(incidentUrn)}&limit=20`);
       if (!r.ok) throw new Error("Failed to load guardrail approvals");
       const j = await r.json();
       return j.approvals as PendingApproval[];
     },
+    enabled: Boolean(incidentUrn),
     staleTime: 5_000,
     refetchInterval: 10_000,
   });
+
+  // No current incident → render nothing (clears the panel on re-inject).
+  if (!incidentUrn) return null;
 
   const items = approvals.data ?? [];
   if (items.length === 0 && !approvals.isLoading) return null;
@@ -4569,12 +4577,38 @@ function AuditLogDrawer({
   onClose,
   events,
   incidentUrn,
+  liveResult,
 }: {
   open: boolean;
   onClose: () => void;
   events: Array<{ id: string; kind: string; summary: string; ts: string }>;
   incidentUrn: string | null;
+  liveResult?: RunResult | null;
 }) {
+  // The Audit button must show data for the CURRENT incident — either the
+  // viewed past incident OR a live run. For a live run, the parent passes
+  // `events = []` (viewedIncident is null), so we fetch the audit log for
+  // the live run's incident URN from the audit API. This makes the Audit
+  // button functional at every moment: during a live run, after a run
+  // completes, and when viewing history.
+  const activeUrn = incidentUrn ?? liveResult?.incident?.urn ?? null;
+  const liveQuery = useQuery({
+    queryKey: ["audit-log-drawer", activeUrn ?? ""],
+    queryFn: async () => {
+      if (!activeUrn) return [] as Array<{ id: string; kind: string; summary: string; ts: string }>;
+      const r = await fetch(`/api/agent/audit/${encodeURIComponent(activeUrn)}`);
+      if (!r.ok) return [];
+      const j = await r.json();
+      const evs = (j.events ?? []) as Array<{ id: string; kind: string; summary: string; ts: string }>;
+      return evs;
+    },
+    enabled: open && Boolean(activeUrn) && events.length === 0,
+    staleTime: 2_000,
+    refetchInterval: open && liveResult ? 2_000 : false,
+  });
+
+  const drawerEvents = events.length > 0 ? events : (liveQuery.data ?? []);
+  const loading = events.length === 0 && liveQuery.isLoading;
   return (
     <AnimatePresence>
       {open && (
@@ -4597,7 +4631,12 @@ function AuditLogDrawer({
               <div className="flex items-center gap-2">
                 <History className="h-4 w-4 text-emerald-400" />
                 <h2 className="text-sm font-semibold text-slate-200">Audit log drawer</h2>
-                <span className="text-[10px] font-mono text-slate-500">({events.length})</span>
+                <span className="text-[10px] font-mono text-slate-500">({drawerEvents.length})</span>
+                {activeUrn && (
+                  <span className="ml-1 text-[10px] font-mono text-slate-600 truncate max-w-[180px]" title={activeUrn}>
+                    {activeUrn.replace("urn:li:incident:sentinel:", "…")}
+                  </span>
+                )}
               </div>
               <button
                 onClick={onClose}
@@ -4608,13 +4647,18 @@ function AuditLogDrawer({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto custom-scroll">
-              {events.length === 0 ? (
+              {loading ? (
+                <div className="text-center py-10 px-4 text-sm text-slate-500">
+                  <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin text-emerald-400/60" />
+                  Loading audit log…
+                </div>
+              ) : drawerEvents.length === 0 ? (
                 <div className="text-center py-10 px-4 text-sm text-slate-500">
                   <History className="h-10 w-10 mx-auto mb-2 opacity-30" />
                   No audit events yet. Inject a signal + run Sentinel to stream the full lifecycle.
                 </div>
               ) : (
-                <AuditTimeline events={events} incidentUrn={incidentUrn ?? undefined} />
+                <AuditTimeline events={drawerEvents} incidentUrn={activeUrn ?? undefined} />
               )}
             </div>
           </motion.aside>

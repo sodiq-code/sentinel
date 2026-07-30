@@ -6,7 +6,7 @@
 // (Phase 1 seed). This module lists the available seed signals and constructs
 // a Signal object from one.
 //
-// Three injectable scenarios (PDF §11.3 demo contingency plan):
+// Three injectable scenarios:
 //   1. nyc-taxi freshness    — the planted failing freshness assertion on raw_s3
 //   2. showcase-ecommerce     — a schema-breakage signal on the cross-platform graph
 //   3. pii                    — a PII-tagged asset; guardrail must refuse
@@ -205,13 +205,24 @@ export function buildInitialUserMessage(sig: InjectableSignal, signal: Signal): 
     'Investigate this incident end-to-end per the Sentinel workflow:',
     '  1. Detect & triage — fetch the failing asset, its schema, owners, glossary terms, and governance tags.',
     '  2. Diagnose — traverse lineage downstream (blast radius) and upstream (root cause);',
-    '     search context docs for a prior Sentinel post-mortem on this asset (compounding, PDF §12.2);',
+    '     search context docs for a prior Sentinel post-mortem on this asset (compounding context);',
     '     review the query/job that materialises the upstream producer.',
     '  3. Remediate — propose a GitHub issue (action.github_open_issue) and a Slack triage post (action.slack_post_triage).',
     '  4. Document — write a post-mortem context doc back to DataHub (ack.save_document, sentinelPostMortem=true).',
     '  5. Write-back — if the failure reveals a missing/loose SLA, create a tightened assertion (ack.create_assertion).',
     '',
     'Show your reasoning at every step. Call tools to investigate AND act.',
+    '',
+    'CONTENT DISCIPLINE — make every artefact SPECIFIC to this signal type:',
+    '  - The GitHub issue title + body must name the actual root cause and blast radius for THIS',
+    '    signal (e.g. for freshness: the stalled ingestion job + stale partitions; for schema: the',
+    '    renamed/dropped column + the 4-hop lineage; for PII: the governance refusal).',
+    '  - The Slack triage bullets must be tailored: "what failed" must cite the concrete assertion',
+    '    + failure reason, "who is affected" must list the real downstream assets, "what on-call',
+    '    should do" must give a concrete next step for THIS failure mode.',
+    '  - The post-mortem must capture the type-specific root cause, blast radius, and learned policy.',
+    '  Do NOT reuse generic templates — a reviewer must be able to tell the three incident types',
+    '  apart from the GitHub issue + Slack card + post-mortem alone.',
     '',
     'MANDATORY completion checklist (you MUST call these tools before your final summary):',
     '  - action.github_open_issue  — open the engineering issue',

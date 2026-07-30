@@ -44,6 +44,7 @@ import {
   listSeedSignals,
   type InjectableSignal,
 } from './seed-signals'
+import { buildDeterministicActions } from './fallback-messages'
 import type {
   Incident,
   LlmMessage,
@@ -564,16 +565,17 @@ export async function runSentinel(
   // same checkBeforeExecute + executeToolCall path as the LLM-driven loop.
   if (wasCircuitOpen && !piiRefusalOnPostMortem) {
     const missing = MANDATORY.filter((t) => !mandatoryDone.has(t))
+    // Build type-specific, scenario-aware content so each injectable signal
+    // (freshness / schema / pii) produces visibly distinct GitHub issues,
+    // Slack triage cards, and post-mortems — even on the fallback path.
+    const det = buildDeterministicActions(sig, signal, incidentUrn, steps, finalReflection, lastError)
     emit('observe', {
       reasoning:
         missing.length === 0
           ? 'Sentinel\'s reasoning engine was briefly unavailable, but the LLM had already ' +
             'completed the mandatory closed-loop actions before the interruption. The investigation ' +
             'is complete and the incident is resolved.'
-          : 'Sentinel is completing the investigation using the deterministic fallback path. ' +
-            'The reasoning engine is temporarily unavailable, so Sentinel is executing the ' +
-            'remaining mandatory actions (' + missing.join(', ') + ') to ensure the incident ' +
-            'is fully resolved and the write-backs are persisted.',
+          : det.planLine + ' (deterministic fallback path — the reasoning engine is temporarily unavailable).',
     })
 
     const makeCall = (name: string, args: Record<string, unknown>): LlmToolCall => ({
@@ -582,91 +584,111 @@ export async function runSentinel(
       function: { name, arguments: JSON.stringify(args) },
     })
 
+    // Guarded execute — runs the SAME pre-exec guardrail check as the main
+    // ReAct loop, so the deterministic fallback cannot bypass the PII refusal
+    // or the approval-gate rules. When the guardrail refuses (e.g. PII asset),
+    // the tool is NOT executed and the refusal is emitted as the tool_result
+    // (the LLM + UI see the governed outcome).
+    const guardedExecute = async (
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<{ status: 'ok' | 'error' | 'refused'; result: unknown }> => {
+      const verdict = await checkBeforeExecute(name, args, ctx)
+      await recordGuardrailCheck(incidentUrn, verdict, `det-${stepNum}-${name}`)
+      emit('tool_call', { toolName: name, toolArgs: args })
+      if (verdict.decision !== 'allow') {
+        const decisionLabel = verdict.decision === 'refuse' ? 'REFUSED' : 'NEEDS_APPROVAL'
+        const guardrailResult = {
+          guardrail: true,
+          decision: verdict.decision,
+          toolName: name,
+          ruleId: verdict.ruleId,
+          reason: verdict.reason,
+          approvalId: verdict.approvalId,
+          approver: verdict.approver,
+          note:
+            verdict.decision === 'refuse'
+              ? `Guardrail ${decisionLabel} this tool call. The tool was NOT executed. Reason: ${verdict.reason ?? '(unspecified)'}`
+              : `Guardrail surfaced an approval gate for this tool call. The tool was NOT executed; a human must approve (${verdict.approver ?? 'operator'}). Reason: ${verdict.reason ?? '(unspecified)'}`,
+        }
+        emit('tool_result', { toolName: name, toolResult: guardrailResult, error: `${decisionLabel} by guardrail (${verdict.ruleId ?? 'rule'})` })
+        await db.toolCall.create({
+          data: {
+            incidentUrn,
+            tool: name,
+            argsJson: JSON.stringify(args),
+            resultJson: JSON.stringify(guardrailResult),
+            status: 'skipped',
+            durationMs: 0,
+            ts: new Date(),
+          },
+        })
+        // PII refusal on save_document → mark so the post-loop fallback skips.
+        if (name === 'ack.save_document' && verdict.decision === 'refuse') {
+          piiRefusalOnPostMortem = true
+          wrotePostMortem = true
+        }
+        return { status: 'refused', result: guardrailResult }
+      }
+      const exec = await executeToolCall(makeCall(name, args), defs, ctx)
+      emit('tool_result', { toolName: name, toolResult: exec.result, error: exec.status === 'error' ? exec.error : undefined })
+      return { status: exec.status, result: exec.result }
+    }
+
     try {
       // 1. Read the failing asset — only if the LLM hasn't already (readCallCount
       //    tracks every mcp.* call the LLM made before the circuit opened).
       if (readCallCount === 0) {
         emit('plan', { reasoning: `Reading the failing asset \`${sig.assetName}\` to confirm schema, ownership, and governance tags.` })
-        const entitiesCall = makeCall('mcp.get_entities', { urns: [signal.assetUrn] })
-        emit('tool_call', { toolName: 'mcp.get_entities', toolArgs: { urns: [signal.assetUrn] } })
-        const entitiesExec = await executeToolCall(entitiesCall, defs, ctx)
-        emit('tool_result', { toolName: 'mcp.get_entities', toolResult: entitiesExec.result })
+        const er = await guardedExecute('mcp.get_entities', { urns: [signal.assetUrn] })
+        void er
       }
 
       // 2. Read the downstream lineage (blast radius) — only if not already done
       if (readCallCount === 0) {
         emit('plan', { reasoning: `Traversing the downstream lineage to identify the blast radius for \`${sig.assetName}\`.` })
-        const lineageCall = makeCall('mcp.get_lineage', { urn: signal.assetUrn, direction: 'DOWNSTREAM' })
-        emit('tool_call', { toolName: 'mcp.get_lineage', toolArgs: { urn: signal.assetUrn, direction: 'DOWNSTREAM' } })
-        const lineageExec = await executeToolCall(lineageCall, defs, ctx)
-        emit('tool_result', { toolName: 'mcp.get_lineage', toolResult: lineageExec.result })
+        const lr = await guardedExecute('mcp.get_lineage', { urn: signal.assetUrn, direction: 'DOWNSTREAM' })
+        void lr
       }
 
-      // 3. Open a GitHub issue — only if not already done
+      // 3. Open a GitHub issue — only if not already done (type-specific content)
       if (!mandatoryDone.has('action.github_open_issue')) {
-        const issueTitle = `[Sentinel] ${sig.assetName} — ${signal.type} incident`
-        const issueBody = [
-          '## Sentinel Autonomous Investigation',
-          '',
-          `**Asset**: \`${signal.assetUrn}\``,
-          `**Signal type**: ${signal.type}`,
-          `**Signal status**: ${signal.status}`,
-          `**Fired at**: ${signal.firedAt}`,
-          `**Failure reason**: ${sig.failureReason ?? '(see assertion details)'}`,
-          '',
-          '### Summary',
-          `Sentinel detected a ${signal.type} breach on \`${sig.assetName}\` and autonomously ` +
-            'investigated the root cause. The downstream lineage was traversed to identify the ' +
-            'blast radius. A Slack triage card has been posted to the on-call channel.',
-          '',
-          '### Recommended action',
-          'Review the upstream ingestion job and verify the SLA. This issue was opened ' +
-            'automatically by Sentinel — no merge will be performed.',
-          '',
-          `> Incident URN: \`${incidentUrn}\``,
-        ].join('\n')
+        const { title: issueTitle, body: issueBody, labels: issueLabels } = det.githubIssue
         emit('plan', { reasoning: 'Opening a GitHub issue in the demo pipeline repo to track the engineering remediation.' })
-        const ghCall = makeCall('action.github_open_issue', { title: issueTitle, body: issueBody, labels: ['sentinel', 'auto-filed', signal.type] })
-        emit('tool_call', { toolName: 'action.github_open_issue', toolArgs: { title: issueTitle, body: issueBody, labels: ['sentinel', 'auto-filed', signal.type] } })
-        const ghExec = await executeToolCall(ghCall, defs, ctx)
-        emit('tool_result', { toolName: 'action.github_open_issue', toolResult: ghExec.result })
-        if (ghExec.status === 'ok') mandatoryDone.add('action.github_open_issue')
+        const gh = await guardedExecute('action.github_open_issue', { title: issueTitle, body: issueBody, labels: issueLabels })
+        if (gh.status === 'ok') mandatoryDone.add('action.github_open_issue')
       }
 
-      // 4. Post a Slack triage card — only if not already done
+      // 4. Post a Slack triage card — only if not already done (type-specific content)
       if (!mandatoryDone.has('action.slack_post_triage')) {
-        const slackTitle = `Sentinel: ${signal.type} on ${sig.assetName}`
-        const slackBullets = [
-          `**What failed**: ${signal.type} assertion failed on \`${sig.assetName}\` — ${sig.failureReason ?? 'SLA breach detected'}.`,
-          `**Who is affected**: Downstream consumers of \`${sig.assetName}\` (see lineage graph in the Sentinel dashboard).`,
-          '**What on-call should do**: Review the GitHub issue filed by Sentinel and verify the upstream ingestion job.',
-        ]
-        const slackFooter = `Sentinel incident: ${incidentUrn}`
+        const { title: slackTitle, bullets: slackBullets, footer: slackFooter } = det.slackTriage
         emit('plan', { reasoning: 'Posting a triage card to the on-call Slack channel so stakeholders are notified.' })
-        const slackCall = makeCall('action.slack_post_triage', { title: slackTitle, bullets: slackBullets, footer: slackFooter })
-        emit('tool_call', { toolName: 'action.slack_post_triage', toolArgs: { title: slackTitle, bullets: slackBullets, footer: slackFooter } })
-        const slackExec = await executeToolCall(slackCall, defs, ctx)
-        emit('tool_result', { toolName: 'action.slack_post_triage', toolResult: slackExec.result })
-        if (slackExec.status === 'ok') mandatoryDone.add('action.slack_post_triage')
+        const sl = await guardedExecute('action.slack_post_triage', { title: slackTitle, bullets: slackBullets, footer: slackFooter })
+        if (sl.status === 'ok') mandatoryDone.add('action.slack_post_triage')
       }
 
-      // 5. Write the post-mortem context doc to DataHub — only if not already written
+      // 5. Write the post-mortem context doc to DataHub — only if not already
+      //    written. For PII-tagged assets the guardrail REFUSES this write
+      //    (the correct governed behaviour); the refusal is recorded and the
+      //    incident still resolves with the GitHub + Slack actions filed.
       if (!wrotePostMortem) {
-        const pmTitle = `Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`
-        const pmContent = buildFallbackPostMortem(sig, signal, steps, finalReflection, lastError)
+        const { title: pmTitle, content: pmContent } = det.postMortem
         emit('plan', { reasoning: 'Writing a post-mortem context doc to DataHub so the next incident on this asset inherits this investigation.' })
-        const pmCall = makeCall('ack.save_document', { assetUrn: signal.assetUrn, title: pmTitle, content: pmContent, sentinelPostMortem: true })
-        emit('tool_call', { toolName: 'ack.save_document', toolArgs: { assetUrn: signal.assetUrn, title: pmTitle, sentinelPostMortem: true } })
-        const pmExec = await executeToolCall(pmCall, defs, ctx)
-        emit('tool_result', { toolName: 'ack.save_document', toolResult: pmExec.result })
-        if (pmExec.status === 'ok') {
+        const pm = await guardedExecute('ack.save_document', { assetUrn: signal.assetUrn, title: pmTitle, content: pmContent, sentinelPostMortem: true })
+        if (pm.status === 'ok') {
           mandatoryDone.add('ack.save_document')
           wrotePostMortem = true
           emit('write_back', {
             toolName: 'ack.save_document',
             toolArgs: { assetUrn: signal.assetUrn, sentinelPostMortem: true },
-            toolResult: pmExec.result,
+            toolResult: pm.result,
             reasoning: 'Sentinel wrote a post-mortem to DataHub. The next incident on this asset will inherit this context.',
+          })
+        } else if (pm.status === 'refused') {
+          emit('observe', {
+            reasoning:
+              'Sentinel\'s guardrail REFUSED the post-mortem write-back because the asset is tagged PII + Restricted. ' +
+              'No post-mortem was written — a human data owner must approve any write to a PII asset. The GitHub issue and Slack triage were still filed.',
           })
         }
       }
@@ -674,14 +696,21 @@ export async function runSentinel(
       // The closed loop is now complete (or was already complete). Clear the
       // error so the incident is marked 'resolved' — NOT 'degraded'. The LLM
       // being temporarily unavailable is not a failure of the investigation;
-      // the deterministic path guaranteed the closed loop completed.
+      // the deterministic path guaranteed the closed loop completed. A PII
+      // refusal is the correct governed outcome, not a degraded state.
       lastError = null
       wasCircuitOpen = false
+      const piiNote = piiRefusalOnPostMortem
+        ? ' The post-mortem write-back was refused by the PII guardrail — the governed outcome.'
+        : ''
       emit('observe', {
         reasoning:
           'Investigation complete. Sentinel executed the full closed loop: read the asset, ' +
-          'traversed the lineage, opened a GitHub issue, posted a Slack triage card, and wrote ' +
-          'a post-mortem to DataHub. The incident is resolved.',
+          'traversed the lineage, opened a GitHub issue, posted a Slack triage card, and ' +
+          (piiRefusalOnPostMortem
+            ? 'attempted the post-mortem write (refused by the PII guardrail).' + piiNote
+            : 'wrote a post-mortem to DataHub.') +
+          ' The incident is resolved.',
       })
     } catch (fallbackErr) {
       emit('error', { error: `Deterministic fallback failed: ${(fallbackErr as Error).message ?? String(fallbackErr)}` })
@@ -706,17 +735,21 @@ export async function runSentinel(
         })
       } else {
         const me = await clients.mcp.get_me()
-        const postMortemContent = buildFallbackPostMortem(sig, signal, steps, finalReflection, lastError)
-        // Phase 4: dual write-back path (PDF §12.2). The orchestrator's
-        // post-loop fallback now goes through the same helper as the agent's
-        // ack.save_document tool: try Agent Context Kit → fall back to REST
-        // ingestion on a 5xx/network error. A 4xx is a hard failure (no
-        // fallback). Both paths record a WriteBack row + audit events.
+        // Use the type-specific post-mortem content (freshness / schema / pii)
+        // so the fallback post-mortem is as distinct as the LLM-authored one.
+        const det = buildDeterministicActions(sig, signal, incidentUrn, steps, finalReflection, lastError)
+        const postMortemContent = det.postMortem.content
+        const postMortemTitle = det.postMortem.title
+        // Phase 4: dual write-back path. The orchestrator's post-loop fallback
+        // now goes through the same helper as the agent's ack.save_document
+        // tool: try Agent Context Kit → fall back to REST ingestion on a
+        // 5xx/network error. A 4xx is a hard failure (no fallback). Both paths
+        // record a WriteBack row + audit events.
         const wb = await writeBackDocument({
           clients,
           incidentUrn,
           assetUrn: signal.assetUrn,
-          title: `Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`,
+          title: postMortemTitle,
           content: postMortemContent,
           format: 'markdown',
           authorUrn: me.urn,
@@ -833,40 +866,6 @@ function safeParseArgs(raw: string): Record<string, unknown> {
 /** True when every mandatory tool has been successfully called. */
 function allMandatoryDone(done: Set<string>, mandatory: string[]): boolean {
   return mandatory.every((m) => done.has(m))
-}
-
-function buildFallbackPostMortem(
-  sig: InjectableSignal,
-  signal: Signal,
-  steps: ReasoningStep[],
-  finalReflection: string,
-  lastError: string | null,
-): string {
-  const lines: string[] = [
-    `# Sentinel Post-Mortem — ${sig.assetName} — ${signal.type}`,
-    '',
-    '> Auto-generated by the Sentinel orchestrator because the agent did not call `ack.save_document`.',
-    '',
-    `**Signal**: ${signal.assertionUrn}  `,
-    `**Type**: ${signal.type}  `,
-    `**Status**: ${signal.status}  `,
-    `**Fired at**: ${signal.firedAt}  `,
-    `**Failure reason**: ${sig.failureReason ?? '(none)'}`,
-    '',
-    '## Reasoning trace',
-    '',
-    ...steps.map((s, i) => `- **Step ${i}** (${s.kind})${s.toolName ? ` ${s.toolName}` : ''}: ${(s.reasoning ?? JSON.stringify(s.toolResult ?? s.error ?? '')).slice(0, 240)}`),
-    '',
-    '## Final reflection',
-    '',
-    finalReflection || '(agent produced no final reflection)',
-    '',
-  ]
-  if (lastError) {
-    lines.push('## Error', '', `**${lastError}**`, '')
-  }
-  lines.push('## Compounding', '', 'This post-mortem is now part of the asset context. The next incident on this asset should cite it.')
-  return lines.join('\n')
 }
 
 // ---------------------------------------------------------------------------
