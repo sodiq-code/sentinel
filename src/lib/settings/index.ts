@@ -30,12 +30,44 @@ export interface AppSettings {
 let cached: { value: AppSettings; expiresAt: number } | null = null
 const CACHE_TTL_MS = 3_000 // 3 seconds — short enough for a UI toggle to feel responsive
 
+/** Whether we've confirmed the Setting table exists. Once true, we skip the
+ *  existence check on subsequent reads. If the table is missing (e.g. a fresh
+ *  Vercel deployment that hasn't run prisma db push yet), we fall back to
+ *  env-only mode and the toggle returns a clear error. */
+let settingTableConfirmed = false
+
+/** One-time check: create the Setting table if it doesn't exist. This makes
+ *  the DRY-RUN toggle work on any deployment without requiring a manual
+ *  `prisma db push` after adding the Setting model. Uses a raw CREATE TABLE
+ *  IF NOT EXISTS so it's idempotent and safe. */
+async function ensureSettingTable(): Promise<void> {
+  if (settingTableConfirmed) return
+  try {
+    // Prisma's executeRawUnsafe runs the SQL directly on the underlying
+    // libSQL/SQLite connection. CREATE TABLE IF NOT EXISTS is a no-op if the
+    // table already exists.
+    await db.$executeRawUnsafe(
+      `CREATE TABLE IF NOT EXISTS "Setting" (
+        "key" TEXT NOT NULL PRIMARY KEY,
+        "value" TEXT NOT NULL,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+    )
+    settingTableConfirmed = true
+  } catch (err) {
+    console.error('[settings] ensureSettingTable failed:', err)
+    // Don't rethrow — the read/write helpers will catch their own errors and
+    // fall back to env-only mode.
+  }
+}
+
 async function readDbSetting(key: string): Promise<string | null> {
   try {
+    await ensureSettingTable()
     const row = await db.setting.findUnique({ where: { key } })
     return row?.value ?? null
   } catch {
-    // DB unavailable (e.g. cold start race) — fall back to env.
+    // DB unavailable (e.g. cold start race, table missing) — fall back to env.
     return null
   }
 }
@@ -45,6 +77,7 @@ async function writeDbSetting(key: string, value: string): Promise<void> {
   // adapter occasionally segfaults on upsert with a composite where clause.
   // Wrap in try/catch so a DB error NEVER crashes the serverless function.
   try {
+    await ensureSettingTable()
     const existing = await db.setting.findUnique({ where: { key } })
     if (existing) {
       await db.setting.update({ where: { key }, data: { value } })
