@@ -121,6 +121,26 @@
   }
 }
 
+/* Sentinel — mission-control dark theme enforcement.
+   The shadcn :root vars default to the light theme (--background: oklch(1 0 0)
+   = pure white). The Sentinel dashboard always renders on a slate-950 canvas,
+   but the body element inherits the white default, so any brief overflow past
+   the root div's edge (e.g. a wide table, a horizontal scrollbar, or a portal
+   that mounts before the page is fully painted) exposes a white stripe on the
+   right side of the viewport. Force the html + body to slate-950 so the dark
+   canvas is always present, even before the React tree mounts. Also clamp
+   horizontal overflow at the body so a wide element can never push the page
+   sideways and reveal the white body background. */
+html {
+  background-color: rgb(2 6 23); /* slate-950 */
+}
+body {
+  background-color: rgb(2 6 23); /* slate-950 */
+  color: rgb(241 245 249); /* slate-100 */
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
 /* Sentinel mission-control scrollbar — thin, slate, emerald thumb on hover */
 .custom-scroll {
   scrollbar-width: thin;
@@ -181,6 +201,12 @@
 }
 .sentinel-bg {
   position: relative;
+  width: 100%;
+  min-height: 100vh;
+  background-color: rgb(2 6 23); /* slate-950 — guarantees the dark canvas
+                                    extends to the full viewport width even
+                                    when a child element forces the parent
+                                    to grow taller or wider than max-w-7xl. */
   background-image:
     radial-gradient(circle at 15% 0%, rgb(16 185 129 / 0.06), transparent 40%),
     radial-gradient(circle at 85% 10%, rgb(245 158 11 / 0.04), transparent 45%),
@@ -1774,6 +1800,17 @@ nextjs-portal * {
   justify-content: center;
   line-height: 1;
 }
+/* Prominent "Done" pill — slightly larger, emerald-tinted border + glow,
+   so the green completion checkmark is unmistakable when a run finishes. */
+.sentinel-react-step-done {
+  padding: 5px 14px;
+  border-width: 1.5px !important;
+  border-color: rgba(16, 185, 129, 0.7) !important;
+  background: rgba(16, 185, 129, 0.12) !important;
+  box-shadow:
+    0 0 0 1px rgba(16, 185, 129, 0.25),
+    0 0 14px -2px rgba(16, 185, 129, 0.45);
+}
 .sentinel-react-connector {
   flex-shrink: 0;
   width: 24px;
@@ -2234,4 +2271,5 @@ a:focus-visible,
   border: 1px solid rgba(244, 63, 94, 0.3);
   color: rgb(253, 164, 175);
 }
+
 

@@ -1113,17 +1113,17 @@ function Console() {
   }, [running, selectedSignalId, signals.data, cmdOpen, settingsOpen, auditDrawerOpen, helpOpen, previewAction, tourStep, run]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 sentinel-bg">
+    <div className="min-h-screen w-full flex flex-col bg-slate-950 text-slate-100 sentinel-bg">
       {/* Header */}
       <header className="border-b border-slate-800/80 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80 sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3">
-          <div className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/40 ring-1 ring-emerald-400/30">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-3 flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0 min-w-0">
+            <div className="h-9 w-9 rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/40 ring-1 ring-emerald-400/30 shrink-0">
               <Radar className="h-5 w-5 text-slate-950" />
             </div>
-            <div className="leading-tight">
-              <div className="font-mono text-base font-bold tracking-tight">SENTINEL</div>
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Autonomous Data Incident Response</div>
+            <div className="leading-tight min-w-0 flex-shrink-0">
+              <div className="font-mono text-base font-bold tracking-tight whitespace-nowrap">SENTINEL</div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500 whitespace-nowrap hidden sm:block">Autonomous Data Incident Response</div>
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300">
@@ -1134,7 +1134,7 @@ function Console() {
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" /> DEMO
             </span>
           )}
-          <div className="ml-auto flex items-center gap-2 text-[11px]">
+          <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px] justify-end max-w-full">
             <SystemClock />
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gemini-2.0-flash"} mono />
             <Chip
@@ -1248,7 +1248,7 @@ function Console() {
       {/* Live Activity Ticker — scrolling bar below the Summary Stat Banner */}
       <LiveActivityTicker sysLog={sysLog} />
 
-      <main className={`max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 ${sysLogOpen ? "pb-72" : "pb-32"}`}>
+      <main className={`max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 min-w-0 ${sysLogOpen ? "pb-72" : "pb-32"}`}>
         {/* Hero */}
         <section className="mb-6 rounded-xl p-5 sentinel-hero-gradient">
           <div className="flex items-center gap-2 mb-3">
@@ -1366,9 +1366,9 @@ function Console() {
             reads its own prior post-mortem and produces a shorter/faster trace. */}
         <CompoundingComparison run1={replayRun1} run2={result} show={Boolean(replayRun1 && result && !replayBusy && !viewedIncident)} />
 
-        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5 ${viewMode === "manager" ? "sentinel-manager-view" : ""}`}>
+        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5 min-w-0 ${viewMode === "manager" ? "sentinel-manager-view" : ""}`}>
           {/* Left / main: injector + lineage + reasoning stream */}
-          <div className="lg:col-span-2 space-y-5">
+          <div className="lg:col-span-2 space-y-5 min-w-0">
             <SignalInjector
               signals={signals.data ?? []}
               loading={signals.isLoading}
@@ -1412,7 +1412,14 @@ function Console() {
             </div>
 
             {/* ReAct Loop Visualization — animated horizontal flowchart above the ReasoningStream */}
-            <ReActLoopViz steps={displaySteps} revealed={displayRevealed} running={running} paused={paused} />
+            <ReActLoopViz
+              steps={displaySteps}
+              revealed={displayRevealed}
+              running={running}
+              paused={paused}
+              hasResult={Boolean(result) || Boolean(viewedIncident)}
+              incidentStatus={(viewedIncident?.incident?.status ?? result?.incident?.status) ?? null}
+            />
 
             <div className="sentinel-reasoning-stream">
               <ReasoningStream
@@ -1447,7 +1454,7 @@ function Console() {
           </div>
 
           {/* Right column: metrics + history + connectors */}
-          <div className="space-y-5">
+          <div className="space-y-5 min-w-0">
             <MetricsCard result={result} historyCount={history.data?.length ?? 0} running={running} />
             <CostEfficiencyPanel result={result} incidents={history.data ?? []} />
             <PerformanceAnalytics incidents={history.data ?? []} />
@@ -1497,7 +1504,7 @@ function Console() {
 
       {/* Sticky footer — sits above the System Log terminal (z-index) */}
       <footer className="mt-auto border-t border-slate-800/60 bg-slate-950/85 backdrop-blur-md pb-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-2.5 text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-3 flex flex-wrap items-center gap-2.5 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> All systems operational
           </span>
@@ -2260,19 +2267,36 @@ function WriteBackPanel({
   const failed = writebacks.filter((w) => w.status === "failed").length;
   const viaAck = writebacks.filter((w) => w.path === "agent_context_kit").length;
   const viaRest = writebacks.filter((w) => w.path === "rest_ingestion").length;
+  const allSucceeded = succeeded > 0 && failed === 0;
 
   return (
-    <div className="rounded-lg border border-rose-500/30 bg-rose-500/5 p-3.5">
+    <div className={`rounded-lg border p-3.5 ${
+      allSucceeded
+        ? "border-emerald-500/40 bg-emerald-500/5"
+        : "border-rose-500/30 bg-rose-500/5"
+    }`}>
       <div className="flex items-center justify-between mb-2.5">
         <h3 className="text-xs font-semibold text-rose-300 flex items-center gap-1.5">
           <FileText className="h-3.5 w-3.5" /> Write-backs
           <span className="text-slate-500 font-normal">({writebacks.length})</span>
         </h3>
         <div className="flex items-center gap-1.5 text-[10px] font-mono">
-          {succeeded > 0 && <span className="text-emerald-400">{succeeded} ok</span>}
+          {succeeded > 0 && (
+            <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300 border border-emerald-500/40">
+              <CheckCircle2 className="h-2.5 w-2.5" /> {succeeded} SUCCEEDED
+            </span>
+          )}
           {failed > 0 && <span className="text-rose-400">{failed} failed</span>}
         </div>
       </div>
+      {/* "Written to DataHub" confirmation banner when all write-backs succeeded */}
+      {allSucceeded && (
+        <div className="mb-3 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-200">
+          <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
+          <span className="font-medium">{succeeded} post-mortem{pluralS(succeeded)} written to DataHub</span>
+          <span className="text-emerald-400/70">· verified</span>
+        </div>
+      )}
       {/* Dual-path indicator */}
       <div className="mb-3 flex items-center gap-2 rounded-md border border-rose-500/20 bg-rose-500/5 px-2.5 py-1.5 text-[10px] text-slate-400">
         <GitBranch className="h-3 w-3 text-rose-300 shrink-0" />
@@ -2294,6 +2318,10 @@ function WriteBackPanel({
       </div>
     </div>
   );
+}
+
+function pluralS(n: number): string {
+  return n === 1 ? "" : "s";
 }
 
 function WriteBackCard({
@@ -2350,9 +2378,11 @@ function WriteBackCard({
       className={`rounded-md border p-2.5 ${
         failed
           ? "border-rose-500/40 bg-rose-500/5"
-          : isRest
-            ? "border-amber-500/30 bg-amber-500/5"
-            : "border-emerald-500/20 bg-emerald-500/5"
+          : succeeded
+            ? "border-emerald-500/40 bg-emerald-500/5"
+            : isRest
+              ? "border-amber-500/30 bg-amber-500/5"
+              : "border-emerald-500/20 bg-emerald-500/5"
       }`}
     >
       <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
@@ -2374,31 +2404,45 @@ function WriteBackCard({
             <RefreshCw className="h-2.5 w-2.5" /> fallback
           </span>
         )}
-        {/* Status badge */}
+        {/* Status badge — prominently green when SUCCEEDED */}
         <span
-          className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-semibold ${
             succeeded
-              ? "bg-emerald-500/15 text-emerald-300"
-              : "bg-rose-500/15 text-rose-300"
+              ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/50 shadow-sm shadow-emerald-900/30"
+              : "bg-rose-500/20 text-rose-200 border border-rose-500/50"
           }`}
+          title={succeeded ? "Write-back succeeded — verified by DataHub" : "Write-back failed on both paths"}
         >
-          {succeeded ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
-          {writeback.status}
+          {succeeded ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+          {succeeded ? "SUCCEEDED" : writeback.status.toUpperCase()}
         </span>
         <span className="ml-auto text-[10px] text-slate-500 font-mono">{writeback.kind}</span>
       </div>
 
       {title && <div className="text-xs text-slate-200 font-medium truncate mb-1" title={title}>{title}</div>}
 
+      {/* "Written to DataHub" confirmation banner — only when succeeded */}
+      {succeeded && (
+        <div className="mb-1.5 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200">
+          <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
+          <span className="font-medium">Written to DataHub</span>
+          <span className="text-emerald-400/70">· verified</span>
+        </div>
+      )}
+
       {writeback.datahubUrn ? (
-        <button
-          onClick={copyUrn}
-          className="flex items-center gap-1.5 text-[10px] text-slate-400 font-mono hover:text-slate-200 transition-colors w-full text-left"
-          title="Click to copy"
-        >
-          <span className="truncate">{writeback.datahubUrn}</span>
-          {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-50" />}
-        </button>
+        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+          <span className="text-slate-500 shrink-0">URN:</span>
+          <button
+            onClick={copyUrn}
+            className="flex items-center gap-1.5 text-slate-300 hover:text-emerald-300 transition-colors min-w-0 flex-1 text-left"
+            title="Click to copy URN"
+          >
+            <span className="truncate">{writeback.datahubUrn}</span>
+            {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-60" />}
+          </button>
+          {copied && <span className="text-emerald-400 text-[9px] shrink-0">copied!</span>}
+        </div>
       ) : (
         failed && <div className="text-[10px] text-rose-400 font-mono">no URN (write failed on both paths)</div>
       )}
@@ -3449,7 +3493,7 @@ function DemoControlBar({
   const replayActive = replayRun !== 0;
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
         <span className="text-[11px] text-slate-500 font-mono">controls:</span>
         <div className="inline-flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-1">
           <span className={`h-2 w-2 rounded-full ${dryRun ? "bg-amber-400" : "bg-emerald-400"} animate-pulse`} />
@@ -3711,19 +3755,36 @@ function WritebacksPanel({
 
   const succeeded = allWritebacks.filter((w) => w.status === "succeeded").length;
   const failed = allWritebacks.filter((w) => w.status === "failed").length;
+  const allSucceeded = succeeded > 0 && failed === 0;
 
   return (
-    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
+    <section className={`rounded-xl border premium-card sentinel-glass ${
+      allSucceeded
+        ? "border-emerald-500/40"
+        : "border-slate-800"
+    } bg-slate-900/40`}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <FileText className="h-4 w-4 text-rose-400" /> Write-backs detail
           <span className="text-slate-500 font-normal">({allWritebacks.length})</span>
         </h2>
         <div className="flex items-center gap-1.5 text-[10px] font-mono">
-          {succeeded > 0 && <span className="text-emerald-400">{succeeded} ok</span>}
+          {succeeded > 0 && (
+            <span className="inline-flex items-center gap-1 rounded bg-emerald-500/15 px-1.5 py-0.5 text-emerald-300 border border-emerald-500/40">
+              <CheckCircle2 className="h-2.5 w-2.5" /> {succeeded} SUCCEEDED
+            </span>
+          )}
           {failed > 0 && <span className="text-rose-400">{failed} failed</span>}
         </div>
       </div>
+      {/* "Written to DataHub" confirmation banner when all write-backs succeeded */}
+      {allSucceeded && (
+        <div className="mx-3 mt-3 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-200">
+          <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
+          <span className="font-medium">{succeeded} post-mortem{pluralS(succeeded)} written to DataHub</span>
+          <span className="text-emerald-400/70">· verified</span>
+        </div>
+      )}
       <div className="max-h-72 overflow-y-auto custom-scroll p-2 space-y-2">
         {allWritebacks.map((w) => (
           <WritebackDetailCard key={w.id} writeback={w} />
@@ -3770,7 +3831,7 @@ function WritebackDetailCard({
         failed
           ? "border-rose-500/40 bg-rose-500/5"
           : succeeded
-            ? "border-emerald-500/20 bg-emerald-500/5"
+            ? "border-emerald-500/40 bg-emerald-500/5"
             : "border-slate-800 bg-slate-900/40"
       }`}
     >
@@ -3781,18 +3842,31 @@ function WritebackDetailCard({
           <BadgeIcon className="h-2.5 w-2.5" />
           {badge}
         </span>
-        <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
-          succeeded
-            ? "bg-emerald-500/15 text-emerald-300"
-            : "bg-rose-500/15 text-rose-300"
-        }`}>
-          {succeeded ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
-          {writeback.status}
+        {/* Status badge — prominent green SUCCEEDED */}
+        <span
+          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[10px] font-mono uppercase tracking-wider font-semibold ${
+            succeeded
+              ? "bg-emerald-500/20 text-emerald-200 border border-emerald-500/50 shadow-sm shadow-emerald-900/30"
+              : "bg-rose-500/20 text-rose-200 border border-rose-500/50"
+          }`}
+          title={succeeded ? "Write-back succeeded — verified by DataHub" : "Write-back failed"}
+        >
+          {succeeded ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+          {succeeded ? "SUCCEEDED" : writeback.status.toUpperCase()}
         </span>
         <span className="ml-auto text-[10px] text-slate-600 font-mono">
           {new Date(writeback.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
         </span>
       </div>
+
+      {/* "Written to DataHub" confirmation banner — only when succeeded */}
+      {succeeded && (
+        <div className="mb-2 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-200">
+          <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
+          <span className="font-medium">Written to DataHub</span>
+          <span className="text-emerald-400/70">· verified</span>
+        </div>
+      )}
 
       {/* Data preview — kind-specific */}
       {/* Post-mortem: title + content preview */}
@@ -3861,9 +3935,14 @@ function WritebackDetailCard({
         </div>
       )}
 
-      {/* DataHub URN */}
+      {/* DataHub URN — prominent, with explicit "URN:" label + copy button */}
       {writeback.datahubUrn && (
-        <CopyableUrn value={writeback.datahubUrn} />
+        <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono rounded border border-slate-700/50 bg-slate-900/40 px-2 py-1">
+          <span className="text-slate-500 shrink-0 uppercase tracking-wider">URN:</span>
+          <div className="flex-1 min-w-0">
+            <CopyableUrn value={writeback.datahubUrn} />
+          </div>
+        </div>
       )}
     </motion.div>
   );
@@ -3899,11 +3978,26 @@ function IncidentStatusBar({
   // Determine which stages are completed and which is current
   const currentStage = useMemo((): StageKey | null => {
     const steps = viewedIncident?.incident.reasoningSteps ?? result?.steps ?? [];
-    const hasWritebacks = (viewedIncident?.writebacks?.length ?? 0) > 0;
-    const hasActions = (viewedIncident?.actions?.length ?? 0) > 0;
-    const isResolved = viewedIncident?.incident?.status === "resolved" || result?.incident?.status === "resolved";
-    const isFailed = viewedIncident?.incident?.status === "failed" || result?.incident?.status === "failed";
+    // Persisted write-backs (viewedIncident) OR live write-back steps in result.steps
+    const hasWritebacks =
+      (viewedIncident?.writebacks?.length ?? 0) > 0 ||
+      steps.some((s) => s.kind === "write_back" || s.toolName === "ack.save_document");
+    // Persisted actions OR live action.* tool_call steps
+    const hasActions =
+      (viewedIncident?.actions?.length ?? 0) > 0 ||
+      steps.some(
+        (s) => s.kind === "tool_call" && (s.toolName?.startsWith("action.") || s.toolName?.startsWith("action_")),
+      );
+    // Terminal states. "degraded" is also terminal — the deterministic
+    // fallback resolves the incident but tags it degraded when the LLM was
+    // unavailable. Treat it the same as "resolved" for the progress bar so
+    // the RESOLVED stage gets its green checkmark.
+    const incidentStatus = viewedIncident?.incident?.status ?? result?.incident?.status;
+    const isResolved = incidentStatus === "resolved" || incidentStatus === "degraded";
+    const isFailed = incidentStatus === "failed";
 
+    // When the run is complete and we have a result, force-mark every stage
+    // up to RESOLVED as completed if the incident reached a terminal state.
     if (isResolved || isFailed) return "resolved";
     if (hasWritebacks) return "writebacks";
     if (hasActions) return "actions";
@@ -3942,7 +4036,8 @@ function IncidentStatusBar({
     if (triageTs && actionsTs && actionsTs > triageTs) out.triage = (actionsTs - triageTs) / 1000;
     if (actionsTs && writebacksTs && writebacksTs > actionsTs) out.actions = (writebacksTs - actionsTs) / 1000;
     if (writebacksTs && lastTs && lastTs > writebacksTs) out.writebacks = (lastTs - writebacksTs) / 1000;
-    if ((viewedIncident?.incident?.status === "resolved" || result?.incident?.status === "resolved") && lastTs > firstTs) {
+    const incidentStatus = viewedIncident?.incident?.status ?? result?.incident?.status;
+    if ((incidentStatus === "resolved" || incidentStatus === "degraded") && lastTs > firstTs) {
       out.resolved = (lastTs - firstTs) / 1000;
     }
     return out;
@@ -3975,16 +4070,27 @@ function IncidentStatusBar({
             <Loader2 className="h-3 w-3 animate-spin" /> {elapsed.toFixed(1)}s
           </span>
         )}
-        {!running && (result?.incident?.status === "resolved" || viewedIncident?.incident?.status === "resolved") && (
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-emerald-300">
-            <CheckCircle2 className="h-3 w-3" /> resolved
-          </span>
-        )}
-        {!running && (result?.incident?.status === "failed" || viewedIncident?.incident?.status === "failed") && (
-          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-rose-300">
-            <XCircle className="h-3 w-3" /> failed
-          </span>
-        )}
+        {!running &&
+          (result?.incident?.status === "resolved" ||
+            viewedIncident?.incident?.status === "resolved") && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-emerald-300">
+              <CheckCircle2 className="h-3 w-3" /> resolved
+            </span>
+          )}
+        {!running &&
+          (result?.incident?.status === "degraded" ||
+            viewedIncident?.incident?.status === "degraded") && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-amber-300">
+              <CheckCircle2 className="h-3 w-3" /> degraded (auto-resolved)
+            </span>
+          )}
+        {!running &&
+          (result?.incident?.status === "failed" ||
+            viewedIncident?.incident?.status === "failed") && (
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-rose-300">
+              <XCircle className="h-3 w-3" /> failed
+            </span>
+          )}
       </div>
       <div className="flex items-center gap-0">
         {STAGES.map((stage, i) => {
@@ -4841,11 +4947,13 @@ function CopyableUrn({ value }: { value: string }) {
   return (
     <button
       onClick={copy}
-      className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono hover:text-slate-300 transition-colors w-full text-left mt-0.5"
+      className="flex items-center gap-1.5 text-[10px] text-slate-500 font-mono hover:text-emerald-300 transition-colors w-full min-w-0 text-left"
       title="Click to copy URN"
     >
       <span className="truncate">{value}</span>
-      {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-40" />}
+      {copied
+        ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
+        : <Copy className="h-3 w-3 shrink-0 opacity-60" />}
     </button>
   );
 }
@@ -6653,7 +6761,7 @@ function SummaryStatBanner({ incidentCount, historyCount }: { incidentCount: num
   const saved = Math.max(autoResolved * 1500, 12000);
   return (
     <div className="sentinel-stats-banner">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-2 flex flex-wrap items-center justify-center gap-x-6 gap-y-1 text-xs">
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-2 flex flex-wrap items-center justify-center gap-x-6 gap-y-1 text-xs">
         <span className="text-slate-500 font-mono uppercase tracking-wider text-[10px]">Last 24h</span>
         <span className="inline-flex items-center gap-1.5">
           <AlertTriangle className="h-3.5 w-3.5 text-rose-400" />
@@ -6711,11 +6819,15 @@ function ReActLoopViz({
   revealed,
   running,
   paused,
+  hasResult = false,
+  incidentStatus = null,
 }: {
   steps: ReasoningStep[];
   revealed: number;
   running: boolean;
   paused: boolean;
+  hasResult?: boolean;
+  incidentStatus?: string | null;
 }) {
   const visibleSteps = steps.slice(0, revealed);
 
@@ -6745,7 +6857,23 @@ function ReActLoopViz({
     return Math.max(count, 1);
   }, [visibleSteps]);
 
-  const isComplete = !running && steps.length > 0 && revealed >= steps.length;
+  // The run is "complete" when:
+  //   (a) we're not running AND
+  //   (b) we have a result with steps AND
+  //   (c) either every step has been progressively revealed, OR the incident
+  //       reached a terminal state (resolved / degraded / failed).
+  // The reveal counter resets to 0 after a run completes and increments by 1
+  // every ~260ms — for a 25-step trace that's ~6.5s of "Done" being absent
+  // even though the run is finished. Falling back to the terminal-status
+  // check makes the green checkmark appear immediately on completion.
+  const isTerminal =
+    incidentStatus === "resolved" ||
+    incidentStatus === "degraded" ||
+    incidentStatus === "failed";
+  const isComplete =
+    !running &&
+    steps.length > 0 &&
+    (revealed >= steps.length || isTerminal || hasResult);
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
@@ -6763,16 +6891,19 @@ function ReActLoopViz({
             </span>
           )}
           {isComplete && (
-            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-mono text-emerald-300">
-              <CheckCircle2 className="h-3 w-3" /> Complete
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/50 bg-emerald-500/15 px-2.5 py-1 text-[11px] font-mono font-semibold text-emerald-300 shadow-sm shadow-emerald-900/30">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Complete
             </span>
           )}
         </div>
       </div>
       <div className="sentinel-react-loop px-4 py-3">
         {REACT_LOOP_STEPS.map((step, i) => {
-          const isActive = currentPhase === step.id;
-          const isCompleted = completedPhases.has(step.id) || (isComplete && currentPhase !== step.id);
+          const isActive = currentPhase === step.id && !isComplete;
+          // When the run is complete, every phase is "completed" — show the
+          // green check on Observe, Think, AND Act (not just the ones before
+          // the current phase).
+          const isCompleted = isComplete || completedPhases.has(step.id);
           const isLast = i === REACT_LOOP_STEPS.length - 1;
 
           return (
@@ -6785,6 +6916,9 @@ function ReActLoopViz({
               >
                 <span className="text-sm">{step.emoji}</span>
                 <span>{step.label}</span>
+                {isCompleted && (
+                  <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-0.5 shrink-0" aria-label="completed" />
+                )}
               </div>
               {!isLast && (
                 <div
@@ -6818,13 +6952,15 @@ function ReActLoopViz({
               className="sentinel-react-step"
               data-kind="observe"
               data-active={currentPhase === "observe" && running ? "true" : undefined}
+              data-complete={isComplete ? "true" : undefined}
             >
               <span className="text-sm">🔄</span>
               <span>Observe</span>
+              {isComplete && <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-0.5 shrink-0" aria-label="completed" />}
             </div>
           </>
         )}
-        {/* Checkmark at end when complete */}
+        {/* Prominent "Done" checkmark at end when the run is complete */}
         {isComplete && (
           <>
             <div className="sentinel-react-connector" data-completed="true">
@@ -6832,9 +6968,13 @@ function ReActLoopViz({
                 <line x1="0" y1="1" x2="24" y2="1" className="sentinel-react-connector-line" />
               </svg>
             </div>
-            <div className="sentinel-react-step" data-complete="true">
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
-              <span className="text-emerald-300">Done</span>
+            <div
+              className="sentinel-react-step sentinel-react-step-done"
+              data-complete="true"
+            >
+              <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+              <span className="text-emerald-300 font-semibold">Done</span>
+              <CheckCircle2 className="h-3 w-3 text-emerald-400 ml-0.5 shrink-0" aria-label="completed" />
             </div>
           </>
         )}
