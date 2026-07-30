@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
+  Command as CommandIcon,
   Copy,
   Database,
   FileText,
@@ -30,19 +31,23 @@ import {
   RefreshCw,
   RotateCcw,
   RotateCw,
+  Search,
   Send,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Slack,
   Sparkles,
   Terminal,
+  TrendingDown,
+  TrendingUp,
   User,
   Workflow,
   XCircle,
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   QueryClient,
@@ -52,6 +57,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Command as CommandPrimitive } from "cmdk";
 
 // ---------------------------------------------------------------------------
 // Types (mirror the API responses)
@@ -440,6 +446,12 @@ function Console() {
   // Toast notification state
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: "success" | "warning" | "error" }>>([]);
   const [scrolledDown, setScrolledDown] = useState(false);
+  // Command palette (⌘K) + settings drawer state
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Run 1 result capture — preserved across the replay loop so the
+  // CompoundingComparison card can show side-by-side Run 1 vs Run 2 metrics.
+  const [replayRun1, setReplayRun1] = useState<RunResult | null>(null);
   const queryClient = useQueryClient();
   const runStartRef = useRef<number>(0);
 
@@ -655,6 +667,7 @@ function Console() {
     setPriorPostMortem(null);
     setViewedIncident(null);
     setResult(null);
+    setReplayRun1(null);
     setRunError(null);
     try {
       // Run 1 — investigate from scratch → write post-mortem.
@@ -667,6 +680,7 @@ function Console() {
       const j1 = await r1.json();
       if (!r1.ok) throw new Error(j1.error ?? `Run 1 failed (HTTP ${r1.status})`);
       setResult(j1 as RunResult);
+      setReplayRun1(j1 as RunResult);
       runStartRef.current = 0;
       queryClient.invalidateQueries({ queryKey: ["agent-incidents"] });
       queryClient.invalidateQueries({ queryKey: ["guardrail-pending"] });
@@ -728,6 +742,67 @@ function Console() {
   const running = run.isPending || replayBusy;
   const totalTokens = result?.totalTokens;
 
+  // Global keyboard shortcuts.
+  //   ⌘K / Ctrl+K → toggle command palette
+  //   ?           → open command palette (help)
+  //   R           → run the selected signal (if not running, not typing)
+  //   A           → toggle audit drawer
+  //   S           → toggle settings drawer
+  //   1-5         → select signal N
+  // Shortcuts are disabled while the user is typing in an input/textarea.
+  // ⌘K works even while typing.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isTyping = tag === "INPUT" || tag === "TEXTAREA" || (target as HTMLElement | null)?.isContentEditable;
+      // ⌘K / Ctrl+K — always available (even while typing).
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        setCmdOpen((o) => !o);
+        return;
+      }
+      if (isTyping) return;
+      // ? — open command palette
+      if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setCmdOpen(true);
+        return;
+      }
+      // Don't trigger single-key shortcuts when a modifier (other than
+      // Shift) is held, or when a palette/drawer is open.
+      if (cmdOpen || settingsOpen || auditDrawerOpen) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === "r") {
+        e.preventDefault();
+        if (!running && selectedSignalId) run.mutate(selectedSignalId);
+        return;
+      }
+      if (k === "a") {
+        e.preventDefault();
+        setAuditDrawerOpen((o) => !o);
+        return;
+      }
+      if (k === "s") {
+        e.preventDefault();
+        setSettingsOpen((o) => !o);
+        return;
+      }
+      // 1-5 → select signal N
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= 5 && signals.data) {
+        const sig = signals.data[n - 1];
+        if (sig) {
+          e.preventDefault();
+          setSelectedSignalId(sig.id);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [running, selectedSignalId, signals.data, cmdOpen, settingsOpen, auditDrawerOpen, run]);
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-950 text-slate-100 sentinel-bg">
       {/* Header */}
@@ -767,12 +842,31 @@ function Console() {
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "—"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
             <button
+              onClick={() => setCmdOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors sentinel-focus-ring"
+              title="Open command palette (⌘K)"
+            >
+              <CommandIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Command</span>
+              <kbd className="sentinel-kbd-hint">⌘K</kbd>
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors sentinel-focus-ring"
+              title="Open runtime config (S)"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              <span className="hidden md:inline">Config</span>
+              <kbd className="sentinel-kbd-hint hidden md:inline">S</kbd>
+            </button>
+            <button
               onClick={() => setAuditDrawerOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors"
-              title="Open audit log drawer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2 py-1 text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors sentinel-focus-ring"
+              title="Open audit log drawer (A)"
             >
               <PanelRightOpen className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">Audit</span>
+              <kbd className="sentinel-kbd-hint hidden sm:inline">A</kbd>
               <span className="text-[10px] font-mono text-slate-500">{viewedIncident?.auditEvents?.length ?? result?.steps.filter(s => s.kind === 'tool_call' || s.kind === 'tool_result' || s.kind === 'write_back' || s.kind === 'plan' || s.kind === 'observe' || s.kind === 'reflect').length ?? 0}</span>
             </button>
           </div>
@@ -866,6 +960,12 @@ function Console() {
             </div>
           </motion.div>
         )}
+
+        {/* Compounding-context comparison — side-by-side Run 1 vs Run 2 metrics.
+            Appears only after the replay loop completes both runs (not while
+            running, not when viewing a historical incident). Proves the agent
+            reads its own prior post-mortem and produces a shorter/faster trace. */}
+        <CompoundingComparison run1={replayRun1} run2={result} show={Boolean(replayRun1 && result && !replayBusy && !viewedIncident)} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
           {/* Left / main: injector + lineage + reasoning stream */}
@@ -991,6 +1091,30 @@ function Console() {
         onClose={() => setAuditDrawerOpen(false)}
         events={viewedIncident?.auditEvents ?? []}
         incidentUrn={viewedIncident?.incident.urn ?? null}
+      />
+
+      {/* Command palette (⌘K) — quick actions: run, select signal, open drawers */}
+      <CommandPalette
+        open={cmdOpen}
+        onOpenChange={setCmdOpen}
+        signals={signals.data ?? []}
+        selectedSignalId={selectedSignalId}
+        onSelectSignal={(id) => { setSelectedSignalId(id); setCmdOpen(false); }}
+        onRun={() => { if (selectedSignalId && !running) { run.mutate(selectedSignalId); setCmdOpen(false); } }}
+        onOpenAudit={() => { setAuditDrawerOpen(true); setCmdOpen(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setCmdOpen(false); }}
+        onTestConnectors={async () => { const dry = connectors.data?.dryRun ?? true; await fetch("/api/connectors/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun: dry }) }); queryClient.invalidateQueries({ queryKey: ["connectors-status"] }); addToast("Connectors tested", "success"); setCmdOpen(false); }}
+        onScrollTop={() => { window.scrollTo({ top: 0, behavior: "smooth" }); setCmdOpen(false); }}
+        running={running}
+      />
+
+      {/* Settings drawer — runtime config transparency */}
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        llmStatus={llmStatus.data ?? null}
+        result={result}
+        connectors={connectors.data ?? null}
       />
 
       {/* Toast notification container */}
@@ -3415,6 +3539,731 @@ function CopyableUrn({ value }: { value: string }) {
       <span className="truncate">{value}</span>
       {copied ? <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" /> : <Copy className="h-3 w-3 shrink-0 opacity-40" />}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CommandPalette (⌘K) — custom dark mission-control palette built on cmdk.
+// Provides quick keyboard-driven access to: run signal, select signal,
+// open audit/settings drawers, test connectors, scroll to top.
+// ---------------------------------------------------------------------------
+
+interface CommandPaletteProps {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  signals: SeedSignal[];
+  selectedSignalId: string | null;
+  onSelectSignal: (id: string) => void;
+  onRun: () => void;
+  onOpenAudit: () => void;
+  onOpenSettings: () => void;
+  onTestConnectors: () => void | Promise<void>;
+  onScrollTop: () => void;
+  running: boolean;
+}
+
+function CommandPalette({
+  open,
+  onOpenChange,
+  signals,
+  selectedSignalId,
+  onSelectSignal,
+  onRun,
+  onOpenAudit,
+  onOpenSettings,
+  onTestConnectors,
+  onScrollTop,
+  running,
+}: CommandPaletteProps) {
+  const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Close handler — clears the query AND notifies the parent. Keeps query
+  // reset in an event handler (not an effect) to satisfy the
+  // react-hooks/set-state-in-effect lint rule.
+  function close() {
+    setQuery("");
+    onOpenChange(false);
+  }
+
+  // Focus the input when the palette opens + listen for Escape to close.
+  // cmdk's CommandPrimitive does not close on Escape by default (that's the
+  // dialog wrapper's job), so we listen here.
+  useEffect(() => {
+    if (!open) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 30);
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        close();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, [open]);
+
+  // Esc closes (cmdk handles this internally, but we also listen on overlay).
+  if (!open) return null;
+
+  const q = query.toLowerCase().trim();
+  const matches = (s: string) => s.toLowerCase().includes(q);
+
+  const signalResults = signals.filter(
+    (s) => !q || matches(s.label) || matches(s.assetName) || matches(s.type) || matches(s.scenarioId),
+  );
+
+  return (
+    <>
+      <div
+        className="sentinel-cmdk-overlay"
+        onClick={close}
+        aria-hidden
+      />
+      <div className="sentinel-cmdk-panel" role="dialog" aria-label="Command palette">
+        <CommandPrimitive
+          className="flex h-full w-full flex-col"
+          value=""
+          onValueChange={() => {
+            /* cmdk manages its own selection; we don't need it */
+          }}
+        >
+          <div className="sentinel-cmdk-input-wrap">
+            <Search className="h-4 w-4 text-slate-500 shrink-0" />
+            <CommandPrimitive.Input
+              ref={inputRef}
+              placeholder="Type a command or search signals…"
+              value={query}
+              onValueChange={setQuery}
+              className="sentinel-cmdk-input"
+            />
+            <kbd className="sentinel-kbd-hint">esc</kbd>
+          </div>
+          <CommandPrimitive.List className="sentinel-cmdk-list">
+            <CommandPrimitive.Empty className="sentinel-cmdk-empty">
+              No matches for &ldquo;{query}&rdquo;
+            </CommandPrimitive.Empty>
+
+            {/* Actions */}
+            <CommandPrimitive.Group heading="Actions" className="sentinel-cmdk-group">
+              <CommandPaletteItem
+                icon={PlayCircle}
+                label="Inject & run Sentinel"
+                hint="R"
+                disabled={running || !selectedSignalId}
+                onSelect={onRun}
+                query={q}
+              />
+              <CommandPaletteItem
+                icon={PanelRightOpen}
+                label="Open audit log drawer"
+                hint="A"
+                onSelect={onOpenAudit}
+                query={q}
+              />
+              <CommandPaletteItem
+                icon={Settings}
+                label="Open runtime config"
+                hint="S"
+                onSelect={onOpenSettings}
+                query={q}
+              />
+              <CommandPaletteItem
+                icon={Send}
+                label="Test connectors (GitHub + Slack)"
+                disabled={running}
+                onSelect={onTestConnectors}
+                query={q}
+              />
+              <CommandPaletteItem
+                icon={ArrowUp}
+                label="Scroll to top"
+                onSelect={onScrollTop}
+                query={q}
+              />
+            </CommandPrimitive.Group>
+
+            {/* Signals */}
+            {signalResults.length > 0 && (
+              <CommandPrimitive.Group heading={`Signals (${signalResults.length})`} className="sentinel-cmdk-group">
+                {signalResults.map((sig, i) => {
+                  const isSelected = sig.id === selectedSignalId;
+                  const num = signals.indexOf(sig) + 1;
+                  return (
+                    <button
+                      key={sig.id}
+                      type="button"
+                      className="sentinel-cmdk-item w-full text-left"
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).dataset.selected = "true";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).dataset.selected = "false";
+                      }}
+                      onClick={() => onSelectSignal(sig.id)}
+                    >
+                      <span
+                        className={`h-1.5 w-1.5 rounded-full shrink-0 ${
+                          sig.type === "freshness"
+                            ? "bg-amber-400"
+                            : sig.type === "schema"
+                              ? "bg-rose-400"
+                              : sig.type === "quality"
+                                ? "bg-emerald-400"
+                                : "bg-purple-400"
+                        }`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate font-medium text-slate-200">{sig.label}</span>
+                          {isSelected && (
+                            <span className="text-[9px] font-mono uppercase tracking-wider text-emerald-400">selected</span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-500 truncate font-mono">
+                          {sig.assetName} · {sig.type}
+                        </div>
+                      </div>
+                      {num <= 5 && <kbd className="sentinel-kbd-hint">{num}</kbd>}
+                    </button>
+                  );
+                })}
+              </CommandPrimitive.Group>
+            )}
+          </CommandPrimitive.List>
+        </CommandPrimitive>
+
+        {/* Footer with shortcut hints */}
+        <div className="sentinel-cmdk-footer">
+          <span className="inline-flex items-center gap-1">
+            <kbd className="sentinel-kbd-hint">↑↓</kbd> navigate
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <kbd className="sentinel-kbd-hint">↵</kbd> select
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <kbd className="sentinel-kbd-hint">esc</kbd> close
+          </span>
+          <span className="ml-auto inline-flex items-center gap-1 text-emerald-400/70">
+            <CommandIcon className="h-3 w-3" /> Sentinel
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function CommandPaletteItem({
+  icon: Icon,
+  label,
+  hint,
+  disabled,
+  onSelect,
+  query,
+}: {
+  icon: typeof PlayCircle;
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onSelect: () => void | Promise<void>;
+  query: string;
+}) {
+  const q = query.toLowerCase().trim();
+  if (q && !label.toLowerCase().includes(q)) return null;
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className="sentinel-cmdk-item w-full text-left"
+      data-disabled={disabled ? "true" : undefined}
+      onMouseEnter={(e) => {
+        if (!disabled) (e.currentTarget as HTMLElement).dataset.selected = "true";
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLElement).dataset.selected = "false";
+      }}
+      onClick={() => {
+        if (!disabled) void onSelect();
+      }}
+    >
+      <Icon className="h-4 w-4 text-slate-400 shrink-0" />
+      <span className="flex-1">{label}</span>
+      {hint && <kbd className="sentinel-kbd-hint">{hint}</kbd>}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CompoundingComparison — side-by-side Run 1 vs Run 2 metrics.
+// Appears after the replay loop completes both runs. Proves the agent reads
+// its own prior post-mortem and produces a shorter/faster/cheaper trace.
+// ---------------------------------------------------------------------------
+
+function CompoundingComparison({
+  run1,
+  run2,
+  show,
+}: {
+  run1: RunResult | null;
+  run2: RunResult | null;
+  show: boolean;
+}) {
+  if (!show || !run1 || !run2) return null;
+
+  const metrics = (r: RunResult) => {
+    const steps = r.steps.length;
+    const toolCalls = r.steps.filter((s) => s.kind === "tool_call").length;
+    const tokens = r.totalTokens ? r.totalTokens.promptTokens + r.totalTokens.completionTokens : 0;
+    const created = r.incident?.createdAt ? new Date(r.incident.createdAt).getTime() : 0;
+    const resolved = r.incident?.resolvedAt ? new Date(r.incident.resolvedAt).getTime() : 0;
+    const seconds = resolved && created ? (resolved - created) / 1000 : 0;
+    const writebacks = r.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document").length;
+    const readPostMortem = r.steps.some(
+      (s) => s.kind === "tool_result" && s.toolName === "mcp.search_documents" && Array.isArray(s.toolResult),
+    );
+    return { steps, toolCalls, tokens, seconds, writebacks, readPostMortem };
+  };
+
+  const m1 = metrics(run1);
+  const m2 = metrics(run2);
+
+  // Deltas — negative is better for steps/tokens/time (Run 2 should be lower).
+  const stepsDelta = m1.steps - m2.steps;
+  const tokensDelta = m1.tokens - m2.tokens;
+  const timeDelta = m1.seconds - m2.seconds;
+
+  // Scale bars relative to Run 1 (the baseline). Run 2's bar is shorter if better.
+  const maxSteps = Math.max(m1.steps, m2.steps, 1);
+  const maxTokens = Math.max(m1.tokens, m2.tokens, 1);
+  const maxTime = Math.max(m1.seconds, m2.seconds, 1);
+
+  const fmtTime = (s: number) => (s > 0 ? `${s.toFixed(1)}s` : "—");
+  const fmtTokens = (t: number) => (t > 0 ? t.toLocaleString() : "—");
+  const pct = (delta: number, base: number) => (base > 0 ? Math.round((delta / base) * 100) : 0);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="mt-4 rounded-xl border border-emerald-500/30 bg-gradient-to-br from-emerald-500/5 to-slate-900/40 p-5"
+    >
+      <div className="flex items-center gap-2 mb-4">
+        <div className="h-8 w-8 rounded-lg bg-emerald-500/15 border border-emerald-500/40 flex items-center justify-center">
+          <RotateCw className="h-4 w-4 text-emerald-300" />
+        </div>
+        <div>
+          <div className="text-sm font-semibold text-emerald-200">Compounding context — measured</div>
+          <div className="text-xs text-slate-400 mt-0.5">
+            Run 2 read Run 1&apos;s post-mortem before reasoning. Here&apos;s the measurable difference.
+          </div>
+        </div>
+        {m2.readPostMortem && (
+          <span className="ml-auto inline-flex items-center gap-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[10px] font-mono text-emerald-300">
+            <CheckCircle2 className="h-3 w-3" /> prior post-mortem read
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {/* Reasoning steps */}
+        <ComparisonMetric
+          label="Reasoning steps"
+          run1Value={`${m1.steps}`}
+          run2Value={`${m2.steps}`}
+          run1Pct={100}
+          run2Pct={(m2.steps / maxSteps) * 100}
+          delta={stepsDelta}
+          deltaLabel={stepsDelta > 0 ? `${stepsDelta} fewer steps` : stepsDelta < 0 ? `${Math.abs(stepsDelta)} more steps` : "same"}
+          better={stepsDelta > 0}
+        />
+        {/* Tokens */}
+        <ComparisonMetric
+          label="Tokens used"
+          run1Value={fmtTokens(m1.tokens)}
+          run2Value={fmtTokens(m2.tokens)}
+          run1Pct={100}
+          run2Pct={(m2.tokens / maxTokens) * 100}
+          delta={tokensDelta}
+          deltaLabel={tokensDelta > 0 ? `${pct(tokensDelta, m1.tokens)}% fewer tokens` : tokensDelta < 0 ? `${pct(Math.abs(tokensDelta), m1.tokens)}% more tokens` : "same"}
+          better={tokensDelta > 0}
+        />
+        {/* Resolution time */}
+        <ComparisonMetric
+          label="Resolution time"
+          run1Value={fmtTime(m1.seconds)}
+          run2Value={fmtTime(m2.seconds)}
+          run1Pct={100}
+          run2Pct={(m2.seconds / maxTime) * 100}
+          delta={timeDelta}
+          deltaLabel={timeDelta > 0 ? `${timeDelta.toFixed(1)}s faster` : timeDelta < 0 ? `${Math.abs(timeDelta).toFixed(1)}s slower` : "same"}
+          better={timeDelta > 0}
+        />
+      </div>
+
+      <div className="mt-4 pt-4 border-t border-slate-800/60 flex items-center gap-2 text-[11px] text-slate-500">
+        <Sparkles className="h-3 w-3 text-emerald-400" />
+        <span>
+          The agent wrote a post-mortem to DataHub in Run 1, then retrieved and read it in Run 2 —
+          producing a shorter, cheaper reasoning trace. This is the closed-loop metadata agent in action.
+        </span>
+      </div>
+    </motion.div>
+  );
+}
+
+function ComparisonMetric({
+  label,
+  run1Value,
+  run2Value,
+  run1Pct,
+  run2Pct,
+  delta,
+  deltaLabel,
+  better,
+}: {
+  label: string;
+  run1Value: string;
+  run2Value: string;
+  run1Pct: number;
+  run2Pct: number;
+  delta: number;
+  deltaLabel: string;
+  better: boolean;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-mono mb-2">{label}</div>
+      <div className="space-y-2">
+        {/* Run 1 */}
+        <div>
+          <div className="flex items-center justify-between text-[11px] mb-1">
+            <span className="text-slate-500 font-mono">Run 1</span>
+            <span className="text-slate-300 font-mono tabular-nums">{run1Value}</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full bg-slate-500 rounded-full sentinel-comparison-bar-run1"
+              style={{ width: `${run1Pct}%` }}
+            />
+          </div>
+        </div>
+        {/* Run 2 */}
+        <div>
+          <div className="flex items-center justify-between text-[11px] mb-1">
+            <span className="text-emerald-400 font-mono">Run 2</span>
+            <span className="text-emerald-300 font-mono tabular-nums">{run2Value}</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-slate-800 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full sentinel-comparison-bar-run2"
+              style={{ width: `${run2Pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+      {/* Delta */}
+      <div className="mt-2 flex items-center gap-1 text-[11px] sentinel-comparison-delta">
+        {delta > 0 ? (
+          <TrendingDown className="h-3 w-3 text-emerald-400" />
+        ) : delta < 0 ? (
+          <TrendingUp className="h-3 w-3 text-rose-400" />
+        ) : (
+          <ArrowLeftRight className="h-3 w-3 text-slate-500" />
+        )}
+        <span className={better ? "text-emerald-400" : delta < 0 ? "text-rose-400" : "text-slate-500"}>
+          {deltaLabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SettingsDrawer — right-side slide-in panel showing runtime config.
+// Gives reviewers transparency into the agent's configuration: LLM provider,
+// model, failover, circuit state, prompt version, connector endpoints,
+// guardrail rules, and dry-run mode.
+// ---------------------------------------------------------------------------
+
+function SettingsDrawer({
+  open,
+  onClose,
+  llmStatus,
+  result,
+  connectors,
+}: {
+  open: boolean;
+  onClose: () => void;
+  llmStatus: LlmResilienceStatus | null;
+  result: RunResult | null;
+  connectors: ConnectorStatus | null;
+}) {
+  // Listen for Escape to close — the drawer uses a custom overlay (not Radix
+  // Dialog), so we handle Escape ourselves.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const guardrailRules = [
+    { rule: "Refuse writes to PII-tagged assets", icon: ShieldAlert, color: "text-rose-300" },
+    { rule: "Gate ownership/glossary proposals behind human approval", icon: Lock, color: "text-amber-300" },
+    { rule: "Never delete catalog entities", icon: ShieldCheck, color: "text-emerald-300" },
+    { rule: "Cap write-back payload size at 32KB", icon: ShieldCheck, color: "text-emerald-300" },
+  ];
+
+  return (
+    <>
+      <div className="sentinel-drawer-overlay" onClick={onClose} aria-hidden />
+      <div className="sentinel-drawer-panel" role="dialog" aria-label="Runtime configuration">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            <Settings className="h-4 w-4 text-emerald-400" />
+            <div>
+              <div className="text-sm font-semibold text-slate-100">Runtime Configuration</div>
+              <div className="text-[10px] text-slate-500 font-mono">read-only · live values from the running process</div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
+            aria-label="Close settings"
+          >
+            <XCircle className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="sentinel-drawer-body space-y-5">
+          {/* LLM provider */}
+          <SettingsSection title="LLM Provider" icon={Zap}>
+            <SettingsRow label="Primary provider" value={llmStatus?.provider ?? "—"} mono accent="emerald" />
+            <SettingsRow label="Primary model" value={llmStatus?.model ?? result?.llmModel ?? "—"} mono />
+            <SettingsRow
+              label="Fallback provider"
+              value={llmStatus?.fallbackProvider ?? "—"}
+              mono
+              accent={llmStatus?.fallbackProvider ? "amber" : undefined}
+            />
+            <SettingsRow
+              label="Failover enabled"
+              value={llmStatus?.failoverEnabled ? "true" : "false"}
+              mono
+              accent={llmStatus?.failoverEnabled ? "emerald" : "slate"}
+            />
+            <SettingsRow label="Prompt version" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
+          </SettingsSection>
+
+          {/* API keys presence (redacted) */}
+          <SettingsSection title="API Keys" icon={Lock}>
+            <KeyRow label="Gemini" present={llmStatus?.hasGeminiKey} />
+            <KeyRow label="Groq" present={llmStatus?.hasGroqKey} />
+            <KeyRow label="ZAI (sandbox)" present={llmStatus?.hasZaiKey} />
+            <KeyRow label="NVIDIA NIM" present={llmStatus?.hasNvidiaKey} />
+            <div className="text-[10px] text-slate-600 mt-1 font-mono">
+              Keys are read from environment variables and never exposed to the client. Only presence is shown.
+            </div>
+          </SettingsSection>
+
+          {/* Circuit breaker */}
+          <SettingsSection title="Circuit Breaker" icon={ShieldAlert}>
+            {llmStatus?.circuit ? (
+              <>
+                <SettingsRow
+                  label="Primary circuit"
+                  value={llmStatus.circuit.isOpen ? "OPEN (throttled)" : "CLOSED (healthy)"}
+                  mono
+                  accent={llmStatus.circuit.isOpen ? "rose" : "emerald"}
+                />
+                <SettingsRow
+                  label="Consecutive failures"
+                  value={`${llmStatus.circuit.consecutiveFailures}`}
+                  mono
+                  accent={llmStatus.circuit.consecutiveFailures > 0 ? "amber" : "emerald"}
+                />
+                {llmStatus.circuit.isOpen && llmStatus.circuit.msUntilReset > 0 && (
+                  <SettingsRow
+                    label="Resets in"
+                    value={`${Math.ceil(llmStatus.circuit.msUntilReset / 1000)}s`}
+                    mono
+                    accent="amber"
+                  />
+                )}
+              </>
+            ) : (
+              <div className="text-[11px] text-slate-500 font-mono">No circuit data</div>
+            )}
+          </SettingsSection>
+
+          {/* Connectors */}
+          <SettingsSection title="Connectors" icon={Github}>
+            {connectors ? (
+              <>
+                <SettingsRow
+                  label="Action mode"
+                  value={connectors.dryRun ? "DRY-RUN (trace)" : "LIVE"}
+                  mono
+                  accent={connectors.dryRun ? "amber" : "emerald"}
+                />
+                <SettingsRow label="GitHub repo" value={connectors.github.repo || "—"} mono />
+                <SettingsRow
+                  label="GitHub token"
+                  value={connectors.github.tokenPresent ? "present" : "missing"}
+                  mono
+                  accent={connectors.github.tokenPresent ? "emerald" : "rose"}
+                />
+                <SettingsRow
+                  label="GitHub reachable"
+                  value={connectors.github.reachable ? "yes" : "no"}
+                  mono
+                  accent={connectors.github.reachable ? "emerald" : "rose"}
+                />
+                <SettingsRow label="Slack channel" value={connectors.slack.channel || "—"} mono />
+                <SettingsRow
+                  label="Slack token"
+                  value={connectors.slack.tokenPresent ? "present" : "missing"}
+                  mono
+                  accent={connectors.slack.tokenPresent ? "emerald" : "rose"}
+                />
+                <SettingsRow
+                  label="Slack reachable"
+                  value={connectors.slack.reachable ? "yes" : "no"}
+                  mono
+                  accent={connectors.slack.reachable ? "emerald" : "rose"}
+                />
+              </>
+            ) : (
+              <div className="text-[11px] text-slate-500 font-mono">Loading connector status…</div>
+            )}
+          </SettingsSection>
+
+          {/* Guardrail rules */}
+          <SettingsSection title="Guardrail Rules" icon={ShieldCheck}>
+            <div className="space-y-1.5">
+              {guardrailRules.map((r, i) => {
+                const Icon = r.icon;
+                return (
+                  <div key={i} className="flex items-start gap-2 text-[11px] py-1">
+                    <Icon className={`h-3 w-3 mt-0.5 shrink-0 ${r.color}`} />
+                    <span className="text-slate-400 leading-relaxed">{r.rule}</span>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] text-slate-600 mt-2 font-mono leading-relaxed">
+              Enforced in <code className="text-slate-400">src/lib/guardrail/</code> — code-level, not prompt-level.
+              Destructive writes are impossible regardless of LLM output.
+            </div>
+          </SettingsSection>
+
+          {/* Keyboard shortcuts */}
+          <SettingsSection title="Keyboard Shortcuts" icon={CommandIcon}>
+            <div className="space-y-1.5">
+              <ShortcutRow keys={["⌘", "K"]} label="Open command palette" />
+              <ShortcutRow keys={["R"]} label="Inject & run selected signal" />
+              <ShortcutRow keys={["A"]} label="Toggle audit log drawer" />
+              <ShortcutRow keys={["S"]} label="Toggle this config drawer" />
+              <ShortcutRow keys={["1", "–", "5"]} label="Select signal N" />
+              <ShortcutRow keys={["?"]} label="Open command palette (help)" />
+              <ShortcutRow keys={["esc"]} label="Close any open drawer" />
+            </div>
+          </SettingsSection>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SettingsSection({
+  title,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  icon: typeof Settings;
+  children: ReactNode;
+}) {
+  return (
+    <section>
+      <div className="flex items-center gap-2 mb-2">
+        <Icon className="h-3.5 w-3.5 text-emerald-400" />
+        <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 font-mono">{title}</h3>
+      </div>
+      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-2.5 space-y-1">{children}</div>
+    </section>
+  );
+}
+
+function SettingsRow({
+  label,
+  value,
+  mono,
+  accent,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  accent?: "emerald" | "amber" | "rose" | "slate";
+}) {
+  const accentClass =
+    accent === "emerald"
+      ? "text-emerald-300"
+      : accent === "amber"
+        ? "text-amber-300"
+        : accent === "rose"
+          ? "text-rose-300"
+          : "text-slate-300";
+  return (
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <span className={`text-[11px] ${mono ? "font-mono" : ""} ${accentClass} truncate`}>{value}</span>
+    </div>
+  );
+}
+
+function KeyRow({ label, present }: { label: string; present?: boolean }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <span className="text-[11px] text-slate-500">{label}</span>
+      <span
+        className={`inline-flex items-center gap-1 text-[10px] font-mono ${
+          present ? "text-emerald-300" : "text-slate-600"
+        }`}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${present ? "bg-emerald-400" : "bg-slate-700"}`} />
+        {present ? "present" : "not set"}
+      </span>
+    </div>
+  );
+}
+
+function ShortcutRow({ keys, label }: { keys: string[]; label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-0.5">
+      <span className="text-[11px] text-slate-400">{label}</span>
+      <span className="inline-flex items-center gap-1">
+        {keys.map((k, i) => (
+          <kbd key={i} className="sentinel-kbd-hint">
+            {k}
+          </kbd>
+        ))}
+      </span>
+    </div>
   );
 }
 
