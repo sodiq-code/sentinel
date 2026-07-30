@@ -40,6 +40,10 @@ export interface GitHubIssueResult {
   /** True when the action was logged to a trace file instead of hitting the live API. */
   trace: boolean
   ts: string
+  /** 'new' = a fresh issue was opened. 'commented' = a comment was appended to an existing open issue with the same title (dedup). */
+  dedup?: 'new' | 'commented'
+  /** When dedup='commented', the issue number that received the comment. */
+  dedupOfIssue?: number
 }
 
 export interface GitHubPrInput {
@@ -122,7 +126,69 @@ async function ghFetch(
 
 // ---------------------------------------------------------------------------
 // openIssue — POST /repos/{repo}/issues
+// Idempotency (search-before-create): if an OPEN issue with the SAME title
+// already exists in this repo, we append the new context as a COMMENT on
+// that issue instead of opening a duplicate. This is the production-grade
+// behaviour expected of an autonomous agent — repeated signals for the
+// same breach surface as a threaded timeline, not as duplicate tickets.
+// Set SENTINEL_GITHUB_DEDUP=false to disable (always open a new issue).
 // ---------------------------------------------------------------------------
+
+async function findOpenIssueByTitle(
+  repo: string,
+  title: string,
+): Promise<{ number: number; url: string } | null> {
+  // GitHub's REST search for issues does not support an exact-title filter
+  // server-side beyond the `in:title` qualifier. We fetch the most recent 50
+  // open issues and compare the title verbatim — cheap (one paginated call)
+  // and precise. 50 is plenty for a demo repo; production would paginate.
+  // We retry twice (with short sleeps) because GitHub's issue-list endpoint is
+  // eventually consistent: a freshly-created issue may take ~5s to appear in
+  // the list, even though the POST /issues call returned 201 immediately.
+  // This only impacts back-to-back calls within a few seconds; real agent
+  // runs are spaced by LLM thinking time (5-30s) and find the issue on the
+  // first attempt.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { status, body } = await ghFetch(
+      `/repos/${repo}/issues?state=open&sort=created&direction=desc&per_page=50`,
+    )
+    if (status === 200 && Array.isArray(body)) {
+      for (const issue of body as Array<{ title: string; number: number; html_url: string; pull_request?: unknown }>) {
+        // Skip PRs — the issues list includes them when state=open.
+        if (issue.pull_request) continue
+        if (issue.title.trim() === title.trim()) {
+          return { number: issue.number, url: issue.html_url }
+        }
+      }
+    }
+    // No match this attempt — brief pause then retry (eventual consistency).
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 2500))
+  }
+  return null
+}
+
+async function appendCommentToIssue(
+  repo: string,
+  issueNumber: number,
+  body: string,
+): Promise<void> {
+  const { status, body: respBody } = await ghFetch(
+    `/repos/${repo}/issues/${issueNumber}/comments`,
+    { method: 'POST', body: JSON.stringify({ body }) },
+  )
+  if (status !== 201) {
+    const detail =
+      typeof respBody === 'object' && respBody && 'message' in respBody
+        ? (respBody as { message: string }).message
+        : `GitHub comments POST returned ${status}`
+    throw new Error(`GitHub appendComment failed: ${detail}`)
+  }
+}
+
+function dedupEnabled(): boolean {
+  const raw = (process.env.SENTINEL_GITHUB_DEDUP ?? 'true').toLowerCase()
+  return raw !== 'false' && raw !== '0' && raw !== 'off'
+}
 
 export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueResult> {
   const repo = input.repo || defaultRepo()
@@ -150,7 +216,40 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
     }
   }
 
-  // Live: create the issue. Labels are auto-created on the repo if they don't exist.
+  // Live: search-before-create (idempotency). If an open issue with the
+  // exact same title exists, append the new context as a comment instead
+  // of opening a duplicate. Suppresses the "20 identical issues" pattern
+  // on repeat agent runs for the same signal.
+  if (dedupEnabled()) {
+    const existing = await findOpenIssueByTitle(repo, input.title)
+    if (existing) {
+      const commentBody = [
+        `**Sentinel re-detected this signal at ${ts}**`,
+        '',
+        'A new agent run observed the same breach and confirmed it is still open.',
+        'Appending the latest context rather than opening a duplicate:',
+        '',
+        '---',
+        '',
+        input.body,
+      ].join('\n')
+      await appendCommentToIssue(repo, existing.number, commentBody)
+      return {
+        kind: 'github.openIssue',
+        repo,
+        number: existing.number,
+        url: existing.url,
+        state: 'open',
+        trace: false,
+        ts,
+        dedup: 'commented',
+        dedupOfIssue: existing.number,
+      }
+    }
+  }
+
+  // No existing open issue — create one. Labels are auto-created on the
+  // repo if they don't exist.
   const { status, body } = await ghFetch(`/repos/${repo}/issues`, {
     method: 'POST',
     body: JSON.stringify({
@@ -175,6 +274,7 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
     state: 'open',
     trace: false,
     ts,
+    dedup: 'new',
   }
 }
 

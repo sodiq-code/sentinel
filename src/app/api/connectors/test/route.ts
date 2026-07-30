@@ -65,6 +65,8 @@ export async function POST(req: Request) {
         number: issue.number,
         url: issue.url,
         trace: issue.trace,
+        dedup: issue.dedup ?? null,
+        dedupOfIssue: issue.dedupOfIssue ?? null,
       },
       slack: {
         channel: slack.channel,

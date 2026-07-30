@@ -559,7 +559,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
             incidentUrn: ctx.incidentUrn,
             kind: 'github.openIssue',
             target: repo,
-            payload: JSON.stringify({ repo, title, body, labels, number: res.number, trace: res.trace }),
+            payload: JSON.stringify({ repo, title, body, labels, number: res.number, trace: res.trace, dedup: res.dedup ?? null, dedupOfIssue: res.dedupOfIssue ?? null }),
             status: 'executed',
             url: res.trace ? null : res.url,
             ts: new Date(),
@@ -573,9 +573,13 @@ const ACTION_TOOLS: ToolDefinition[] = [
           state: res.state,
           trace: res.trace,
           status: 'executed',
+          dedup: res.dedup ?? null,
+          dedupOfIssue: res.dedupOfIssue ?? null,
           note: res.trace
             ? 'Trace: written to the local trace log. Set SENTINEL_DRY_RUN=false to file a live issue.'
-            : 'Live: GitHub issue opened in the demo pipeline repo. Sentinel NEVER merges — issue is left OPEN for human review.',
+            : res.dedup === 'commented'
+              ? `Idempotency: an open issue with the same title already exists (#${res.dedupOfIssue}). Appended the new context as a comment on that issue instead of opening a duplicate.`
+              : 'Live: GitHub issue opened in the demo pipeline repo. Sentinel NEVER merges — issue is left OPEN for human review.',
         }
       } catch (err) {
         const error = (err as Error).message ?? String(err)

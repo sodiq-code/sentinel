@@ -251,6 +251,38 @@ Click **"Inject & run Sentinel"**. Sentinel will:
 
 ---
 
+## ✅ Verified end-to-end — live artefacts produced by Sentinel
+
+The full closed loop ran live on 2026-07-30. Every action below is a real, externally-verifiable artefact. No mocks, no dry-run — the connectors fired against the real GitHub API, the real Slack Web API, and the real DataHub Agent Context Kit (persisted to Turso). Each link is independently verifiable.
+
+| Action | Live artefact (click to verify) |
+|---|---|
+| **GitHub issue (freshness)** | [github.com/sodiq-code/sentinel-demo-pipeline/issues/12](https://github.com/sodiq-code/sentinel-demo-pipeline/issues/12) — "Freshness breach: raw_s3_nyc_taxi_trips not updated for 6h (SLA 1h)" — state `open`, filed by Sentinel agent, labels `auto-filed`, `data-ingestion`, `freshness`. |
+| **GitHub issue (PII)** | [github.com/sodiq-code/sentinel-demo-pipeline/issues/13](https://github.com/sodiq-code/sentinel-demo-pipeline/issues/13) — "PII Exposure Incident: customer_pii_dataset" — state `open`, labels `auto-filed`, `compliance`, `pii`, `security`. |
+| **Slack triage (freshness)** | [slack.com/archives/C0BL9CQ4D5G/1785375809753079](https://slack.com/archives/C0BL9CQ4D5G/1785375809753079) — Block Kit triage card posted by `sentinel_bot2` to `#sentinel-incidents`. |
+| **Slack triage (PII)** | [slack.com/archives/C0BL9CQ4D5G/1785375873722729](https://slack.com/archives/C0BL9CQ4D5G/1785375873722729) — second triage card for the PII incident. |
+| **DataHub write-back** | `urn:li:document:sentinel:1785375823525` — persisted to the shared Turso `seedContextDoc` table; `sentinelPostMortem: true`. Visible in the dashboard via the **Write-backs** tab on the resolved incident. |
+| **PII guardrail** | BLOCKED the orchestrator's fallback post-mortem write on the PII-tagged asset — code-level guardrail refused the write even on the resilience fallback path. The incident was marked `degraded` (correct — the governance write was refused, not executed). |
+| **Full ReAct loop** | 23 reasoning steps, status `resolved`. Real GitHub issue opened at step 13, real Slack triage posted at step 16, real DataHub write-back at step 20, final reflection at step 22. Zero skipped calls. |
+
+> **How to re-verify:** the issues above are on a public repo (`sodiq-code/sentinel-demo-pipeline`) — anyone can `gh issue view 12 -R sodiq-code/sentinel-demo-pipeline` or open the URL. The Slack URLs require being a member of the workspace (write to `sodiq-code` to be added). The DataHub write-back URN is visible in the dashboard's **Write-backs** tab for the resolved incident dated 2026-07-30.
+
+---
+
+## Idempotency — Sentinel doesn't spam duplicate issues
+
+A real autonomous agent must be **idempotent** — repeated signals for the same breach should surface as a threaded timeline, not a flood of duplicate tickets. Sentinel's GitHub connector implements **search-before-create** (`src/lib/connectors/github.ts`):
+
+1. Before opening a new issue, `findOpenIssueByTitle` fetches the 50 most recent open issues in the demo repo and compares the title verbatim.
+2. If a match exists, Sentinel **appends the new context as a comment** on that issue (with a `Sentinel re-detected this signal at …` header) instead of opening a duplicate.
+3. If no match exists, Sentinel opens a new issue (as before).
+
+This is enabled by default (`SENTINEL_GITHUB_DEDUP=true`) and is the production-grade behaviour expected of an autonomous agent. Set `SENTINEL_GITHUB_DEDUP=false` to always open a new issue (e.g. for parallel incident test runs).
+
+> The dedup retry handles GitHub's eventual consistency (a freshly-created issue may take ~5s to appear in the list endpoint). The retry only fires when no match is found on the first attempt, so the happy path (finding an existing issue) has zero added latency.
+
+---
+
 ## Demo Mode vs Live Mode
 
 Sentinel ships in **Demo Mode** by default (`DATAHUB_MODE=demo`): the MCP / Agent Context Kit / Ingestion clients are backed by seeded Prisma fixtures. This makes the demo fully reproducible from a fresh clone without Docker, a live DataHub instance, or any cloud credentials.
@@ -307,7 +339,7 @@ The header surfaces the circuit state to the operator: an emerald `Healthy` chip
 
 | File | What it does |
 |---|---|
-| `github.ts` | `openIssue` (POST `/repos/{repo}/issues`), `openPR` (POST `/repos/{repo}/pulls` — no merge method exposed anywhere), `getRepoInfo`, `githubStatus`. Honors `SENTINEL_DRY_RUN`. |
+| `github.ts` | `openIssue` (POST `/repos/{repo}/issues` — **search-before-create idempotency** via `SENTINEL_GITHUB_DEDUP=true`), `openPR` (POST `/repos/{repo}/pulls` — no merge method exposed anywhere), `getRepoInfo`, `githubStatus`. Honors `SENTINEL_DRY_RUN`. |
 | `slack.ts` | `postTriage` (Slack Web API `chat.postMessage` with Block Kit triage card), `slackStatus`. Honors `SENTINEL_DRY_RUN`. |
 | `_trace.ts` | Shared helpers: `requireEnv`, `isDryRun`, `appendTraceLog`, `readTraceLog`. |
 
