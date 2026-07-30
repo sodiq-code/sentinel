@@ -4978,7 +4978,7 @@ function MobileInfoBar({
       <span className="inline-flex items-center gap-1">
         <Zap className="h-3 w-3 text-slate-500" />
         <span className="text-slate-500">LLM:</span>
-        <span className="text-slate-300">{result?.llmModel ?? "gemini-2.0-flash"}</span>
+        <span className="text-slate-300">{result?.llmModel ?? "llama-3.3-70b-versatile"}</span>
       </span>
       <span className="text-slate-700">·</span>
       <span className="inline-flex items-center gap-1">
@@ -6085,8 +6085,8 @@ function CostEfficiencyPanel({
 }) {
   // Token cost for the current run
   const tokens = result?.totalTokens;
-  const model = result?.llmModel ?? "gemini-2.0-flash";
-  const pricing = LLM_COST_PER_1M_TOKENS[model] ?? LLM_COST_PER_1M_TOKENS["gemini-2.0-flash"];
+  const model = result?.llmModel ?? "llama-3.3-70b-versatile";
+  const pricing = LLM_COST_PER_1M_TOKENS[model] ?? LLM_COST_PER_1M_TOKENS["llama-3.3-70b-versatile"];
   const runCost = tokens
     ? (tokens.promptTokens / 1_000_000) * pricing.input +
       (tokens.completionTokens / 1_000_000) * pricing.output
@@ -6137,7 +6137,17 @@ function CostEfficiencyPanel({
         </div>
         {timeSaved !== null && runCost !== null && (
           <div className="mt-2 text-[10px] text-emerald-300/80 font-mono leading-relaxed">
-            ROI: {timeSaved > 0 ? `${(timeSaved * 60 / Math.max(runCost, 0.0001)).toFixed(0)}× return` : "breakeven"} ·
+            ROI: {timeSaved > 0
+              ? (() => {
+                  // Value of the human time saved, converted to dollars at
+                  // $75/hr ($1.25/min). Divided by the agent's token cost.
+                  // Floor the cost at $0.001 so a near-free deterministic
+                  // fallback run doesn't blow up into a nonsensical multiplier.
+                  const humanValue = timeSaved * 1.25;
+                  const roi = humanValue / Math.max(runCost, 0.001);
+                  return roi > 99999 ? ">$99,999× return" : `${roi.toFixed(0)}× return`;
+                })()
+              : "breakeven"} ·
             human triage est. {HUMAN_TRIAGE_MINUTES}m @ $75/hr vs agent {agentMinutes?.toFixed(1)}m @ ${runCost.toFixed(4)}
           </div>
         )}
