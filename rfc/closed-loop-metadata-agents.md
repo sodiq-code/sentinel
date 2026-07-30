@@ -2,7 +2,7 @@
 
 **A generalisable pattern for agents that read AND write the context graph.**
 
-- **Status**: Draft (Phase 0 — filed as a hackathon bonus contribution)
+- **Status**: Draft — filed as a hackathon bonus contribution
 - **Author**: Sentinel Contributors
 - **Discussion**: https://github.com/sodiq-code/sentinel/discussions
 - **License**: Apache 2.0
@@ -18,11 +18,11 @@ Most metadata-grounded agents today are read-only: they query the catalog, gener
 
 ## Background
 
-DataHub is a context platform: a typed graph of assets, lineages, owners, glossary terms, governance tags, assertions, and context documents. The DataHub MCP Server exposes 12 read tools over this graph; the Agent Context Kit exposes 7 write tools (with `include_mutations=True`).
+DataHub is a context platform: a typed graph of assets, lineages, owners, glossary terms, governance tags, assertions, and context documents. The DataHub MCP Server exposes 12 read tools over this graph; the Agent Context Kit exposes 8 write tools (with `include_mutations=True`).
 
 Read-only agent demos are common — text-to-SQL chatbots, search-and-summarise, lineage-explainer. They consume the graph. None of them produce it.
 
-The state of the art prior art is Block's Goose + DataHub MCP Server use case (human-driven incident response). Block demonstrated that an agent *could* investigate an incident using DataHub. Sentinel extends that to an agent that *does* — autonomously, end-to-end, and writes back.
+The prior art is Block's Goose + DataHub MCP Server use case (human-driven incident response). Block demonstrated that an agent *could* investigate an incident using DataHub. Sentinel extends that to an agent that *does* — autonomously, end-to-end, and writes back.
 
 The pattern is the contribution.
 
@@ -162,9 +162,9 @@ A correctly-implemented closed-loop-metadata-agent has five properties:
 
 Sentinel (https://github.com/sodiq-code/sentinel) is the reference implementation of this pattern. It targets the *Agents That Do Real Work* challenge at the Build with DataHub Agent Hackathon.
 
-- **Stack**: Next.js 16 + TypeScript + Prisma/SQLite + shadcn/ui + NVIDIA NIM API (`nvidia/llama-3.3-nemotron-super-49b-v1`)
+- **Stack**: Next.js 16 + TypeScript + Prisma/Turso + shadcn/ui + Gemini 2.0 Flash (primary) → Groq (fallback)
 - **Read tools**: DataHub MCP Server (12 tools)
-- **Write tools**: DataHub Agent Context Kit (7 tools) + REST ingestion fallback
+- **Write tools**: DataHub Agent Context Kit (8 tools) + REST ingestion fallback
 - **Action connectors**: GitHub, Slack (scoped)
 - **Bonus artefacts**: this RFC + the `incident-triage` Skill (https://github.com/sodiq-code/sentinel/tree/main/skill/incident-triage)
 
@@ -175,14 +175,14 @@ The `incident-triage` Skill is the agent-agnostic form of the same loop — inst
 ## Open questions
 
 1. **Cross-incident pattern mining** — when N post-mortems accumulate, can the agent detect recurring patterns (e.g. "this is the 4th freshness breach on a Spark job that hasn't run in 6h — propose an upstream SLA")? Left as future work.
-2. **Multi-agent decomposition** — a planner + investigator + remediator + documenter pod. The PDF §9.3.2 Option B rejected this for the hackathon (single-orchestrator + tools is more reliable in the demo window) but documented it as a stretch goal.
-3. **Learned triage policies** — fine-tune the triage reasoning on historical incidents. Out of scope for the hackathon; noted in the post-hackathon roadmap.
+2. **Multi-agent decomposition** — a planner + investigator + remediator + documenter pod. A single-orchestrator-with-tools design is more reliable in the demo window; the multi-agent pod is documented as a stretch goal.
+3. **Learned triage policies** — fine-tune the triage reasoning on historical incidents. Future work.
 
 ---
 
 ## Acknowledgements
 
-Block's Goose + DataHub MCP Server use case demonstrated human-driven incident response with the MCP Server. Sentinel extends this to autonomous response with a write-back loop. The Block prior art is sponsor-validated category, not a competitor — the closed-loop pattern subsumes and extends it.
+Block's Goose + DataHub MCP Server use case demonstrated human-driven incident response with the MCP Server. Sentinel extends this to autonomous response with a write-back loop. Block's prior art is in the sponsor-validated category, not a competitor — the closed-loop pattern subsumes and extends it.
 
 The DataHub team's `datahub-skills` registry provided the Skill format the `incident-triage` Skill follows.
 

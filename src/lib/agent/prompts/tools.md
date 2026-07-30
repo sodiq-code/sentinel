@@ -26,19 +26,19 @@ Tool names use the `mcp.*`, `ack.*`, and `action.*` namespaces:
 | Tool | What it does | Governance |
 |---|---|---|
 | `ack.save_document` | Save a post-mortem context doc attached to an asset. | **Direct write** (reversible). |
-| `ack.add_owners` | Propose ownership enrichment on an asset. | **Proposal** — Phase 4 routes through approval gate. |
+| `ack.add_owners` | Propose ownership enrichment on an asset. | **Proposal** — routes through approval gate. |
 | `ack.add_glossary_terms` | Propose glossary-term enrichment on an asset. | **Proposal**. |
 | `ack.add_tags` | Add a governance tag to an asset. | **Proposal** (PII refusal overrides). |
 | `ack.update_description` | Update an entity's description. | **Proposal**. |
-| `ack.create_assertion` | Create a new DataHub assertion encoding a learned SLA. | **Direct write** (reversible — PDF §9.5.5). |
+| `ack.create_assertion` | Create a new DataHub assertion encoding a learned SLA. | **Direct write** (reversible). |
 
-## Action tools — `action.*` (Phase 3 connectors; logged by default)
+## Action tools — `action.*` (external connectors; logged by default)
 
 | Tool | What it does | Governance |
 |---|---|---|
-| `action.github_open_issue` | Open a GitHub issue in the demo pipeline repo. | **Executed** in Phase 3 (trace log by default; live GitHub when `SENTINEL_DRY_RUN=false`). |
-| `action.github_open_pr` | Open a GitHub pull request in the demo pipeline repo. **Sentinel NEVER merges** — the PR is left OPEN for human review. | **Executed** in Phase 3; `NoMergeRule` enforced in code. |
-| `action.slack_post_triage` | Post a triage card (3 bullets) to the demo Slack channel. | **Executed** in Phase 3 (trace log by default; live Slack when `SENTINEL_DRY_RUN=false`). |
+| `action.github_open_issue` | Open a GitHub issue in the demo pipeline repo. | **Executed** (trace log by default; live GitHub when `SENTINEL_DRY_RUN=false`). |
+| `action.github_open_pr` | Open a GitHub pull request in the demo pipeline repo. **Sentinel NEVER merges** — the PR is left OPEN for human review. | **Executed**; `NoMergeRule` enforced in code. |
+| `action.slack_post_triage` | Post a triage card (3 bullets) to the demo Slack channel. | **Executed** (trace log by default; live Slack when `SENTINEL_DRY_RUN=false`). |
 
 ## Calling convention
 

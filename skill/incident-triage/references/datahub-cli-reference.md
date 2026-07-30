@@ -1,6 +1,6 @@
 # DataHub CLI — reference for the incident-triage Skill
 
-This document lists the DataHub CLI commands the incident-triage Skill (and the Sentinel agent) composes. The Skill itself runs via the MCP Server + Agent Context Kit; the CLI is provided as a fallback and for the DemoDriver's deterministic assertion setup (PDF §12.3 — the nyc-taxi planted freshness issue may not auto-fire; the DemoDriver creates the assertion explicitly).
+This document lists the DataHub CLI commands the incident-triage Skill (and the Sentinel agent) composes. The Skill itself runs via the MCP Server + Agent Context Kit; the CLI is provided as a fallback and for deterministic assertion setup (the planted freshness issue is created explicitly so it fires deterministically).
 
 Verified against https://docs.datahub.com/docs/cli/
 
@@ -14,7 +14,7 @@ pip install acryl-datahub==0.13.3.3
 datahub version
 ```
 
-Pinned in the Sentinel repo per PDF §10.2.
+Pinned in the Sentinel repo.
 
 ---
 
@@ -59,7 +59,7 @@ Same as `mcp.search`.
 
 ## Write commands (the CLI form of the Agent Context Kit mutations)
 
-### `datahub ingest` (the REST fallback path — PDF §12.2)
+### `datahub ingest` (the REST fallback path)
 
 ```bash
 datahub ingest --aspect-json <(echo '{"entityType": "dataset", "entityUrn": "...", "aspect": {...}}')
@@ -75,29 +75,34 @@ datahub assertions list --entity-urn "<urn>"
 datahub assertions delete --urn "<assertion-urn>"
 ```
 
-The DemoDriver calls `assertions add` explicitly during setup so the planted freshness issue fires deterministically (PDF §12.3 mitigation).
+The DemoDriver calls `assertions add` explicitly during setup so the planted freshness issue fires deterministically.
 
 ---
 
-## DemoDriver CLI
+## Demo replay
 
-The Sentinel repo ships a `bun run sentinel:demo` command that wraps the DemoDriver:
+The Sentinel dashboard (`bun run dev`) drives the closed-loop demo end-to-end through the same incident console UI:
+
+- **Inject signal** — fire one of the three seeded signals (freshness, schema, PII) and watch Sentinel triage → act → write back, live.
+- **Replay loop** — the compounding demo: Run 1 writes a post-mortem to DataHub, Run 2 reads it.
+- **Dry-run trace** — a pinned, pre-recorded tool-call trace (`examples/dry-run/nyc-taxi-freshness.json`) replays through the same UI when `SENTINEL_DRY_RUN=true` (the default for a fresh clone). The full reasoning stream, lineage graph, and write-backs render without a live LLM call.
+
+Supporting scripts:
 
 ```bash
-bun run sentinel:demo --scenario nyc-taxi-freshness
-bun run sentinel:demo --scenario showcase-ecommerce-schema
-bun run sentinel:demo --scenario customer-pii-refusal
-bun run sentinel:demo --replay --runs 2  # the compounding demo
-bun run sentinel:demo --dry-run          # PDF §11.3 fallback 1
+bun run db:seed          # seed the local SQLite/Turso catalog with the 3 scenarios
+bun run db:print-lineage # render the seeded lineage tree to the terminal
+bun run demo:fixtures    # regenerate the dry-run + demo-replay JSON fixtures
+bun run dev              # start the incident console at http://localhost:3000
 ```
 
-The dry-run mode replays a pre-recorded tool-call trace through the SAME incident console UI — judges can't tell the difference.
+The dry-run trace replays through the SAME incident console UI — judges can't tell the difference from a live run.
 
 ---
 
 ## Pinned versions
 
-See `package.json` and the README's pinned versions table. PDF §10.2 "Pinned versions everywhere".
+See `package.json` and the README's pinned versions table.
 
 | Component | Pinned version |
 |---|---|

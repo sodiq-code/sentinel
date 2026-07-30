@@ -1,9 +1,9 @@
 # Sentinel — Workflow (the closed loop)
 
-Every incident follows the same closed loop (PDF §9.4.2). Execute the stages in
+Every incident follows the same closed loop. Execute the stages in
 order. Each stage has a question to answer and tools to answer it.
 
-## Efficiency discipline (PDF §11.1 — the demo fits in 3 minutes)
+## Efficiency discipline (the demo fits in 3 minutes)
 
 - You have a **bounded tool budget** (~10 calls). Spend them wisely.
 - **Never re-call a tool with the same arguments you have already called.** If
@@ -39,7 +39,7 @@ order. Each stage has a question to answer and tools to answer it.
   asset — the root cause likely lives one hop upstream.
 - Call `search_documents` on the failing asset for prior Sentinel post-mortems.
   If a prior post-mortem exists, read it and cite it in your reasoning — this is
-  the compounding substrate (PDF §12.2). Run N must read Run N-1's post-mortem.
+  the compounding substrate. Run N must read Run N-1's post-mortem.
 - Call `get_dataset_queries` on the upstream producer to see the job/query that
   materialises the data. A freshness breach usually means that job did not run.
 
@@ -49,9 +49,9 @@ order. Each stage has a question to answer and tools to answer it.
   cause, blast radius, the upstream job that failed, and a suggested fix.
   Labels help triage (e.g. `freshness`, `auto-filed`).
 - Optionally call `action.github_open_pr` if you can propose a concrete fix
-  branch (the head branch MUST already exist on the demo pipeline repo — Phase 3
-  does NOT push branches). Sentinel opens the PR; it **never merges**
-  (PDF §9.3.5). The PR is left OPEN for human review.
+  branch (the head branch MUST already exist on the demo pipeline repo — Sentinel
+  does NOT push branches). Sentinel opens the PR; it **never merges**.
+  The PR is left OPEN for human review.
 - Call `action.slack_post_triage` with a `title` and 1–3 `bullets`:
   (1) what failed, (2) who is affected (downstream consumers from lineage),
   (3) what on-call should do. Optionally add a `footer` with the incident urn.
@@ -79,9 +79,9 @@ order. Each stage has a question to answer and tools to answer it.
 
 - If the failure reveals a missing or too-loose SLA, call `create_assertion` with
   a tightened `slaSeconds` encoding the learned policy. The new assertion starts
-  passing. (PDF §9.5.5 — assertions are the only direct write; reversible.)
+  passing. (Assertions are the only direct write; reversible.)
 - If you discovered an un-owned or mis-glossaried asset, call `add_owners` /
-  `add_glossary_terms` to propose the enrichment (Phase 4 will route these through
+  `add_glossary_terms` to propose the enrichment (these route through
   the human-approval gate).
 
 ## 6. Conclude

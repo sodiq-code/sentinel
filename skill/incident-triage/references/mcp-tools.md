@@ -2,7 +2,7 @@
 
 This document enumerates every MCP tool the incident-triage Skill uses, with usage examples. Verified against the official DataHub MCP Server docs (https://docs.datahub.com/docs/features/feature-guides/mcp/) and the Agent Context Kit docs (https://docs.datahub.com/docs/dev-guides/agent-context/agent-context/).
 
-There are **19 tools** in two groups: 12 read (MCP Server) and 7 write (Agent Context Kit, `include_mutations=True`).
+There are **20 tools** in two groups: 12 read (MCP Server) and 8 write (Agent Context Kit, `include_mutations=True`).
 
 ---
 
@@ -126,18 +126,18 @@ diff = mcp.compare_glossary_term_versions(urn, "v1", "v2")
 
 ---
 
-## Write tools — DataHub Agent Context Kit (7 tools, `include_mutations=True`)
+## Write tools — DataHub Agent Context Kit (8 tools, `include_mutations=True`)
 
 These tools come from the Agent Context Kit's LangChain integration (https://docs.datahub.com/docs/dev-guides/agent-context/langchain/). They are mutations — they change the context graph.
 
-Per PDF §9.5.5 threat model:
+Threat model:
 - Ownership/glossary are PROPOSED via `add_glossary_terms` / `add_owners` — humans approve. Sentinel does NOT directly patch.
 - Assertions are the only DIRECT write — and they are reversible.
 - All writes are mirrored in the AuditLog (SQLite + DataHub Assertion/Event).
 
 ### 13. `save_document`
 
-Save a context document — the post-mortem write-back. PDF §9.4.2 step 12.
+Save a context document — the post-mortem write-back.
 
 ```python
 result = context_kit.save_document({
@@ -175,7 +175,7 @@ context_kit.update_description(assetUrn, "Sentinel-discovered: dbt model for NYC
 
 ### 17. `add_glossary_terms` (PROPOSAL)
 
-Attach glossary terms to an asset. PDF §9.4.2 step 13 — proposal, not direct patch.
+Attach glossary terms to an asset. Proposal, not direct patch.
 
 ```python
 context_kit.add_glossary_terms(assetUrn, [
@@ -202,7 +202,7 @@ context_kit.set_domains(assetUrn, ["urn:li:domain:data-platform"])
 
 ### 20. `add_owners` (PROPOSAL)
 
-Propose new owners for an asset. PDF §9.4.2 step 13 — proposal, not direct patch.
+Propose new owners for an asset. Proposal, not direct patch.
 
 ```python
 context_kit.add_owners(assetUrn, [
@@ -215,7 +215,7 @@ context_kit.add_owners(assetUrn, [
 
 ## Action connectors (external — not MCP)
 
-These are NOT DataHub MCP tools — they are external action connectors Sentinel composes alongside the MCP tools. PDF §9.4.1.
+These are NOT DataHub MCP tools — they are external action connectors Sentinel composes alongside the MCP tools.
 
 ### `github.openIssue`
 
@@ -223,7 +223,7 @@ Open a GitHub issue on the failing-asset's pipeline repo.
 
 ### `github.openPR`
 
-Open a draft remediation PR. **Sentinel NEVER merges** (PDF §9.3.5 no-merge policy). There is no `github.mergePR` tool — by design.
+Open a draft remediation PR. **Sentinel NEVER merges** (no-merge policy). There is no `github.mergePR` tool — by design.
 
 ### `slack.postMessage`
 
@@ -231,7 +231,7 @@ Post a triage summary to the on-call channel.
 
 ---
 
-## Fallback: REST ingestion (PDF §12.2 — dual write-back path)
+## Fallback: REST ingestion (dual write-back path)
 
 If the Agent Context Kit is unavailable (e.g. DataHub version drift), Sentinel falls back to direct REST ingestion:
 

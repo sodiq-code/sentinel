@@ -1,6 +1,6 @@
 # Sentinel — incident triage report
 
-> This is a pre-generated sample of the GitHub issue Sentinel opens autonomously when the nyc-taxi freshness assertion fires. Judges who do not run the project should still see the output quality (PDF §10.2 — "examples/ is a first-class deliverable").
+> This is a pre-generated sample of the GitHub issue Sentinel opens autonomously when the nyc-taxi freshness assertion fires. Judges who do not run the project should still see the output quality.
 
 **Repo**: `sodiq-code/sentinel-demo-pipeline` (demo)
 **Issue #**: 42
