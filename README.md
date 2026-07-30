@@ -145,7 +145,7 @@ sentinel/
 ├── prisma/schema.prisma              # 5 core tables + seed fixtures
 ├── skill/incident-triage/            # 📦 packaged DataHub Skill (manifest + SKILL.md)
 ├── rfc/closed-loop-metadata-agents.md # 📐 RFC generalising the pattern beyond incidents
-├── examples/                         # sample issue, PR patch, post-mortem, assertion, demo-replay fixtures
+├── examples/                         # issue, PR patch, post-mortem, assertion, demo-replay fixtures
 ├── .github/workflows/ci.yml          # lint + type-check + integration demo
 └── .env.example                      # full config documentation
 ```
@@ -172,7 +172,7 @@ sentinel/
 - ✅ **[Live demo on Vercel](https://sentinel-ivory-two-79.vercel.app)** — real LLM, real GitHub, real Slack, real DataHub write-backs.
 - ✅ **[Apache 2.0 LICENSE](./LICENSE)** at the repo root.
 - ✅ **[CI workflow](./.github/workflows/ci.yml)** — lint + type-check + integration demo.
-- ✅ **[Examples](./examples/)** — sample issue, PR patch, post-mortem, assertion, demo-replay fixtures.
+- ✅ **[Examples](./examples/)** — issue, PR patch, post-mortem, assertion, demo-replay fixtures.
 
 ---
 
