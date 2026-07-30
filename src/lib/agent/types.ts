@@ -52,6 +52,14 @@ export interface LlmCompletion {
   toolCalls: LlmToolCall[]
   finishReason: 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'empty' | string
   usage?: { promptTokens: number; completionTokens: number }
+  /**
+   * The provider that actually served this completion ('zai' | 'gemini' |
+   * 'groq' | 'nvidia'). Set by each client so the orchestrator can report
+   * the ACTUAL provider used (which may differ from the configured primary
+   * when the FailoverLlmClient routed to the fallback). Read-only for
+   * consumers.
+   */
+  provider?: string
 }
 
 export interface LlmClient {

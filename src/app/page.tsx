@@ -3,6 +3,7 @@
 import {
   Activity,
   AlertTriangle,
+  ArrowLeftRight,
   ArrowRight,
   BookOpen,
   BrainCircuit,
@@ -94,7 +95,12 @@ interface RunResult {
   steps: ReasoningStep[];
   totalTokens: { promptTokens: number; completionTokens: number };
   llmModel: string;
-  llmProvider?: "zai" | "nvidia" | "groq";
+  llmProvider?: "zai" | "nvidia" | "groq" | "gemini";
+  /** The provider that ACTUALLY served the LLM calls (may differ from
+   * llmProvider when the FailoverLlmClient routed to the fallback). */
+  actualProvider?: "zai" | "nvidia" | "groq" | "gemini";
+  /** True when at least one LLM call was served by the fallback. */
+  failoverOccurred?: boolean;
   promptVersion: string;
 }
 
@@ -149,11 +155,22 @@ interface ConnectorStatus {
 
 // Resilience — LLM circuit + failover state from /api/llm/status.
 interface LlmResilienceStatus {
-  provider: "zai" | "nvidia" | "groq";
+  provider: "zai" | "nvidia" | "groq" | "gemini";
   model: string;
+  fallbackProvider: "zai" | "nvidia" | "groq" | "gemini" | null;
   failoverEnabled: boolean;
   hasNvidiaKey: boolean;
+  hasGeminiKey: boolean;
+  hasGroqKey: boolean;
+  hasZaiKey: boolean;
   circuit: {
+    isOpen: boolean;
+    consecutiveFailures: number;
+    msUntilReset: number;
+    lastStatus: number;
+    lastOpenedAt: number;
+  } | null;
+  fallbackCircuit: {
     isOpen: boolean;
     consecutiveFailures: number;
     msUntilReset: number;
@@ -694,7 +711,21 @@ function Console() {
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <SystemClock />
             <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "llama-3.3-70b-versatile"} mono />
-            <Chip icon={Database} label="Provider" value={result?.llmProvider ?? "groq"} mono />
+            <Chip
+              icon={Database}
+              label="Provider"
+              value={result?.actualProvider ?? result?.llmProvider ?? "groq"}
+              mono
+            />
+            {result?.failoverOccurred && result.actualProvider && result.llmProvider && result.actualProvider !== result.llmProvider && (
+              <span
+                className="inline-flex items-center gap-1 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300"
+                title={`Primary '${result.llmProvider}' is throttled — the FailoverLlmClient routed all LLM calls to fallback '${result.actualProvider}'. The ReAct loop still completed (incident resolved). When the primary's circuit cools down, it resumes automatically.`}
+              >
+                <ArrowLeftRight className="h-2.5 w-2.5" />
+                failover → {result.actualProvider}
+              </span>
+            )}
             <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "—"} />
             <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
@@ -793,6 +824,9 @@ function Console() {
               elapsed={elapsed}
               circuitOpen={Boolean(llmStatus.data?.circuit?.isOpen)}
               circuitResetsInSec={Math.ceil((llmStatus.data?.circuit?.msUntilReset ?? 0) / 1000)}
+              primaryProvider={llmStatus.data?.provider ?? null}
+              fallbackProvider={llmStatus.data?.fallbackProvider ?? null}
+              failoverEnabled={Boolean(llmStatus.data?.failoverEnabled)}
             />
 
             {runError && (
@@ -917,6 +951,9 @@ function SignalInjector({
   elapsed,
   circuitOpen,
   circuitResetsInSec,
+  primaryProvider,
+  fallbackProvider,
+  failoverEnabled,
 }: {
   signals: SeedSignal[];
   loading: boolean;
@@ -927,6 +964,9 @@ function SignalInjector({
   elapsed: number;
   circuitOpen: boolean;
   circuitResetsInSec: number;
+  primaryProvider: "zai" | "nvidia" | "groq" | "gemini" | null;
+  fallbackProvider: "zai" | "nvidia" | "groq" | "gemini" | null;
+  failoverEnabled: boolean;
 }) {
   const scenarioColor: Record<string, string> = {
     "nyc-taxi-freshness": "border-amber-500/40 bg-amber-500/5",
@@ -940,7 +980,7 @@ function SignalInjector({
     function onKey(e: KeyboardEvent) {
       if (e.key !== "Enter") return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (!selectedId || running || circuitOpen) return;
+      if (!selectedId || running || (circuitOpen && !failoverEnabled)) return;
       // Don't hijack Enter if a button/link has focus (let the native click fire).
       const tag = (document.activeElement?.tagName ?? "").toLowerCase();
       if (tag === "button" || tag === "a") return;
@@ -961,15 +1001,14 @@ function SignalInjector({
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-amber-200">
-              LLM provider rate-limited — agent runs paused
+              {fallbackProvider && failoverEnabled
+                ? `LLM primary '${primaryProvider}' rate-limited — failover to '${fallbackProvider}' is armed`
+                : "LLM provider rate-limited — agent runs paused"}
             </div>
             <div className="text-xs text-amber-200/80 mt-0.5 leading-relaxed">
-              Groq&apos;s free-tier per-minute rate limit was tripped. The circuit is open
-              for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>.
-              Sentinel will write a fallback post-mortem on any in-flight run and mark it
-              <span className="font-mono text-amber-100"> degraded</span> (partial investigation).
-              Wait for the circuit to cool down, then re-inject. No retry burn — the
-              circuit refuses calls while open.
+              {fallbackProvider && failoverEnabled
+                ? <>The primary&apos;s circuit is open for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>. The FailoverLlmClient routes all LLM calls to the <span className="font-mono text-amber-100">{fallbackProvider}</span> fallback, so the ReAct loop continues and the incident still resolves. When the primary cools down, it resumes automatically — no operator action needed.</>
+                : <>Groq&apos;s free-tier per-minute rate limit was tripped. The circuit is open for <span className="font-mono tabular-nums text-amber-100">{Math.max(1, circuitResetsInSec)}s</span>. Sentinel will write a fallback post-mortem on any in-flight run and mark it <span className="font-mono text-amber-100"> degraded</span> (partial investigation). Wait for the circuit to cool down, then re-inject. No retry burn — the circuit refuses calls while open.</>}
             </div>
           </div>
         </div>
@@ -1013,12 +1052,12 @@ function SignalInjector({
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={!selectedId || running || circuitOpen}
+          disabled={!selectedId || running || (circuitOpen && !failoverEnabled)}
           onClick={onRun}
           className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 transition-all"
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
-          {running ? "Investigating…" : circuitOpen ? "Circuit cooling down…" : "Inject & run Sentinel"}
+          {running ? "Investigating…" : circuitOpen && !failoverEnabled ? "Circuit cooling down…" : "Inject & run Sentinel"}
         </button>
         {!running && !circuitOpen && selectedId && (
           <span className="inline-flex items-center gap-1.5 text-[11px] text-slate-500">
@@ -1030,7 +1069,9 @@ function SignalInjector({
           {running
             ? `Running against ${selectedId?.includes("pii") ? "the PII scenario — expect a guardrail refusal" : "a failing DataHub assertion"}. ${elapsed.toFixed(1)}s elapsed.`
             : circuitOpen
-              ? "The LLM circuit is open. Inject is disabled until the Groq rate-limit window resets."
+              ? failoverEnabled && fallbackProvider
+                ? `Primary '${primaryProvider}' circuit is open — failover to '${fallbackProvider}' is armed. Inject runs the full ReAct loop on the fallback; the primary resumes when its circuit cools down.`
+                : `The LLM circuit is open. Inject is disabled until the ${primaryProvider ?? "Groq"} rate-limit window resets.`
               : "Runs the full ReAct loop end-to-end. GitHub + Slack actions are logged by default (toggle below)."}
         </span>
       </div>
@@ -2204,7 +2245,7 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
     return (
       <div
         className="sentinel-circuit-pulse hidden md:inline-flex items-center gap-1.5 rounded-md border border-rose-500/50 bg-rose-500/15 px-2 py-1"
-        title={`Circuit open after ${circuit?.consecutiveFailures ?? 0} consecutive 429/5xx. Sentinel fails over to NVIDIA if a key is present, otherwise the orchestrator's fallback post-mortem path runs. Cooldown resets in ${secs}s.`}
+        title={`Circuit open on '${status?.provider}' after ${circuit?.consecutiveFailures ?? 0} consecutive 429/5xx. ${status?.fallbackProvider && status?.failoverEnabled ? `Sentinel fails over to '${status.fallbackProvider}' — the ReAct loop continues from the fallback. ` : "The orchestrator's fallback post-mortem path runs. "}Cooldown resets in ${secs}s; the primary then resumes automatically.`}
       >
         <span className="relative inline-flex h-2.5 w-2.5">
           <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-rose-500/60" />
@@ -2223,7 +2264,7 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
   return (
     <div
       className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1"
-      title={`LLM circuit healthy on provider '${status?.provider}'. Failover ${status?.failoverEnabled ? "armed (NVIDIA key present)" : "off"}.`}
+      title={`LLM circuit healthy on provider '${status?.provider}'${status?.fallbackProvider ? ` (fallback: ${status.fallbackProvider})` : ""}. Failover ${status?.failoverEnabled ? `armed → ${status.fallbackProvider}` : "off"}.`}
     >
       <span className="relative inline-flex h-2 w-2">
         <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500/50" />

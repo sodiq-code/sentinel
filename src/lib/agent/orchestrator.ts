@@ -110,7 +110,21 @@ export interface OrchestratorResult {
   steps: ReasoningStep[]
   totalTokens: { promptTokens: number; completionTokens: number }
   llmModel: string
-  llmProvider: 'zai' | 'nvidia' | 'groq'
+  llmProvider: 'zai' | 'nvidia' | 'groq' | 'gemini'
+  /**
+   * The provider that ACTUALLY served the LLM calls for this run. When the
+   * configured primary (llmProvider) is throttled and the FailoverLlmClient
+   * routed to the fallback, actualProvider is the fallback. Equal to
+   * llmProvider when no failover occurred. This makes the gemini→zai (or
+   * gemini→groq) failover transparent to the operator + dashboard.
+   */
+  actualProvider: 'zai' | 'nvidia' | 'groq' | 'gemini'
+  /**
+   * True when at least one LLM call in this run was served by the fallback
+   * (not the configured primary). The dashboard shows a "failover" badge
+   * so the operator knows the primary is currently throttled.
+   */
+  failoverOccurred: boolean
   promptVersion: string
   /** Phase 4: where the audit log is mirrored (DataHub Assertions or seed). */
   auditMirrorMode: AuditMirrorMode
@@ -217,6 +231,14 @@ export async function runSentinel(
   let finalReflection = ''
   let lastError: string | null = null
   let wasCircuitOpen = false
+  // Track which provider actually served each LLM call. When the
+  // FailoverLlmClient routes to the fallback (e.g. gemini→zai when the
+  // Gemini circuit opens), completion.provider is the fallback's name.
+  // We report the last-seen provider as actualProvider + set
+  // failoverOccurred when it differs from the configured primary.
+  const configuredProvider = getLlmProvider()
+  let actualProvider: 'zai' | 'nvidia' | 'groq' | 'gemini' = configuredProvider
+  let failoverOccurred = false
 
   const emit = (kind: ReasoningStep['kind'], partial: Omit<ReasoningStep, 'step' | 'kind' | 'ts'>) => {
     const step: ReasoningStep = {
@@ -289,6 +311,15 @@ export async function runSentinel(
       if (completion.usage) {
         totalPromptTokens += completion.usage.promptTokens
         totalCompletionTokens += completion.usage.completionTokens
+      }
+      // Track the provider that actually served this call. The
+      // FailoverLlmClient sets completion.provider to whichever client
+      // (primary or fallback) produced the completion. When it differs
+      // from the configured primary, we mark failoverOccurred so the
+      // dashboard can show a badge.
+      if (completion.provider) {
+        actualProvider = completion.provider as 'zai' | 'nvidia' | 'groq' | 'gemini'
+        if (actualProvider !== configuredProvider) failoverOccurred = true
       }
 
       // Reasoning text → plan or reflect step.
@@ -656,6 +687,8 @@ export async function runSentinel(
     totalTokens: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens },
     llmModel: getLlmModel(),
     llmProvider: getLlmProvider(),
+    actualProvider,
+    failoverOccurred,
     promptVersion: PROMPT_VERSION,
     auditMirrorMode: getAuditMirrorMode(),
   }

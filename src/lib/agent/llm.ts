@@ -129,6 +129,32 @@ function getProvider(): LlmProvider {
   return 'groq'
 }
 
+/**
+ * Fallback provider when the primary's circuit opens. Defaults per primary:
+ *   gemini → 'groq' (production) — overridden to 'zai' in sandbox/local dev
+ *           via LLM_FALLBACK_PROVIDER=zai so the agent loop always completes
+ *           even when Gemini's free-tier daily quota is exhausted.
+ *   zai    → 'nvidia' (dormant)
+ *   groq   → (none — orchestrator post-loop fallback runs)
+ *   nvidia → (none)
+ *
+ * Honors the "never remove Groq" constraint: Groq remains the production
+ * fallback for Gemini and is always available as a manual LLM_PROVIDER choice.
+ */
+function getFallbackProvider(): LlmProvider | null {
+  const raw = (process.env.LLM_FALLBACK_PROVIDER ?? '').toLowerCase()
+  if (raw === 'zai') return 'zai'
+  if (raw === 'groq') return 'groq'
+  if (raw === 'nvidia') return 'nvidia'
+  if (raw === 'gemini') return 'gemini'
+  if (raw === 'none') return null
+  // Sensible defaults when unset
+  const primary = getProvider()
+  if (primary === 'gemini') return 'groq'
+  if (primary === 'zai') return 'nvidia'
+  return null
+}
+
 function isRetryableStatus(status: number): boolean {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504
 }
@@ -334,9 +360,9 @@ function toWireMessages(messages: LlmMessage[]): Record<string, unknown>[] {
   })
 }
 
-function mapCompletion(res: OpenAiResponse): LlmCompletion {
+function mapCompletion(res: OpenAiResponse, provider?: string): LlmCompletion {
   const choice = res.choices?.[0]
-  if (!choice) return { content: null, toolCalls: [], finishReason: 'empty' }
+  if (!choice) return { content: null, toolCalls: [], finishReason: 'empty', provider }
   const toolCalls: LlmToolCall[] = (choice.message.tool_calls ?? []).map((c) => ({
     id: c.id,
     type: 'function',
@@ -350,6 +376,7 @@ function mapCompletion(res: OpenAiResponse): LlmCompletion {
       promptTokens: res.usage?.prompt_tokens ?? 0,
       completionTokens: res.usage?.completion_tokens ?? 0,
     },
+    provider,
   }
 }
 
@@ -431,7 +458,7 @@ class ZaiLlmClient implements ResilientLlmClient {
             thinking: { type: 'disabled' },
           } as Record<string, unknown>)) as unknown as OpenAiResponse
           this.circuit.recordSuccess()
-          return mapCompletion(res)
+          return mapCompletion(res, this.providerName())
         } catch (err) {
           const e = err as { status?: number; statusCode?: number; message?: string }
           const msg = e.message ?? String(err)
@@ -599,7 +626,7 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
           throw err
         }
         this.circuit.recordSuccess()
-        return mapCompletion((await res.json()) as OpenAiResponse)
+        return mapCompletion((await res.json()) as OpenAiResponse, this.providerName())
       }
       throw lastErr ?? new Error('NVIDIA LLM call failed after retries')
     }
@@ -745,7 +772,7 @@ class GroqLlmClient implements ResilientLlmClient {
         }
       }
       // Success.
-      return { ok: true, completion: mapCompletion((await res.json()) as OpenAiResponse) }
+      return { ok: true, completion: mapCompletion((await res.json()) as OpenAiResponse, this.providerName()) }
     }
     return {
       ok: false,
@@ -1035,7 +1062,7 @@ class GeminiLlmClient implements ResilientLlmClient {
           throw err
         }
         this.circuit.recordSuccess()
-        return mapCompletion((await res.json()) as OpenAiResponse)
+        return mapCompletion((await res.json()) as OpenAiResponse, this.providerName())
       }
       throw lastErr ?? new Error('Gemini LLM call failed after retries')
     }
@@ -1091,15 +1118,27 @@ class FailoverLlmClient implements LlmClient {
     try {
       return await this.primary.complete(input)
     } catch (err) {
-      if (!(err instanceof CircuitOpenError)) throw err
-      // Primary circuit just opened — try the fallback once.
+      // Fail-fast: fail over on ANY primary error, not just CircuitOpenError.
+      // This matters when the primary returns a 429 on the first call BEFORE
+      // the circuit opens (CIRCUIT_THRESHOLD > 1) — without this, the first
+      // agent turn would fail instead of failing over. The fallback is the
+      // resilience escape hatch; if it's also down, the orchestrator's
+      // post-loop fallback post-mortem path runs gracefully.
+      const primaryErr = err instanceof Error ? err.message : String(err)
       try {
         return await this.fallback.complete(input)
       } catch (fallbackErr) {
         const fe = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
-        throw new CircuitOpenError(
-          `Primary '${this.primary.providerName()}' circuit open AND ` +
-            `fallback '${this.fallback.providerName()}' failed: ${fe.slice(0, 160)}`,
+        const isCircuit = err instanceof CircuitOpenError
+        if (isCircuit) {
+          throw new CircuitOpenError(
+            `Primary '${this.primary.providerName()}' circuit open AND ` +
+              `fallback '${this.fallback.providerName()}' failed: ${fe.slice(0, 160)}`,
+          )
+        }
+        throw new Error(
+          `Primary '${this.primary.providerName()}' failed (${primaryErr.slice(0, 160)}) ` +
+            `AND fallback '${this.fallback.providerName()}' failed (${fe.slice(0, 160)}).`,
         )
       }
     }
@@ -1141,15 +1180,42 @@ export function getLlm(): LlmClient {
       s.client = s.groq
     } else if (provider === 'gemini') {
       s.gemini = new GeminiLlmClient()
-      // Optional failover to Groq if the Gemini circuit opens (e.g. quota
-      // exhaustion) AND a Groq key is present. Groq becomes the dormant
-      // failover target for the production path. Kept (honor the
-      // "never remove Groq" constraint) — it still serves real traffic
-      // when Gemini is throttled.
-      const groqKey = process.env.GROQ_API_KEY
-      if (LLM_FAILOVER_ENABLED && groqKey && groqKey.startsWith('gsk_')) {
-        s.groq = new GroqLlmClient()
-        s.client = new FailoverLlmClient(s.gemini, s.groq)
+      // Configurable failover when the Gemini circuit opens (e.g. daily
+      // free-tier quota exhausted). LLM_FALLBACK_PROVIDER picks the target:
+      //   'zai'  — sandbox/local dev (default here): the free z-ai gateway
+      //            has no rate limits, so the agent loop ALWAYS completes
+      //            even when Gemini's daily quota is exhausted. When the
+      //            quota resets at midnight PT, Gemini transparently
+      //            resumes as the primary.
+      //   'groq' — production (Vercel default): Groq free tier. Kept per the
+      //            "never remove Groq" constraint — Groq still serves real
+      //            traffic when Gemini is throttled.
+      //   'none' — disable failover; the orchestrator's post-loop fallback
+      //            post-mortem path runs gracefully.
+      if (LLM_FAILOVER_ENABLED) {
+        const fb = getFallbackProvider()
+        if (fb === 'zai') {
+          s.zai = new ZaiLlmClient()
+          s.client = new FailoverLlmClient(s.gemini, s.zai)
+        } else if (fb === 'groq') {
+          const groqKey = process.env.GROQ_API_KEY
+          if (groqKey && groqKey.startsWith('gsk_')) {
+            s.groq = new GroqLlmClient()
+            s.client = new FailoverLlmClient(s.gemini, s.groq)
+          } else {
+            s.client = s.gemini
+          }
+        } else if (fb === 'nvidia') {
+          const nvidiaKey = process.env.NVIDIA_API_KEY
+          if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
+            s.nvidia = new NvidiaNimLlmClient()
+            s.client = new FailoverLlmClient(s.gemini, s.nvidia)
+          } else {
+            s.client = s.gemini
+          }
+        } else {
+          s.client = s.gemini
+        }
       } else {
         s.client = s.gemini
       }
@@ -1159,10 +1225,27 @@ export function getLlm(): LlmClient {
       // a clean CircuitOpenError and the orchestrator's post-loop fallback
       // post-mortem path runs gracefully).
       s.zai = new ZaiLlmClient()
-      const nvidiaKey = process.env.NVIDIA_API_KEY
-      if (LLM_FAILOVER_ENABLED && nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
-        s.nvidia = new NvidiaNimLlmClient()
-        s.client = new FailoverLlmClient(s.zai, s.nvidia)
+      if (LLM_FAILOVER_ENABLED) {
+        const fb = getFallbackProvider()
+        if (fb === 'nvidia') {
+          const nvidiaKey = process.env.NVIDIA_API_KEY
+          if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
+            s.nvidia = new NvidiaNimLlmClient()
+            s.client = new FailoverLlmClient(s.zai, s.nvidia)
+          } else {
+            s.client = s.zai
+          }
+        } else if (fb === 'gemini') {
+          const geminiKey = process.env.GEMINI_API_KEY
+          if (geminiKey) {
+            s.gemini = new GeminiLlmClient()
+            s.client = new FailoverLlmClient(s.zai, s.gemini)
+          } else {
+            s.client = s.zai
+          }
+        } else {
+          s.client = s.zai
+        }
       } else {
         s.client = s.zai
       }
@@ -1182,7 +1265,7 @@ export function getLlmModel(): string {
   if (process.env.LLM_MODEL) return process.env.LLM_MODEL
   if (provider === 'nvidia') return 'nvidia/llama-3.3-nemotron-super-49b-v1'
   if (provider === 'groq') return 'llama-3.3-70b-versatile'
-  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.0-flash'
   return 'gpt-4o' // zai
 }
 
@@ -1193,15 +1276,29 @@ export function getLlmModel(): string {
  * In local dev (z-ai + dead NVIDIA key), `failoverEnabled` is true but
  * `nvidiaHealthy` is false — the UI shows the operator that the agent will
  * degrade gracefully via the post-loop fallback path, not via live NVIDIA.
+ *
+ * Gemini note: Google AI Studio keys traditionally start with `AIza`, but
+ * newer Cloud Console API keys use the `AQ.` prefix (and possibly others).
+ * We accept ANY non-empty key here and let the GeminiLlmClient validate
+ * with a real call — never gate UX on a key prefix.
  */
 export function getLlmResilienceStatus(): {
   provider: LlmProvider
   model: string
+  fallbackProvider: LlmProvider | null
   failoverEnabled: boolean
   hasNvidiaKey: boolean
   hasGeminiKey: boolean
   hasGroqKey: boolean
+  hasZaiKey: boolean
   circuit: {
+    isOpen: boolean
+    consecutiveFailures: number
+    msUntilReset: number
+    lastStatus: number
+    lastOpenedAt: number
+  } | null
+  fallbackCircuit: {
     isOpen: boolean
     consecutiveFailures: number
     msUntilReset: number
@@ -1212,7 +1309,19 @@ export function getLlmResilienceStatus(): {
   const hasNvidiaKey = !!(
     process.env.NVIDIA_API_KEY && process.env.NVIDIA_API_KEY.startsWith('nvapi-')
   )
+  // Accept any non-empty Gemini key (AIza* classic OR AQ.* newer Cloud format).
+  const hasGeminiKey = !!process.env.GEMINI_API_KEY
+  const hasGroqKey = !!(
+    process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.startsWith('gsk_')
+  )
+  // zai has no key — it's a free in-sandbox gateway. Mark "available" when
+  // the SDK is importable (always true in this repo).
+  const hasZaiKey = true
   const s = getSingleton()
+  const provider = getProvider()
+  const fallbackProvider = getFallbackProvider()
+
+  // Primary circuit snapshot — from whichever provider is active.
   let circuit: {
     isOpen: boolean
     consecutiveFailures: number
@@ -1220,29 +1329,44 @@ export function getLlmResilienceStatus(): {
     lastStatus: number
     lastOpenedAt: number
   } | null = null
-  const provider = getProvider()
   if (s.zai && provider === 'zai') circuit = s.zai.circuitSnapshot()
   else if (s.nvidia && provider === 'nvidia') circuit = s.nvidia.circuitSnapshot()
   else if (s.groq && provider === 'groq') circuit = s.groq.circuitSnapshot()
   else if (s.gemini && provider === 'gemini') circuit = s.gemini.circuitSnapshot()
-  const hasGeminiKey = !!(
-    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.startsWith('AIza')
-  )
-  const hasGroqKey = !!(
-    process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.startsWith('gsk_')
-  )
-  // Failover is enabled when the primary provider has a healthy fallback key:
-  //   zai    → nvidia (dormant, list-only in dev)
-  //   gemini → groq   (kept, demoted from primary)
-  const failoverEnabled =
-    (provider === 'zai' && hasNvidiaKey) || (provider === 'gemini' && hasGroqKey)
+
+  // Fallback circuit snapshot — surfaces the failover target's health so
+  // the operator can see "primary throttled → fallback healthy".
+  let fallbackCircuit: {
+    isOpen: boolean
+    consecutiveFailures: number
+    msUntilReset: number
+    lastStatus: number
+    lastOpenedAt: number
+  } | null = null
+  if (fallbackProvider === 'zai' && s.zai) fallbackCircuit = s.zai.circuitSnapshot()
+  else if (fallbackProvider === 'groq' && s.groq) fallbackCircuit = s.groq.circuitSnapshot()
+  else if (fallbackProvider === 'nvidia' && s.nvidia) fallbackCircuit = s.nvidia.circuitSnapshot()
+  else if (fallbackProvider === 'gemini' && s.gemini) fallbackCircuit = s.gemini.circuitSnapshot()
+
+  // Failover is enabled when an explicit fallback is configured AND that
+  // fallback's key is present (zai needs no key, so it's always available).
+  let failoverEnabled = false
+  if (fallbackProvider === 'zai') failoverEnabled = hasZaiKey
+  else if (fallbackProvider === 'groq') failoverEnabled = hasGroqKey
+  else if (fallbackProvider === 'nvidia') failoverEnabled = hasNvidiaKey
+  else if (fallbackProvider === 'gemini') failoverEnabled = hasGeminiKey
+  failoverEnabled = failoverEnabled && LLM_FAILOVER_ENABLED
+
   return {
     provider,
     model: getLlmModel(),
+    fallbackProvider,
     failoverEnabled,
     hasNvidiaKey,
     circuit,
     hasGeminiKey,
     hasGroqKey,
+    hasZaiKey,
+    fallbackCircuit,
   }
 }
