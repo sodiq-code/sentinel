@@ -15,6 +15,7 @@ import {
   Command as CommandIcon,
   Copy,
   Database,
+  Download,
   FileText,
   GitBranch,
   Github,
@@ -1021,7 +1022,9 @@ function Console() {
           {/* Right column: metrics + history + connectors */}
           <div className="space-y-5">
             <MetricsCard result={result} historyCount={history.data?.length ?? 0} running={running} />
+            <PerformanceAnalytics incidents={history.data ?? []} />
             <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
+            <DataHubHealthPanel />
             <IncidentHistory
               items={history.data ?? []}
               loading={history.isLoading}
@@ -1062,9 +1065,9 @@ function Console() {
       />
 
       {/* Sticky footer */}
-      <footer className="mt-auto border-t border-slate-800/80 bg-slate-950">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center gap-3 text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1.5">
+      <footer className="mt-auto border-t border-slate-800 bg-slate-950">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center gap-2.5 text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1">
             <ShieldCheck className="h-3.5 w-3.5 text-emerald-400" /> All systems operational
           </span>
           <span className="text-slate-700">·</span>
@@ -1081,7 +1084,7 @@ function Console() {
           <Link href="https://github.com/sodiq-code/sentinel-demo-pipeline" className="inline-flex items-center gap-1 hover:text-emerald-300 transition-colors" target="_blank" rel="noreferrer">
             <Github className="h-3.5 w-3.5" /> demo pipeline repo
           </Link>
-          <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">Autonomous Data Incident Response · DataHub MCP</span>
+          <span className="ml-auto hidden sm:inline text-[10px] text-slate-600">Autonomous Data Incident Response · DataHub MCP · Agent Context Kit</span>
         </div>
       </footer>
 
@@ -1318,10 +1321,20 @@ function ReasoningStream({
       </div>
       <div className="max-h-[640px] overflow-y-auto p-4 space-y-3 custom-scroll">
         {empty && (
-          <div className="text-center py-10 text-slate-500">
-            <BrainCircuit className="h-10 w-10 mx-auto mb-3 opacity-40 sentinel-empty-pulse" />
-            <p className="text-sm">No reasoning yet.</p>
-            <p className="text-xs mt-1 text-slate-500/80">Select a signal above and inject it to watch Sentinel&apos;s ReAct loop investigate in real time.</p>
+          <div className="text-center py-12 text-slate-500">
+            <BrainCircuit className="h-12 w-12 mx-auto mb-4 opacity-30 sentinel-empty-pulse" />
+            <p className="text-sm font-medium text-slate-400">No reasoning steps yet</p>
+            <p className="text-xs mt-1.5 text-slate-500/80 max-w-xs mx-auto leading-relaxed">
+              Select a signal above and click <strong className="text-emerald-400">Inject &amp; run Sentinel</strong> to watch the ReAct loop investigate in real time.
+            </p>
+            <div className="mt-4 flex items-center justify-center gap-3 text-[10px] text-slate-600">
+              <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/40 px-2 py-1">
+                <kbd className="sentinel-kbd">Enter</kbd> to run
+              </span>
+              <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/40 px-2 py-1">
+                <kbd className="sentinel-kbd">⌘K</kbd> command palette
+              </span>
+            </div>
           </div>
         )}
         {running && steps.length === 0 && (
@@ -2262,6 +2275,358 @@ function ConnectorRow({
 }
 
 // ---------------------------------------------------------------------------
+// Performance Analytics — resolution rate, avg response time, token efficiency,
+// scenario breakdown. Sits in the right column between MetricsCard and
+// ConnectorStatusCard.
+// ---------------------------------------------------------------------------
+
+function PerformanceAnalytics({ incidents }: { incidents: IncidentListItem[] }) {
+  if (incidents.length === 0) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+          <TrendingUp className="h-4 w-4 text-emerald-400" /> Agent Performance
+        </h2>
+        <div className="text-xs text-slate-500 text-center py-4">No incidents yet</div>
+      </section>
+    );
+  }
+
+  // Resolution rate — count by status
+  const resolved = incidents.filter((i) => i.status === "resolved").length;
+  const degraded = incidents.filter((i) => i.status === "degraded").length;
+  const failed = incidents.filter((i) => i.status === "failed").length;
+  const total = incidents.length;
+  const resolvedPct = total > 0 ? (resolved / total) * 100 : 0;
+  const degradedPct = total > 0 ? (degraded / total) * 100 : 0;
+  const failedPct = total > 0 ? (failed / total) * 100 : 0;
+
+  // Avg response time — average time between createdAt and resolvedAt
+  const resolvedIncidents = incidents.filter((i) => i.resolvedAt && i.createdAt);
+  const avgResponseMs =
+    resolvedIncidents.length > 0
+      ? resolvedIncidents.reduce((sum, i) => {
+          const created = new Date(i.createdAt).getTime();
+          const resolvedAt = new Date(i.resolvedAt!).getTime();
+          return sum + (resolvedAt - created);
+        }, 0) / resolvedIncidents.length
+      : 0;
+  const avgResponseSec = (avgResponseMs / 1000).toFixed(1);
+
+  // Scenario breakdown — count by signalType
+  const scenarioCounts: Record<string, number> = {};
+  for (const i of incidents) {
+    const t = i.signalType || "unknown";
+    scenarioCounts[t] = (scenarioCounts[t] || 0) + 1;
+  }
+  const scenarioLabels: Record<string, { label: string; color: string; bg: string }> = {
+    freshness: { label: "Freshness", color: "text-emerald-300", bg: "bg-emerald-500/15" },
+    schema: { label: "Schema", color: "text-amber-300", bg: "bg-amber-500/15" },
+    pii: { label: "PII", color: "text-rose-300", bg: "bg-rose-500/15" },
+    quality: { label: "Quality", color: "text-slate-300", bg: "bg-slate-500/15" },
+    unknown: { label: "Unknown", color: "text-slate-400", bg: "bg-slate-500/10" },
+  };
+
+  // Token efficiency — from the latest run result (we'll use a placeholder
+  // since we don't have aggregate token data here, but we can compute from
+  // the step counts as a proxy)
+  const avgToolCalls =
+    total > 0
+      ? (incidents.reduce((sum, i) => sum + i.toolCallCount, 0) / total).toFixed(1)
+      : "0";
+  const avgWritebacks =
+    total > 0
+      ? (incidents.reduce((sum, i) => sum + i.writebackCount, 0) / total).toFixed(1)
+      : "0";
+  const avgSteps =
+    total > 0
+      ? (incidents.reduce((sum, i) => sum + i.stepCount, 0) / total).toFixed(1)
+      : "0";
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+        <TrendingUp className="h-4 w-4 text-emerald-400" /> Agent Performance
+      </h2>
+
+      {/* Resolution rate bar */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Resolution rate</span>
+          <span className="text-[10px] font-mono text-emerald-300">{resolved}/{total} resolved</span>
+        </div>
+        <div className="flex h-2.5 rounded-full overflow-hidden bg-slate-800">
+          <div
+            className="bg-emerald-500 transition-all duration-500"
+            style={{ width: `${resolvedPct}%` }}
+            title={`Resolved: ${resolved} (${resolvedPct.toFixed(0)}%)`}
+          />
+          <div
+            className="bg-amber-500 transition-all duration-500"
+            style={{ width: `${degradedPct}%` }}
+            title={`Degraded: ${degraded} (${degradedPct.toFixed(0)}%)`}
+          />
+          <div
+            className="bg-rose-500 transition-all duration-500"
+            style={{ width: `${failedPct}%` }}
+            title={`Failed: ${failed} (${failedPct.toFixed(0)}%)`}
+          />
+        </div>
+        <div className="flex items-center gap-3 mt-1.5">
+          <span className="flex items-center gap-1 text-[10px] text-slate-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Resolved {resolvedPct.toFixed(0)}%
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-slate-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> Degraded {degradedPct.toFixed(0)}%
+          </span>
+          <span className="flex items-center gap-1 text-[10px] text-slate-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" /> Failed {failedPct.toFixed(0)}%
+          </span>
+        </div>
+      </div>
+
+      {/* Avg response time */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 mb-3">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+          <Clock className="h-3 w-3" /> Avg response time
+        </div>
+        <div className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-100">
+          {resolvedIncidents.length > 0 ? `${avgResponseSec}s` : "—"}
+        </div>
+      </div>
+
+      {/* Token efficiency proxy — avg steps / tool calls / writebacks */}
+      <div className="mb-3">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Efficiency</div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2 text-center">
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Steps</div>
+            <div className="font-mono text-sm font-bold tabular-nums text-amber-300">{avgSteps}</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2 text-center">
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Tools</div>
+            <div className="font-mono text-sm font-bold tabular-nums text-emerald-300">{avgToolCalls}</div>
+          </div>
+          <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2 text-center">
+            <div className="text-[9px] font-mono uppercase tracking-wider text-slate-500 mb-0.5">Writes</div>
+            <div className="font-mono text-sm font-bold tabular-nums text-rose-300">{avgWritebacks}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Scenario breakdown */}
+      <div>
+        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1.5">Scenario breakdown</div>
+        <div className="space-y-1.5">
+          {Object.entries(scenarioCounts)
+            .sort(([, a], [, b]) => b - a)
+            .map(([type, count]) => {
+              const meta = scenarioLabels[type] ?? scenarioLabels.unknown;
+              const pct = total > 0 ? (count / total) * 100 : 0;
+              return (
+                <div key={type} className="flex items-center gap-2">
+                  <div className={`rounded px-1.5 py-0.5 text-[10px] font-mono ${meta.color} ${meta.bg} border border-slate-800 w-20 text-center truncate`}>
+                    {meta.label}
+                  </div>
+                  <div className="flex-1 h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-emerald-500/70 transition-all duration-500"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 tabular-nums w-6 text-right">{count}</span>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DataHub Health Panel — connection status, asset count, assertions, MCP tools,
+// last write-back. Sits in the right column after ConnectorStatusCard.
+// ---------------------------------------------------------------------------
+
+interface DataHubStatusResponse {
+  mode: string;
+  liveModeAvailable: boolean;
+  seeded: boolean;
+  counts?: {
+    assets: number;
+    lineageEdges: number;
+    assertions: number;
+    contextDocs: number;
+    failingAssertions: number;
+  };
+  scenarios: string[];
+  phase: number;
+  message: string;
+}
+
+interface DataHubSeedOverviewResponse {
+  assets?: Array<{ scenarioId: string; urn: string; name: string }>;
+  assertions?: Array<{ scenarioId: string; status: string }>;
+  contextDocs?: Array<{ scenarioId: string; title: string }>;
+}
+
+const MCP_TOOLS = [
+  "mcp.search",
+  "mcp.get_entities",
+  "mcp.list_schema_fields",
+  "mcp.get_me",
+  "mcp.get_lineage",
+  "mcp.search_documents",
+  "mcp.grep_documents",
+  "mcp.get_dataset_queries",
+  "mcp.list_lifecycle_stages",
+  "ack.save_document",
+  "ack.add_owners",
+  "ack.add_glossary_terms",
+  "ack.create_assertion",
+  "ack.add_tag",
+  "ack.update_ownership",
+];
+
+function DataHubHealthPanel() {
+  const status = useQuery<DataHubStatusResponse>({
+    queryKey: ["datahub-status"],
+    queryFn: async () => {
+      const r = await fetch("/api/datahub/status");
+      if (!r.ok) throw new Error("Failed to load DataHub status");
+      return (await r.json()) as DataHubStatusResponse;
+    },
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+
+  const overview = useQuery<DataHubSeedOverviewResponse>({
+    queryKey: ["datahub-seed-overview"],
+    queryFn: async () => {
+      const r = await fetch("/api/datahub/seed/overview");
+      if (!r.ok) throw new Error("Failed to load seed overview");
+      return (await r.json()) as DataHubSeedOverviewResponse;
+    },
+    staleTime: 30_000,
+    enabled: Boolean(status.data?.seeded),
+  });
+
+  const [toolsExpanded, setToolsExpanded] = useState(false);
+
+  const isLoading = status.isLoading || (status.data?.seeded && overview.isLoading);
+  const counts = status.data?.counts;
+
+  // Derive last write-back from overview context docs (best-effort)
+  const lastWriteback = overview.data?.contextDocs?.length
+    ? overview.data.contextDocs[overview.data.contextDocs.length - 1]
+    : null;
+
+  // Assertion pass/fail
+  const assertionsPassing = (counts?.assertions ?? 0) - (counts?.failingAssertions ?? 0);
+  const assertionsFailing = counts?.failingAssertions ?? 0;
+
+  if (isLoading) {
+    return (
+      <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+          <Database className="h-4 w-4 text-emerald-400" /> DataHub Health
+        </h2>
+        <div className="space-y-2">
+          <div className="h-8 rounded bg-slate-800/40 animate-pulse" />
+          <div className="h-8 rounded bg-slate-800/40 animate-pulse" />
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card">
+      <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2 mb-3">
+        <Database className="h-4 w-4 text-emerald-400" /> DataHub Health
+      </h2>
+
+      {/* Connection status */}
+      <div className="flex items-center gap-2 mb-3">
+        <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+        <span className="text-xs text-emerald-300 font-medium">Connected</span>
+        <span className="ml-auto text-[10px] font-mono text-slate-500">
+          {status.data?.mode === "live" ? "LIVE" : "Demo"} mode
+        </span>
+      </div>
+
+      {/* Asset count */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 mb-2">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+          <Layers className="h-3 w-3" /> Seeded assets
+        </div>
+        <div className="mt-1 font-mono text-lg font-bold tabular-nums text-slate-100">
+          {counts?.assets ?? 0}
+        </div>
+      </div>
+
+      {/* Assertion status */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5 mb-2">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500 mb-1.5">
+          <ShieldCheck className="h-3 w-3" /> Assertions
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-mono text-emerald-300">{assertionsPassing} passing</span>
+          {assertionsFailing > 0 && (
+            <span className="text-[10px] font-mono text-rose-300">{assertionsFailing} failing</span>
+          )}
+        </div>
+        <div className="flex h-1.5 rounded-full overflow-hidden bg-slate-800 mt-1.5">
+          <div
+            className="bg-emerald-500 transition-all duration-500"
+            style={{ width: `${counts?.assertions ? (assertionsPassing / counts.assertions) * 100 : 100}%` }}
+          />
+          {assertionsFailing > 0 && (
+            <div
+              className="bg-rose-500 transition-all duration-500"
+              style={{ width: `${counts?.assertions ? (assertionsFailing / counts.assertions) * 100 : 0}%` }}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* MCP tools */}
+      <div className="mb-2">
+        <button
+          onClick={() => setToolsExpanded(!toolsExpanded)}
+          className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500 mb-1.5 hover:text-slate-300 transition-colors w-full"
+        >
+          <Terminal className="h-3 w-3" /> MCP Tools ({MCP_TOOLS.length})
+          {toolsExpanded ? <ChevronUp className="h-3 w-3 ml-auto" /> : <ChevronDown className="h-3 w-3 ml-auto" />}
+        </button>
+        {toolsExpanded && (
+          <div className="flex flex-wrap gap-1">
+            {MCP_TOOLS.map((tool) => (
+              <span
+                key={tool}
+                className="inline-flex items-center rounded border border-slate-800 bg-slate-900/60 px-1.5 py-0.5 text-[9px] font-mono text-slate-400"
+              >
+                {tool}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Last write-back */}
+      <div className="rounded-lg border border-slate-800 bg-slate-900/40 p-2.5">
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500">
+          <FileText className="h-3 w-3" /> Last write-back
+        </div>
+        <div className="mt-1 text-xs font-mono text-slate-300 truncate">
+          {lastWriteback?.title ?? "No write-backs yet"}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sticky bottom control bar — connector trace mode indicator, compounding
 // re-run button, connector test button.
 // ---------------------------------------------------------------------------
@@ -2843,7 +3208,12 @@ function IncidentHeader({ signal, asset, running, elapsed }: {
   const owner = asset?.owners?.[0];
   const ownerName = owner?.name ?? "Priya Patel";
   const initials = ownerName.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
-  const lastMod = asset?.lastModifiedAt ? new Date(asset.lastModifiedAt).toISOString().slice(0, 16).replace("T", " ") + "Z" : null;
+  // DataHub stores lastModifiedAt in microseconds; JS Date expects milliseconds.
+  // If the value exceeds 1e14 (≈ year 5138 in ms), it's in µs → divide by 1000.
+  const lastMod = asset?.lastModifiedAt
+    ? new Date(asset.lastModifiedAt > 1e14 ? asset.lastModifiedAt / 1000 : asset.lastModifiedAt)
+        .toISOString().slice(0, 16).replace("T", " ") + "Z"
+    : null;
 
   return (
     <motion.section
@@ -3018,9 +3388,9 @@ function LineageGraph({ rootUrn, steps, running }: {
   const minDeg = degrees[0];
   const maxDeg = degrees[degrees.length - 1];
   const colCount = maxDeg - minDeg + 1;
-  const colWidth = 180;
-  const nodeHeight = 56;
-  const colGap = 60;
+  const colWidth = 220;
+  const nodeHeight = 62;
+  const colGap = 70;
   const svgWidth = colCount * colWidth + (colCount - 1) * colGap + 40;
   // Compute per-column max stack to size the SVG height.
   const maxStack = Math.max(...degrees.map((d) => byDegree.get(d)!.length));
@@ -3067,8 +3437,9 @@ function LineageGraph({ rootUrn, steps, running }: {
               <GitFork className="h-3 w-3" /> traversing {activeDirection}
             </span>
           )}
-          <span className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900/60 px-1.5 py-0.5 text-slate-400">
-            <span className="h-2 w-2 rounded-full bg-emerald-400" /> root
+          <span className="text-slate-500 mr-1">Legend:</span>
+          <span className="inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-rose-300">
+            <span className="h-2 w-2 rounded-full bg-rose-400" /> failing asset
           </span>
           <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
             <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse" /> traversed
@@ -3084,8 +3455,8 @@ function LineageGraph({ rootUrn, steps, running }: {
           {edges.map((e, i) => {
             const isActiveEdge = (activeUrn && (e.from === activeUrn || e.to === activeUrn)) || false;
             const isTraversed = traversedArr.some((u) => e.from === u || e.to === u);
-            const stroke = isActiveEdge ? "#f59e0b" : isTraversed ? "#fbbf24" : "#334155";
-            const width = isActiveEdge ? 2.5 : isTraversed ? 2 : 1.25;
+            const stroke = isActiveEdge ? "#f59e0b" : isTraversed ? "#fbbf24" : "#475569";
+            const width = isActiveEdge ? 2.5 : isTraversed ? 2 : 1.5;
             return (
               <g key={`e-${i}`}>
                 <path
@@ -3093,8 +3464,8 @@ function LineageGraph({ rootUrn, steps, running }: {
                   fill="none"
                   stroke={stroke}
                   strokeWidth={width}
-                  strokeDasharray={isActiveEdge ? "0" : isTraversed ? "0" : "4 4"}
-                  opacity={isActiveEdge ? 1 : isTraversed ? 0.7 : 0.45}
+                  strokeDasharray={isActiveEdge ? "0" : isTraversed ? "0" : "6 4"}
+                  opacity={isActiveEdge ? 1 : isTraversed ? 0.85 : 0.6}
                   markerEnd="url(#arrowhead)"
                   className={isActiveEdge ? "animate-pulse" : ""}
                 />
@@ -3146,15 +3517,15 @@ function LineageGraph({ rootUrn, steps, running }: {
                 <circle cx={16} cy={18} r={5} fill={color} />
                 {/* Name */}
                 <text x={28} y={22} fill={textColor} fontSize="11" fontWeight="600" fontFamily="ui-monospace, monospace">
-                  {n.name.length > 20 ? n.name.slice(0, 18) + "…" : n.name}
+                  {n.name.length > 26 ? n.name.slice(0, 24) + "…" : n.name}
                 </text>
                 {/* Type + platform */}
                 <text x={16} y={38} fill="#94a3b8" fontSize="9" fontFamily="ui-monospace, monospace">
                   {n.platform} · {n.type}
                 </text>
                 {/* Degree / role label */}
-                <text x={16} y={50} fill={isRoot ? "#34d399" : "#64748b"} fontSize="8" fontFamily="ui-monospace, monospace" letterSpacing="0.05em">
-                  {isRoot ? "FAILING ASSET" : n.degree < 0 ? `UPSTREAM ${n.degree}` : `DOWNSTREAM +${n.degree}`}
+                <text x={16} y={50} fill={isRoot ? "#f43f5e" : "#64748b"} fontSize="8" fontFamily="ui-monospace, monospace" letterSpacing="0.05em" fontWeight="700">
+                  {isRoot ? "⚠ FAILING ASSET" : n.degree < 0 ? `UPSTREAM ${n.degree}` : `DOWNSTREAM +${n.degree}`}
                 </text>
               </g>
             );
@@ -3345,6 +3716,34 @@ function RunSummaryCard({
             {result.actualProvider && result.actualProvider !== result.llmProvider && ` → ${result.actualProvider} (failover)`}
           </div>
         </div>
+        <button
+          onClick={() => {
+            const report = {
+              incident: result.incident,
+              steps: result.steps,
+              totalTokens: result.totalTokens,
+              llmModel: result.llmModel,
+              llmProvider: result.llmProvider,
+              actualProvider: result.actualProvider,
+              failoverOccurred: result.failoverOccurred,
+              promptVersion: result.promptVersion,
+              exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `sentinel-incident-${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+          }}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-900/60 px-2.5 py-1.5 text-xs text-slate-300 hover:bg-slate-800/60 hover:border-emerald-500/40 transition-colors"
+          title="Export incident report as JSON"
+        >
+          <Download className="h-3.5 w-3.5" /> Export
+        </button>
       </div>
 
       {/* Key metrics row */}
