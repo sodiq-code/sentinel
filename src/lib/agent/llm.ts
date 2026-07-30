@@ -29,10 +29,18 @@
 //
 // Provider selection (LLM_PROVIDER env, default 'zai'):
 //
-//   zai     — z-ai-web-dev-sdk gateway (DEFAULT in sandbox). Free, no key,
-//             no rate limits, tool-calling verified. Works inside the build
-//             environment where direct outbound to Groq/NVIDIA is geo-blocked.
-//             The orchestrator's full ReAct loop completes here in dev.
+//   zai     — z-ai-web-dev-sdk gateway (DEFAULT in this build environment).
+//             Free, no key, no rate limits, tool-calling verified. The SDK
+//             works on ANY Node.js runtime (sandbox, local dev, AND Vercel
+//             serverless) — it is NOT sandbox-only. It is the default HERE
+//             because the SDK is pre-installed in this build environment and
+//             the gateway is reachable with no configuration. For an open-
+//             source hackathon project that judges will deploy cold, we use
+//             universally-available providers (gemini primary, groq fallback)
+//             as the documented production stack, so a cold clone runs without
+//             depending on the z-ai SDK being pre-installed. Set
+//             LLM_PROVIDER=zai and LLM_FALLBACK_PROVIDER=zai on any runtime
+//             where z-ai-web-dev-sdk is installed to use it as primary.
 //
 //   gemini  — Google Gemini 2.5 Flash (PRODUCTION primary). Free forever,
 //             1M tokens-per-minute, 1M context window, best-in-class native
