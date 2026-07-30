@@ -63,6 +63,47 @@ const MAX_ITERS = 5
 // 'degraded' (partial investigation) — the same state as a circuit-open.
 const SOFT_DEADLINE_MS = 45_000
 
+// ---------------------------------------------------------------------------
+// LLM-unreachable classification (PDF §11.3 graceful-degradation trigger)
+// ---------------------------------------------------------------------------
+// The orchestrator distinguishes two failure classes:
+//   • DEGRADED — the LLM was externally unreachable (rate-limit, auth/geo
+//     block, gateway 5xx, network). The orchestrator did partial work and
+//     the post-loop fallback post-mortem still writes the compounding
+//     artefact. The dashboard must NOT show a scary red "failed" for this.
+//   • FAILED   — a real bug (non-LLM exception). The agent could not
+//     complete the investigation and no compounding artefact was written.
+//
+// `wasCircuitOpen` (legacy name, kept for minimal diff) is set true for the
+// DEGRADED class. The final-status block at the bottom maps it to
+// 'degraded'. This helper widens the trigger beyond a literal 429 to also
+// cover 401/403 (Groq key geo-block from non-US regions), 5xx, and network
+// errors reaching the LLM endpoint — all of which are "LLM unreachable,
+// not our bug" and all of which leave the fallback post-mortem intact.
+// ---------------------------------------------------------------------------
+const LLM_UNREACHABLE_RE =
+  /HTTP\s+(429|40[13]|5\d\d)|rate\s*limit|too\s*many\s*requests|network|fetch\s*failed|ECONN|ETIMEDOUT|timeout|circuit\s+open|ENOTFOUND|socket\s*hang\s*up/i
+
+function isLlmUnreachableError(message: string): boolean {
+  return LLM_UNREACHABLE_RE.test(message)
+}
+
+function describeLlmUnreachableReason(message: string): string {
+  if (/429|rate\s*limit|too\s*many\s*requests/i.test(message)) {
+    return 'rate-limited (HTTP 429)'
+  }
+  if (/HTTP\s+40[13]/i.test(message)) {
+    return 'auth/geo-blocked (HTTP 401/403)'
+  }
+  if (/HTTP\s+5\d\d/i.test(message)) {
+    return 'gateway error (HTTP 5xx)'
+  }
+  if (/network|fetch\s*failed|ECONN|ETIMEDOUT|timeout|ENOTFOUND|socket\s*hang\s*up/i.test(message)) {
+    return 'network unreachable'
+  }
+  return 'LLM endpoint error'
+}
+
 export interface OrchestratorResult {
   incident: Incident
   steps: ReasoningStep[]
@@ -424,21 +465,29 @@ export async function runSentinel(
           `normally. This is the designed graceful-degradation path ` +
           `(PDF §9.5.4 retry visibility + §11.3 contingency plan).`,
       })
-    } else if (/429|rate limit|too many requests/i.test(lastError)) {
-      // 429 from both primary + fallback, but circuit didn't open (e.g.
-      // MAX_RETRIES=1 → only 2 failures per model, threshold 3 not reached
-      // within a single model's attempts, though the shared counter may
-      // accumulate across the fallback). Treat as degraded regardless.
+    } else if (isLlmUnreachableError(lastError)) {
+      // LLM provider is UNREACHABLE but NOT a bug in our code — this covers:
+      //   • 429 rate-limit (Groq free-tier per-minute throttle)
+      //   • 401/403 auth or geo-block (Groq key geo-blocked from some regions;
+      //     works from Vercel US datacenter — verified)
+      //   • 5xx server error from the LLM gateway
+      //   • network / fetch / ECONN / timeout reaching the LLM endpoint
+      // In ALL these cases the LLM is externally unreachable, the orchestrator
+      // did partial work (0..N reasoning steps), and the post-loop fallback
+      // post-mortem below will still write the compounding artefact. This is
+      // DEGRADED, not FAILED — the dashboard must not show a scary red
+      // "failed" every time the LLM is unreachable. (PDF §11.3 contingency
+      // plan + §9.5.4 graceful degradation.)
       wasCircuitOpen = true
+      const reason = describeLlmUnreachableReason(lastError)
       emit('observe', {
         reasoning:
-          `LLM provider returned a 429 rate-limit error. The agent ` +
-          `completed ${steps.length} reasoning step(s) before the throttle. ` +
-          `Both the primary and fallback models were rate-limited. Sentinel ` +
-          `will write a fallback post-mortem and mark this incident as ` +
-          `**degraded** (partial investigation). Wait ~60s for the Groq ` +
-          `per-minute rate-limit window to reset, then re-inject. This is ` +
-          `the designed graceful-degradation path (PDF §11.3 contingency plan).`,
+          `LLM provider is unreachable (${reason}). The agent completed ` +
+          `${steps.length} reasoning step(s) before the error. Sentinel will ` +
+          `write a fallback post-mortem and mark this incident as ` +
+          `**degraded** (partial investigation). The compounding context ` +
+          `graph is still enriched. This is the designed graceful-degradation ` +
+          `path (PDF §11.3 contingency plan).`,
       })
     } else {
       emit('error', { error: lastError })
@@ -515,12 +564,15 @@ export async function runSentinel(
   // 4. Resolve the incident.
   // Three terminal states:
   //   - 'resolved'  — the agent completed the closed loop (no error)
-  //   - 'degraded'  — the LLM was rate-limited (circuit open); the agent did
-  //                   partial work and a fallback post-mortem was written.
-  //                   This is NOT a failure — it's the designed graceful
-  //                   degradation path (PDF §11.3).
-  //   - 'failed'    — a real error (non-throttle). The agent could not
-  //                   complete the investigation.
+  //   - 'degraded'  — the LLM was UNREACHABLE (rate-limit / auth-geo-block /
+  //                   gateway 5xx / network); the agent did partial work and a
+  //                   fallback post-mortem was written. This is NOT a failure —
+  //                   it's the designed graceful-degradation path (PDF §11.3).
+  //                   The dashboard surfaces an amber 'degraded' chip, not a
+  //                   scary red 'failed'.
+  //   - 'failed'    — a real bug (non-LLM exception). The agent could not
+  //                   complete the investigation and no compounding artefact
+  //                   was written.
   const failed = Boolean(lastError) && !wasCircuitOpen
   const degraded = Boolean(lastError) && wasCircuitOpen
   const finalStatus: Incident['status'] = failed ? 'failed' : degraded ? 'degraded' : 'resolved'
@@ -533,7 +585,7 @@ export async function runSentinel(
   const resolutionSummary = failed
     ? `Incident failed: ${lastError}`
     : degraded
-      ? `Incident degraded (LLM rate-limited): ${lastError}`
+      ? `Incident degraded (LLM unreachable): ${lastError}`
       : `Incident resolved in ${steps.length} reasoning steps`
   await audit.record({
     incidentUrn,

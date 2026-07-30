@@ -98,10 +98,10 @@ jobs:
       DATABASE_URL: "file:./ci-demo.db"
       # Demo mode (seeded Prisma fixtures — no live DataHub needed).
       DATAHUB_MODE: "demo"
-      # Sandbox the GitHub + Slack connectors (writes to examples/sandbox/*.log).
+      # Dry-run the GitHub + Slack connectors (writes to examples/trace/*.log).
       SENTINEL_DRY_RUN: "true"
       # Real outbound LLM call via Groq (OpenAI-compatible, reachable from
-      # GitHub-hosted runners — unlike the z-ai sandbox gateway). Key comes
+      # GitHub-hosted runners — unlike the z-ai dev gateway). Key comes
       # from the repo's GROQ_API_KEY secret. Free-tier TPM is limited, so if
       # the run gets throttled mid-loop the circuit breaker still degrades
       # gracefully and the orchestrator's fallback post-mortem path runs
