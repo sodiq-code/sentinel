@@ -14,6 +14,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // Suppress the Next.js dev overlay (the "1 Issue" badge + DevTools button)
+  // — it competes with the mission-control aesthetic during demo recording.
+  devIndicators: false,
 };
 
 export default nextConfig;
