@@ -956,20 +956,34 @@ function Console() {
   const running = run.isPending || replayBusy;
   const totalTokens = result?.totalTokens;
 
-  // Derive the last live write-back title from the current run result so the
-  // DataHubHealthPanel's "Last write-back" field updates immediately after a
-  // run completes (instead of waiting for the /api/datahub/seed/overview refetch).
+  // Derive the last live write-back title from the current run result OR the
+  // viewed incident, so the DataHubHealthPanel's "Last write-back" field updates
+  // immediately after a run completes AND when viewing a past incident.
   const lastLiveWritebackTitle = useMemo(() => {
-    if (!result?.steps) return null;
-    const writeBacks = result.steps.filter(
-      (s) => s.kind === "write_back" || s.toolName === "ack.save_document",
-    );
-    if (writeBacks.length === 0) return null;
-    const last = writeBacks[writeBacks.length - 1];
-    const tr = (last.toolResult ?? {}) as Record<string, unknown>;
-    const args = (last.toolArgs ?? {}) as Record<string, unknown>;
-    return (args.title as string) ?? (tr.path as string) ?? "Post-mortem written to DataHub";
-  }, [result]);
+    // 1. Live run result
+    if (result?.steps) {
+      const writeBacks = result.steps.filter(
+        (s) => s.kind === "write_back" || s.toolName === "ack.save_document",
+      );
+      if (writeBacks.length > 0) {
+        const last = writeBacks[writeBacks.length - 1];
+        const tr = (last.toolResult ?? {}) as Record<string, unknown>;
+        const args = (last.toolArgs ?? {}) as Record<string, unknown>;
+        return (args.title as string) ?? (tr.path as string) ?? "Post-mortem written to DataHub";
+      }
+    }
+    // 2. Viewed incident's persisted write-backs
+    if (viewedIncident?.writebacks && viewedIncident.writebacks.length > 0) {
+      const last = viewedIncident.writebacks[viewedIncident.writebacks.length - 1];
+      try {
+        const data = typeof last.dataJson === "string" ? JSON.parse(last.dataJson) : null;
+        return data?.title ?? "Post-mortem written to DataHub";
+      } catch {
+        return "Post-mortem written to DataHub";
+      }
+    }
+    return null;
+  }, [result, viewedIncident]);
 
   // Demo Mode auto-cycling — when enabled, automatically injects the first
   // signal every 60 seconds. After each run completes, waits 10s then clears
