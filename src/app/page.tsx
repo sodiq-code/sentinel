@@ -4636,62 +4636,69 @@ function AuditLogDrawer({
 
   const drawerEvents = events.length > 0 ? events : (liveQuery.data ?? []);
   const loading = events.length === 0 && liveQuery.isLoading;
+  // Escape-to-close (the drawer uses a custom overlay, not Radix Dialog).
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+    <>
+      {/* Overlay — uses the same sentinel-drawer-overlay CSS class as the
+          SettingsDrawer (position: fixed via globals.css, proven to work
+          where Tailwind's `fixed` utility breaks on framer-motion elements). */}
+      <div className="sentinel-drawer-overlay" onClick={onClose} aria-hidden />
+      {/* Panel — uses sentinel-drawer-panel (position: fixed in globals.css)
+          so the drawer pins to top-right like the Config panel, not at the
+          bottom of the page. The CSS class also provides the slide-in
+          animation, so no framer-motion motion.aside is needed. */}
+      <aside className="sentinel-drawer-panel" role="dialog" aria-label="Audit log drawer">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+          <div className="flex items-center gap-2">
+            <History className="h-4 w-4 text-emerald-400" />
+            <h2 className="text-sm font-semibold text-slate-200">Audit log drawer</h2>
+            <span className="text-[10px] font-mono text-slate-500">({drawerEvents.length})</span>
+            {activeUrn && (
+              <span className="ml-1 text-[10px] font-mono text-slate-600 truncate max-w-[180px]" title={activeUrn}>
+                {activeUrn.replace("urn:li:incident:sentinel:", "…")}
+              </span>
+            )}
+          </div>
+          <button
             onClick={onClose}
-            className="fixed inset-0 z-40 bg-slate-950/60 backdrop-blur-sm"
-          />
-          <motion.aside
-            initial={{ x: "100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "100%" }}
-            transition={{ type: "spring", damping: 26, stiffness: 240 }}
-            className="fixed top-0 right-0 z-50 h-full w-full sm:w-[420px] bg-slate-950 border-l border-slate-800 shadow-2xl flex flex-col"
+            className="text-slate-500 hover:text-slate-200 transition-colors"
+            title="Close drawer"
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <History className="h-4 w-4 text-emerald-400" />
-                <h2 className="text-sm font-semibold text-slate-200">Audit log drawer</h2>
-                <span className="text-[10px] font-mono text-slate-500">({drawerEvents.length})</span>
-                {activeUrn && (
-                  <span className="ml-1 text-[10px] font-mono text-slate-600 truncate max-w-[180px]" title={activeUrn}>
-                    {activeUrn.replace("urn:li:incident:sentinel:", "…")}
-                  </span>
-                )}
-              </div>
-              <button
-                onClick={onClose}
-                className="text-slate-500 hover:text-slate-200 transition-colors"
-                title="Close drawer"
-              >
-                <PanelRightClose className="h-4 w-4" />
-              </button>
+            <PanelRightClose className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="sentinel-drawer-body">
+          {loading ? (
+            <div className="text-center py-10 px-4 text-sm text-slate-500">
+              <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin text-emerald-400/60" />
+              Loading audit log…
             </div>
-            <div className="flex-1 overflow-y-auto custom-scroll">
-              {loading ? (
-                <div className="text-center py-10 px-4 text-sm text-slate-500">
-                  <Loader2 className="h-8 w-8 mx-auto mb-2 animate-spin text-emerald-400/60" />
-                  Loading audit log…
-                </div>
-              ) : drawerEvents.length === 0 ? (
-                <div className="text-center py-10 px-4 text-sm text-slate-500">
-                  <History className="h-10 w-10 mx-auto mb-2 opacity-30" />
-                  No audit events yet. Inject a signal + run Sentinel to stream the full lifecycle.
-                </div>
-              ) : (
-                <AuditTimeline events={drawerEvents} incidentUrn={activeUrn ?? undefined} />
-              )}
+          ) : drawerEvents.length === 0 ? (
+            <div className="text-center py-10 px-4 text-sm text-slate-500">
+              <History className="h-10 w-10 mx-auto mb-2 opacity-30" />
+              No audit events yet. Inject a signal + run Sentinel to stream the full lifecycle.
             </div>
-          </motion.aside>
-        </>
-      )}
-    </AnimatePresence>
+          ) : (
+            <AuditTimeline events={drawerEvents} incidentUrn={activeUrn ?? undefined} />
+          )}
+        </div>
+      </aside>
+    </>
   );
 }
 
