@@ -710,11 +710,11 @@ function Console() {
           </span>
           <div className="ml-auto flex items-center gap-2 text-[11px]">
             <SystemClock />
-            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "llama-3.3-70b-versatile"} mono />
+            <Chip icon={Zap} label="LLM" value={result?.llmModel ?? "gemini-2.0-flash"} mono />
             <Chip
               icon={Database}
               label="Provider"
-              value={result?.actualProvider ?? result?.llmProvider ?? "groq"}
+              value={result?.actualProvider ?? result?.llmProvider ?? "gemini"}
               mono
             />
             {result?.failoverOccurred && result.actualProvider && result.llmProvider && result.actualProvider !== result.llmProvider && (
@@ -744,7 +744,7 @@ function Console() {
 
       <main className="max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 flex-1 pb-28">
         {/* Hero */}
-        <section className="mb-6">
+        <section className="mb-6 rounded-xl p-5 sentinel-hero-gradient">
           <div className="flex items-center gap-2 mb-3">
             <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-0.5 text-[10px] font-mono uppercase tracking-[0.15em] text-emerald-300">
               <Sparkles className="h-3 w-3" /> ReAct · Governed · Audited
@@ -774,6 +774,14 @@ function Console() {
           elapsed={elapsed}
         />
 
+        {/* Incident status bar — progress stages */}
+        <IncidentStatusBar
+          result={result}
+          viewedIncident={viewedIncident}
+          running={running}
+          elapsed={elapsed}
+        />
+
         {/* Compounding-context banner — surfaces when the agent re-runs the
             same scenario and reads its own prior post-mortem. */}
         {(replayRun !== 0 || priorPostMortem || priorPostMortemFromTrace) && (
@@ -784,7 +792,7 @@ function Console() {
           >
             <div className="flex items-start gap-3">
               <div className="mt-0.5 h-8 w-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center shrink-0">
-                <RotateCw className={`h-4 w-4 text-amber-300 ${replayBusy ? "animate-spin" : ""}`} />
+                <RotateCw className={`h-4 w-4 text-amber-300 ${replayBusy ? "animate-spin" : ""} ${replayBusy ? "sentinel-replay-glow" : ""}`} />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-semibold text-amber-200">
@@ -873,6 +881,7 @@ function Console() {
               onView={viewIncident}
               onRefresh={() => queryClient.invalidateQueries({ queryKey: ["agent-incidents"] })}
             />
+            <WritebacksPanel writebacks={viewedIncident?.writebacks ?? []} />
           </div>
         </div>
       </main>
@@ -1054,7 +1063,7 @@ function SignalInjector({
           type="button"
           disabled={!selectedId || running || (circuitOpen && !failoverEnabled)}
           onClick={onRun}
-          className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 transition-all"
+          className={`inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-emerald-900/30 hover:bg-emerald-500 hover:-translate-y-px disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:translate-y-0 transition-all ${!running && selectedId && !circuitOpen ? "sentinel-inject-glow" : ""}`}
         >
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
           {running ? "Investigating…" : circuitOpen && !failoverEnabled ? "Circuit cooling down…" : "Inject & run Sentinel"}
@@ -1122,9 +1131,9 @@ function ReasoningStream({
       <div className="max-h-[640px] overflow-y-auto p-4 space-y-3 custom-scroll">
         {empty && (
           <div className="text-center py-10 text-slate-500">
-            <BrainCircuit className="h-10 w-10 mx-auto mb-3 opacity-40" />
+            <BrainCircuit className="h-10 w-10 mx-auto mb-3 opacity-40 sentinel-empty-pulse" />
             <p className="text-sm">No reasoning yet.</p>
-            <p className="text-xs mt-1">Inject a signal to watch Sentinel&apos;s ReAct loop.</p>
+            <p className="text-xs mt-1 text-slate-500/80">Select a signal above and inject it to watch Sentinel&apos;s ReAct loop investigate in real time.</p>
           </div>
         )}
         {running && steps.length === 0 && (
@@ -1135,7 +1144,7 @@ function ReasoningStream({
         )}
         <AnimatePresence initial={false}>
           {steps.slice(0, revealed).map((step, i) => (
-            <StepCard key={`${step.ts}-${i}`} step={step} index={i} />
+            <StepCard key={`${step.ts}-${i}`} step={step} index={i} isLast={i === revealed - 1} />
           ))}
         </AnimatePresence>
         {revealed < steps.length && !running && (
@@ -1157,10 +1166,18 @@ function ReasoningStream({
   );
 }
 
-function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
+function StepCard({ step, index, isLast }: { step: ReasoningStep; index: number; isLast?: boolean }) {
   const meta = STEP_META[step.kind] ?? STEP_META.tool_result;
   const Icon = meta.icon;
   const [expanded, setExpanded] = useState(false);
+  const stepRef = useRef<HTMLDivElement>(null);
+
+  // Smooth scroll-into-view when this is the last step and it appears
+  useEffect(() => {
+    if (isLast && stepRef.current) {
+      stepRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [isLast]);
   const isWrite = step.toolName?.startsWith("ack.") || step.toolName?.startsWith("action.");
   const isGuardrail = step.toolResult && typeof step.toolResult === "object" && (step.toolResult as Record<string, unknown>)?.guardrail === true;
   const resultJson = step.toolResult ? JSON.stringify(step.toolResult, null, 2) : "";
@@ -1181,6 +1198,7 @@ function StepCard({ step, index }: { step: ReasoningStep; index: number }) {
 
   return (
     <motion.div
+      ref={stepRef}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
@@ -2274,6 +2292,319 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
       <span className="text-slate-500">Circuit</span>
       <span className="text-emerald-300">Healthy</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// WritebacksPanel — detailed write-back cards for the right column
+// Shows each write-back's kind, status, URN, and a data preview specific
+// to the kind (post-mortem title/content, glossary/ownership proposals,
+// assertion SLA details). Each card has a "direct write" or "proposal" badge.
+// ---------------------------------------------------------------------------
+
+function WritebacksPanel({
+  writebacks,
+}: {
+  writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string; ts: string }>;
+}) {
+  if (writebacks.length === 0) return null;
+
+  const succeeded = writebacks.filter((w) => w.status === "succeeded").length;
+  const failed = writebacks.filter((w) => w.status === "failed").length;
+
+  return (
+    <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+        <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+          <FileText className="h-4 w-4 text-rose-400" /> Write-backs detail
+          <span className="text-slate-500 font-normal">({writebacks.length})</span>
+        </h2>
+        <div className="flex items-center gap-1.5 text-[10px] font-mono">
+          {succeeded > 0 && <span className="text-emerald-400">{succeeded} ok</span>}
+          {failed > 0 && <span className="text-rose-400">{failed} failed</span>}
+        </div>
+      </div>
+      <div className="max-h-72 overflow-y-auto custom-scroll p-2 space-y-2">
+        {writebacks.map((w) => (
+          <WritebackDetailCard key={w.id} writeback={w} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WritebackDetailCard({
+  writeback,
+}: {
+  writeback: { id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string; ts: string };
+}) {
+  const data = safeParse(writeback.dataJson);
+  const isAssertion = writeback.kind === "assertion" || writeback.kind === "ack.create_assertion";
+  const badge = isAssertion ? "direct write" : "proposal";
+  const badgeColor = isAssertion
+    ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/40"
+    : "bg-amber-500/15 text-amber-300 border-amber-500/40";
+  const badgeIcon = isAssertion ? Zap : GitBranch;
+  const succeeded = writeback.status === "succeeded";
+  const failed = writeback.status === "failed";
+  const BadgeIcon = badgeIcon;
+
+  // Extract data previews based on kind
+  const title = data?.title ? String(data.title) : "";
+  const content = data?.content ? String(data.content) : "";
+  const contentPreview = content.length > 120 ? content.slice(0, 120) + "…" : content;
+  // Glossary / ownership proposals
+  const terms = Array.isArray(data?.terms) ? data.terms as Array<Record<string, unknown>> : [];
+  const owners = Array.isArray(data?.owners) ? data.owners as Array<Record<string, unknown>> : [];
+  // Assertion SLA details
+  const assertionType = data?.assertionType ? String(data.assertionType) : "";
+  const slaThreshold = data?.threshold ?? data?.slaThreshold ?? null;
+  const detectionMethod = data?.detectionMethod ? String(data.detectionMethod) : "";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className={`rounded-lg border p-3 ${
+        failed
+          ? "border-rose-500/40 bg-rose-500/5"
+          : succeeded
+            ? "border-emerald-500/20 bg-emerald-500/5"
+            : "border-slate-800 bg-slate-900/40"
+      }`}
+    >
+      {/* Header row: kind + badge + status */}
+      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400">{writeback.kind}</span>
+        <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${badgeColor}`}>
+          <BadgeIcon className="h-2.5 w-2.5" />
+          {badge}
+        </span>
+        <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-wider ${
+          succeeded
+            ? "bg-emerald-500/15 text-emerald-300"
+            : "bg-rose-500/15 text-rose-300"
+        }`}>
+          {succeeded ? <CheckCircle2 className="h-2.5 w-2.5" /> : <XCircle className="h-2.5 w-2.5" />}
+          {writeback.status}
+        </span>
+        <span className="ml-auto text-[10px] text-slate-600 font-mono">
+          {new Date(writeback.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}
+        </span>
+      </div>
+
+      {/* Data preview — kind-specific */}
+      {/* Post-mortem: title + content preview */}
+      {(writeback.kind === "post-mortem" || writeback.kind === "ack.save_document") && title && (
+        <div className="mb-1.5">
+          <div className="text-xs font-semibold text-slate-200 truncate" title={title}>{title}</div>
+          {contentPreview && (
+            <div className="text-[11px] text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">{contentPreview}</div>
+          )}
+        </div>
+      )}
+
+      {/* Glossary proposals */}
+      {terms.length > 0 && (
+        <div className="mb-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-1">Proposed terms</div>
+          <div className="flex flex-wrap gap-1">
+            {terms.slice(0, 5).map((t, i) => (
+              <span key={i} className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-200">
+                <BookOpen className="h-2.5 w-2.5" />
+                {String(t.name ?? t.urn ?? `term-${i}`)}
+              </span>
+            ))}
+            {terms.length > 5 && <span className="text-[10px] text-slate-500">+{terms.length - 5} more</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Ownership proposals */}
+      {owners.length > 0 && (
+        <div className="mb-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-amber-300 mb-1">Proposed owners</div>
+          <div className="flex flex-wrap gap-1">
+            {owners.slice(0, 5).map((o, i) => (
+              <span key={i} className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-200">
+                <User className="h-2.5 w-2.5" />
+                {String(o.ownerUrn ?? o.name ?? `owner-${i}`)}
+              </span>
+            ))}
+            {owners.length > 5 && <span className="text-[10px] text-slate-500">+{owners.length - 5} more</span>}
+          </div>
+        </div>
+      )}
+
+      {/* Assertion SLA details */}
+      {isAssertion && (assertionType || slaThreshold || detectionMethod) && (
+        <div className="mb-1.5">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-emerald-300 mb-1">SLA details</div>
+          <div className="flex flex-wrap gap-1.5 text-[10px] font-mono">
+            {assertionType && (
+              <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200">
+                type: {assertionType}
+              </span>
+            )}
+            {slaThreshold !== null && slaThreshold !== undefined && (
+              <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-200">
+                threshold: {String(slaThreshold)}
+              </span>
+            )}
+            {detectionMethod && (
+              <span className="rounded border border-slate-700 bg-slate-900/60 px-1.5 py-0.5 text-slate-400">
+                method: {detectionMethod}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* DataHub URN */}
+      {writeback.datahubUrn && (
+        <div className="text-[10px] text-slate-400 font-mono truncate mt-1" title={writeback.datahubUrn}>
+          {writeback.datahubUrn}
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// IncidentStatusBar — horizontal progress bar showing resolution stages
+// SIGNAL → TRIAGE → ACTIONS → WRITE-BACKS → RESOLVED
+// Each stage fills in as the agent progresses. Current stage pulses.
+// ---------------------------------------------------------------------------
+
+type StageKey = "signal" | "triage" | "actions" | "writebacks" | "resolved";
+
+const STAGES: { key: StageKey; label: string; icon: typeof Radar }[] = [
+  { key: "signal", label: "SIGNAL", icon: Radar },
+  { key: "triage", label: "TRIAGE", icon: BrainCircuit },
+  { key: "actions", label: "ACTIONS", icon: Send },
+  { key: "writebacks", label: "WRITE-BACKS", icon: FileText },
+  { key: "resolved", label: "RESOLVED", icon: CheckCircle2 },
+];
+
+function IncidentStatusBar({
+  result,
+  viewedIncident,
+  running,
+  elapsed,
+}: {
+  result: RunResult | null;
+  viewedIncident: HydratedIncident | null;
+  running: boolean;
+  elapsed: number;
+}) {
+  // Determine which stages are completed and which is current
+  const currentStage = useMemo((): StageKey | null => {
+    const steps = viewedIncident?.incident.reasoningSteps ?? result?.steps ?? [];
+    const hasWritebacks = (viewedIncident?.writebacks?.length ?? 0) > 0;
+    const hasActions = (viewedIncident?.actions?.length ?? 0) > 0;
+    const isResolved = viewedIncident?.incident?.status === "resolved" || result?.incident?.status === "resolved";
+    const isFailed = viewedIncident?.incident?.status === "failed" || result?.incident?.status === "failed";
+
+    if (isResolved || isFailed) return "resolved";
+    if (hasWritebacks) return "writebacks";
+    if (hasActions) return "actions";
+    if (steps.length > 0) return "triage";
+    if (running || result || viewedIncident) return "signal";
+    return null;
+  }, [result, viewedIncident, running]);
+
+  const completedStages = useMemo((): Set<StageKey> => {
+    const set = new Set<StageKey>();
+    if (!currentStage) return set;
+    const order: StageKey[] = ["signal", "triage", "actions", "writebacks", "resolved"];
+    const idx = order.indexOf(currentStage);
+    for (let i = 0; i <= idx; i++) set.add(order[i]);
+    return set;
+  }, [currentStage]);
+
+  // Don't render if there's nothing to show
+  if (!result && !viewedIncident && !running) return null;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 premium-card"
+    >
+      <div className="flex items-center justify-between mb-2.5">
+        <h3 className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+          <Activity className="h-3.5 w-3.5 text-emerald-400" /> Incident progress
+        </h3>
+        {running && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-emerald-300">
+            <Loader2 className="h-3 w-3 animate-spin" /> {elapsed.toFixed(1)}s
+          </span>
+        )}
+        {!running && (result?.incident?.status === "resolved" || viewedIncident?.incident?.status === "resolved") && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-emerald-300">
+            <CheckCircle2 className="h-3 w-3" /> resolved
+          </span>
+        )}
+        {!running && (result?.incident?.status === "failed" || viewedIncident?.incident?.status === "failed") && (
+          <span className="inline-flex items-center gap-1.5 text-[10px] font-mono text-rose-300">
+            <XCircle className="h-3 w-3" /> failed
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-0">
+        {STAGES.map((stage, i) => {
+          const isCompleted = completedStages.has(stage.key);
+          const isCurrent = currentStage === stage.key;
+          const isPending = !isCompleted && !isCurrent;
+          const isLast = i === STAGES.length - 1;
+          const Icon = stage.icon;
+
+          return (
+            <div key={stage.key} className="flex items-center flex-1">
+              {/* Stage dot + label */}
+              <div className="flex flex-col items-center gap-1.5">
+                <div className={`flex items-center justify-center h-7 w-7 rounded-full border-2 transition-all ${
+                  isCompleted
+                    ? "border-emerald-500 bg-emerald-500/20"
+                    : isCurrent
+                      ? "border-amber-500 bg-amber-500/20 sentinel-stage-pulse"
+                      : "border-slate-700 bg-slate-900/40"
+                }`}>
+                  <Icon className={`h-3.5 w-3.5 ${
+                    isCompleted
+                      ? "text-emerald-300"
+                      : isCurrent
+                        ? "text-amber-300"
+                        : "text-slate-600"
+                  }`} />
+                </div>
+                <span className={`text-[9px] font-mono uppercase tracking-wider whitespace-nowrap ${
+                  isCompleted
+                    ? "text-emerald-300"
+                    : isCurrent
+                      ? "text-amber-300"
+                      : "text-slate-600"
+                }`}>
+                  {stage.label}
+                </span>
+              </div>
+              {/* Connector line */}
+              {!isLast && (
+                <div className={`flex-1 h-0.5 mx-1 rounded-full transition-all ${
+                  isCompleted && completedStages.has(STAGES[i + 1].key)
+                    ? "bg-emerald-500/60"
+                    : isCompleted
+                      ? "bg-gradient-to-r from-emerald-500/60 to-slate-700"
+                      : "bg-slate-800"
+                }`} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </motion.div>
   );
 }
 

@@ -329,3 +329,64 @@
   color: rgb(148 163 184);
   box-shadow: inset 0 -1px 0 rgb(30 41 59 / 0.7);
 }
+
+/* Hero section animated gradient background — subtle emerald/amber sweep */
+@keyframes sentinel-hero-gradient {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.sentinel-hero-gradient {
+  background: linear-gradient(
+    135deg,
+    rgb(16 185 129 / 0.06) 0%,
+    rgb(15 23 42 / 0) 25%,
+    rgb(245 158 11 / 0.04) 50%,
+    rgb(15 23 42 / 0) 75%,
+    rgb(16 185 129 / 0.06) 100%
+  );
+  background-size: 300% 300%;
+  animation: sentinel-hero-gradient 12s ease-in-out infinite;
+}
+
+/* RotateCw icon glow when replay loop is active */
+@keyframes sentinel-replay-glow {
+  0%, 100% { filter: drop-shadow(0 0 3px rgb(245 158 11 / 0.4)); }
+  50% { filter: drop-shadow(0 0 8px rgb(245 158 11 / 0.7)); }
+}
+.sentinel-replay-glow {
+  animation: sentinel-replay-glow 1.6s ease-in-out infinite;
+}
+
+/* Inject button glow when idle (not running) */
+@keyframes sentinel-inject-glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(16 185 129 / 0.35), 0 12px 28px -14px rgb(16 185 129 / 0.22); }
+  50% { box-shadow: 0 0 12px 2px rgb(16 185 129 / 0.25), 0 12px 28px -14px rgb(16 185 129 / 0.22); }
+}
+.sentinel-inject-glow {
+  animation: sentinel-inject-glow 2.4s ease-in-out infinite;
+}
+
+/* Reasoning stream empty state — pulsing placeholder */
+@keyframes sentinel-empty-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.04); }
+}
+.sentinel-empty-pulse {
+  animation: sentinel-empty-pulse 2.8s ease-in-out infinite;
+}
+
+/* Smooth scroll-into-view for new reasoning steps */
+@keyframes sentinel-step-appear {
+  0% { opacity: 0; transform: translateY(12px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Status bar stage pulse — amber dot for current stage */
+@keyframes sentinel-stage-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(245 158 11 / 0.5); }
+  50% { box-shadow: 0 0 0 6px rgb(245 158 11 / 0); }
+}
+.sentinel-stage-pulse {
+  animation: sentinel-stage-pulse 1.8s ease-out infinite;
+}
