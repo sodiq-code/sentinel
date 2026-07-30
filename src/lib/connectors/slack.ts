@@ -16,7 +16,7 @@
 // UI as part of <ActionsPanel>.
 // =============================================================================
 
-import { appendTraceLog, isDryRun, requireEnv } from './_trace'
+import { appendTraceLog, isDryRun, isDryRunSync, requireEnv } from './_trace'
 
 const SLACK_API = 'https://slack.com/api'
 
@@ -55,7 +55,9 @@ export function defaultChannel(): string {
 }
 
 export function isSlackDryRun(): boolean {
-  return isDryRun()
+  // Sync variant — returns the cached effective value (or env default).
+  // Use the async isDryRun() for code paths that can await.
+  return isDryRunSync()
 }
 
 // ---------------------------------------------------------------------------
@@ -94,7 +96,7 @@ export async function postTriage(input: SlackTriageInput): Promise<SlackPostResu
   const blocks = renderTriageBlocks(input)
   const text = `${input.title}\n${input.bullets.map((b) => `• ${b}`).join('\n')}`
 
-  if (isDryRun()) {
+  if (await isDryRun()) {
     const traceRec = {
       kind: 'slack.postMessage',
       channel,
@@ -160,7 +162,7 @@ export async function slackStatus(): Promise<{
   error?: string
 }> {
   const channel = defaultChannel()
-  if (isDryRun()) {
+  if (await isDryRun()) {
     return {
       mode: 'trace',
       channel,

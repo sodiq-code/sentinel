@@ -18,6 +18,7 @@ import {
   DollarSign,
   Download,
   Eye,
+  ExternalLink,
   FileText,
   GitBranch,
   Github,
@@ -30,6 +31,7 @@ import {
   LayoutDashboard,
   Loader2,
   Lock,
+  MessageSquare,
   PanelRightClose,
   PanelRightOpen,
   PlayCircle,
@@ -150,6 +152,8 @@ interface HydratedIncident {
 
 interface ConnectorStatus {
   dryRun: boolean;
+  /** True when the UI toggle (DB Setting) is the active source of the dryRun flag. */
+  dryRunOverridden?: boolean;
   github: {
     mode: "live" | "trace";
     repo: string;
@@ -1508,6 +1512,24 @@ function Console() {
         running={running}
         replayRun={replayRun}
         onReplayLoop={runReplayLoop}
+        onToggleDryRun={async (next) => {
+          try {
+            const r = await fetch("/api/settings", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ dryRun: next }),
+            });
+            const j = await r.json();
+            if (!r.ok) throw new Error(j.error ?? "Toggle failed");
+            queryClient.invalidateQueries({ queryKey: ["connectors-status"] });
+            addToast(next ? "DRY-RUN mode on — GitHub + Slack gated to trace log" : "LIVE mode on — GitHub + Slack fire for real", next ? "info" : "success");
+            return j;
+          } catch (err) {
+            setRunError((err as Error).message);
+            addToast("Failed to toggle DRY-RUN", "error");
+            return null;
+          }
+        }}
         onTestConnectors={async (dryRun) => {
           try {
             const r = await fetch("/api/connectors/test", {
@@ -3058,9 +3080,14 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
       </div>
       <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">
         {status.dryRun
-          ? "Safe-by-default: the full ReAct loop, lineage traversal, guardrail enforcement, and DataHub post-mortem write-backs all run for real — only the human-facing GitHub + Slack notifications are gated to a local trace log. Flip to LIVE to file real issues + posts."
+          ? "Safe-by-default: the full ReAct loop, lineage traversal, guardrail enforcement, and DataHub post-mortem write-backs all run for real — only the human-facing GitHub + Slack notifications are gated to a local trace log. Use the DRY-RUN toggle in the bottom bar to switch to LIVE."
           : "LIVE mode: each Sentinel run opens a real GitHub issue + posts a real Slack message. Use sparingly."}
       </div>
+      {status.dryRunOverridden && (
+        <div className="mt-1.5 text-[9px] text-slate-600 font-mono">
+          (UI toggle override active — env default is {process.env.NODE_ENV === "production" ? "production" : "local"})
+        </div>
+      )}
       <ConnectorQuickActions githubRepo={status.github.repo} slackChannel={status.slack.channel} />
     </section>
   );
@@ -3524,27 +3551,83 @@ function DemoControlBar({
   replayRun,
   onReplayLoop,
   onTestConnectors,
+  onToggleDryRun,
 }: {
   status: ConnectorStatus | null;
   running: boolean;
   replayRun: 0 | 1 | 2;
   onReplayLoop: () => void;
   onTestConnectors: (dryRun: boolean) => Promise<unknown>;
+  onToggleDryRun: (next: boolean) => Promise<unknown>;
 }) {
   const [testing, setTesting] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const dryRun = status?.dryRun ?? true;
   const replayActive = replayRun !== 0;
+  // Connector "mode" derived from dryRun + token presence. When DRY-RUN is off
+  // AND the tokens are present, the connectors are LIVE.
+  const ghLive = !dryRun && status?.github?.tokenPresent;
+  const slLive = !dryRun && status?.slack?.tokenPresent;
+  const connectorsLive = ghLive || slLive;
+
+  async function handleToggle() {
+    setToggling(true);
+    try {
+      await onToggleDryRun(!dryRun);
+    } finally {
+      setToggling(false);
+    }
+  }
+
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[backdrop-filter]:bg-slate-950/80">
       <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-2.5 flex flex-wrap items-center gap-3 text-xs">
         <span className="text-[11px] text-slate-500 font-mono">controls:</span>
-        <div className="inline-flex items-center gap-2 rounded-md border border-slate-800 bg-slate-900/60 px-2.5 py-1">
-          <span className={`h-2 w-2 rounded-full ${dryRun ? "bg-amber-400" : "bg-emerald-400"} animate-pulse`} />
-          <span className="text-slate-400">actions</span>
-          <span className={`font-mono ${dryRun ? "text-amber-300" : "text-emerald-300"}`}>
+        {/* DRY-RUN / LIVE toggle — prominent switch */}
+        <button
+          onClick={handleToggle}
+          disabled={toggling || running}
+          title={dryRun
+            ? "DRY-RUN is ON: GitHub + Slack write to a local trace log. Click to switch to LIVE mode (real artifacts)."
+            : "LIVE mode is ON: every Inject & run opens real GitHub issues + posts real Slack messages. Click to switch back to DRY-RUN."}
+          className={`group inline-flex items-center gap-2 rounded-md border px-2.5 py-1 transition-colors disabled:opacity-50 ${
+            dryRun
+              ? "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20"
+              : "border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20"
+          }`}
+        >
+          {toggling ? (
+            <Loader2 className="h-3 w-3 animate-spin text-slate-400" />
+          ) : (
+            <span className={`relative inline-flex h-3.5 w-6 items-center rounded-full transition-colors ${dryRun ? "bg-amber-500/40" : "bg-emerald-500/60"}`}>
+              <span className={`inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow transition-transform ${dryRun ? "translate-x-0.5" : "translate-x-3"}`} />
+            </span>
+          )}
+          <span className={`font-mono text-[11px] ${dryRun ? "text-amber-300" : "text-emerald-300"}`}>
             {dryRun ? "DRY-RUN" : "LIVE"}
           </span>
-          <span className="text-slate-600 text-[10px]">(SENTINEL_DRY_RUN={dryRun ? "true" : "false"})</span>
+          <span className="text-slate-600 text-[9px] hidden sm:inline">
+            {dryRun ? "(trace log)" : "(real artifacts)"}
+          </span>
+        </button>
+        {/* Connector mode chips — show whether GitHub + Slack are live or trace */}
+        <div className="inline-flex items-center gap-1.5">
+          <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-mono ${
+            ghLive
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+              : "border-slate-700 bg-slate-900/60 text-slate-400"
+          }`} title={status?.github?.error ?? (ghLive ? "GitHub: live" : "GitHub: trace / no token")}>
+            <Github className="h-2.5 w-2.5" />
+            {ghLive ? "GH live" : "GH trace"}
+          </span>
+          <span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[9px] font-mono ${
+            slLive
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300"
+              : "border-slate-700 bg-slate-900/60 text-slate-400"
+          }`} title={status?.slack?.error ?? (slLive ? "Slack: live" : "Slack: trace / no token")}>
+            <MessageSquare className="h-2.5 w-2.5" />
+            {slLive ? "Slack live" : "Slack trace"}
+          </span>
         </div>
         <button
           onClick={onReplayLoop}
@@ -3556,18 +3639,25 @@ function DemoControlBar({
           {replayActive ? `re-run · run ${replayRun} of 2` : "re-run with compounding context"}
         </button>
         <button
-          onClick={() => onTestConnectors(dryRun)}
+          onClick={async () => {
+            setTesting(true);
+            try {
+              await onTestConnectors(dryRun);
+            } finally {
+              setTesting(false);
+            }
+          }}
           disabled={testing || running}
           className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-slate-800/60 px-2.5 py-1 text-slate-300 hover:bg-slate-700/60 disabled:opacity-40 transition-colors"
-          title="Open a test GitHub issue + post a test Slack card (uses the current mode)"
+          title={`Open a test GitHub issue + post a test Slack card in ${dryRun ? "DRY-RUN (trace)" : "LIVE"} mode`}
         >
           {testing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
           test connectors
         </button>
-        <span className="ml-auto text-[10px] text-slate-600 hidden sm:inline">
+        <span className="ml-auto text-[10px] text-slate-600 hidden sm:inline max-w-md truncate">
           {dryRun
-            ? "Safe-by-default · reasoning, lineage, guardrails & DataHub write-backs run for real; GitHub + Slack are trace-gated. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real artifacts."
-            : "LIVE mode: every Inject & run files real artifacts in your connected GitHub + Slack."}
+            ? "Safe-by-default · reasoning, lineage, guardrails & DataHub write-backs run for real; GitHub + Slack are trace-gated. Toggle to LIVE for real artifacts."
+            : `LIVE mode: every Inject & run files real artifacts. GitHub: ${status?.github?.repo ?? "—"} · Slack: ${status?.slack?.channel ?? "—"}.`}
         </span>
       </div>
     </div>
@@ -3997,16 +4087,158 @@ function WritebackDetailCard({
         </div>
       )}
 
-      {/* DataHub URN — prominent, with explicit "URN:" label + copy button */}
+      {/* DataHub URN — prominent, with explicit "URN:" label + copy button + View link */}
       {writeback.datahubUrn && (
         <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono rounded border border-slate-700/50 bg-slate-900/40 px-2 py-1">
           <span className="text-slate-500 shrink-0 uppercase tracking-wider">URN:</span>
           <div className="flex-1 min-w-0">
             <CopyableUrn value={writeback.datahubUrn} />
           </div>
+          <DataHubDocLink urn={writeback.datahubUrn} kind={writeback.kind} />
         </div>
       )}
     </motion.div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DataHubDocLink — "View in DataHub" button. Fetches the doc by URN and opens
+// a modal showing the title + rendered markdown content. In LIVE mode this
+// would deep-link to the DataHub UI; in DEMO mode it fetches from the seed.
+// ---------------------------------------------------------------------------
+function DataHubDocLink({ urn, kind }: { urn: string; kind: string }) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [doc, setDoc] = useState<{
+    found: boolean;
+    title?: string;
+    content?: string;
+    authorName?: string;
+    createdAt?: string;
+    assetUrn?: string;
+    sentinelPostMortem?: boolean;
+    mode?: string;
+    message?: string;
+  } | null>(null);
+  const isAssertion = kind === "assertion" || kind === "ack.create_assertion";
+  const label = isAssertion ? "View assertion" : "View post-mortem";
+
+  async function fetchDoc() {
+    setLoading(true);
+    setOpen(true);
+    try {
+      const res = await fetch(`/api/datahub/document/${encodeURIComponent(urn)}`);
+      const data = await res.json();
+      setDoc(data);
+    } catch (err) {
+      setDoc({ found: false, message: (err as Error).message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        onClick={fetchDoc}
+        title={`${label} in DataHub`}
+        className="inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-mono text-rose-200 hover:bg-rose-500/20 transition-colors shrink-0"
+      >
+        <ExternalLink className="h-2.5 w-2.5" />
+        {label}
+      </button>
+      {open && (
+        <div
+          className="sentinel-drawer-overlay fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setOpen(false)}
+        >
+          <div
+            className="sentinel-drawer-panel bg-slate-950 border border-slate-700 rounded-xl shadow-2xl max-w-2xl w-full max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
+              <div className="flex items-center gap-2 min-w-0">
+                <FileText className="h-4 w-4 text-rose-400 shrink-0" />
+                <span className="text-sm font-semibold text-slate-200 truncate">
+                  {isAssertion ? "DataHub SLA Assertion" : "DataHub Post-Mortem"}
+                </span>
+                <span className="text-[10px] font-mono text-slate-500 shrink-0">· {doc?.mode ?? "demo"} mode</span>
+              </div>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-slate-500 hover:text-slate-300 text-xl leading-none px-2"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto custom-scroll p-4">
+              {loading && (
+                <div className="flex items-center justify-center py-12 text-slate-400 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" /> Fetching from DataHub…
+                </div>
+              )}
+              {!loading && doc && !doc.found && (
+                <div className="text-center py-12">
+                  <FileText className="h-8 w-8 text-slate-600 mx-auto mb-3" />
+                  <div className="text-sm text-slate-400 mb-1">Document not found in the local DataHub seed.</div>
+                  <div className="text-[10px] font-mono text-slate-600 break-all">{urn}</div>
+                  {doc.message && <div className="text-[10px] text-slate-500 mt-2">{doc.message}</div>}
+                </div>
+              )}
+              {!loading && doc && doc.found && (
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Title</div>
+                    <div className="text-sm font-semibold text-slate-200">{doc.title}</div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-[11px]">
+                    {doc.authorName && (
+                      <div>
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Author</div>
+                        <div className="text-slate-300">{doc.authorName}</div>
+                      </div>
+                    )}
+                    {doc.createdAt && (
+                      <div>
+                        <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500">Created</div>
+                        <div className="text-slate-300">{new Date(doc.createdAt).toLocaleString()}</div>
+                      </div>
+                    )}
+                  </div>
+                  {doc.assetUrn && (
+                    <div>
+                      <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Attached to asset</div>
+                      <div className="text-[10px] font-mono text-slate-400 break-all">{doc.assetUrn}</div>
+                    </div>
+                  )}
+                  {doc.sentinelPostMortem && (
+                    <div className="inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-500/10 px-2 py-0.5 text-[10px] font-mono text-rose-200">
+                      <ShieldCheck className="h-2.5 w-2.5" /> Sentinel post-mortem
+                    </div>
+                  )}
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-slate-500 mb-1">Content</div>
+                    <pre className="whitespace-pre-wrap text-[11px] text-slate-300 font-mono leading-relaxed bg-slate-900/60 border border-slate-800 rounded p-3 max-h-72 overflow-y-auto custom-scroll">
+                      {doc.content}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </div>
+            {/* Footer — the URN + a copy of the DataHub base URL hint */}
+            <div className="px-4 py-2 border-t border-slate-800 flex items-center justify-between text-[10px] font-mono text-slate-500">
+              <span className="break-all">{urn}</span>
+              <span className="shrink-0 ml-2 text-slate-600">
+                {doc?.mode === "live" ? "DataHub" : "local DataHub seed (demo mode)"}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

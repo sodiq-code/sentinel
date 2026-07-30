@@ -215,6 +215,18 @@ model PendingApproval {
 }
 
 // ---------------------------------------------------------------------------
+// App settings — runtime-toggleable server-side settings (e.g. DRY-RUN).
+// Persisted in the DB so a UI toggle survives across requests + warm lambdas
+// (env vars are read-only on Vercel serverless; the DB is the writable store).
+// ---------------------------------------------------------------------------
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ---------------------------------------------------------------------------
 // Scaffolded scaffold models kept for compatibility — unused by Sentinel
 // (the original User/Post models from the Z.ai Next.js scaffold). Safe to
 // keep; not exercised by Sentinel code paths.

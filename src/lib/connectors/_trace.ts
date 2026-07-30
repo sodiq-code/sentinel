@@ -21,6 +21,7 @@
 import { promises as fs } from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { isDryRunEffective, isDryRunCached } from '@/lib/settings'
 
 export function requireEnv(name: string, who: string): string {
   const v = process.env[name]
@@ -33,8 +34,23 @@ export function requireEnv(name: string, who: string): string {
   return v.trim()
 }
 
-export function isDryRun(): boolean {
-  return (process.env.SENTINEL_DRY_RUN ?? 'true').toLowerCase() !== 'false'
+/**
+ * The effective DRY-RUN flag. Resolution order:
+ *   1. DB Setting row (UI toggle) — if set
+ *   2. process.env.SENTINEL_DRY_RUN — the deployment default
+ *   3. true (safe-by-default)
+ *
+ * The async variant is preferred for code paths that can await. The sync
+ * variant returns the cached value (or the env default if the cache is cold)
+ * and is only for code that cannot be made async.
+ */
+export async function isDryRun(): Promise<boolean> {
+  return isDryRunEffective()
+}
+
+/** Synchronous variant — see isDryRunEffective() docs. */
+export function isDryRunSync(): boolean {
+  return isDryRunCached()
 }
 
 // True on Vercel serverless (and any read-only-cwd environment). Vercel sets

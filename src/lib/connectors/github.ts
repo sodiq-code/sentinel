@@ -195,7 +195,7 @@ export async function openIssue(input: GitHubIssueInput): Promise<GitHubIssueRes
   const ts = new Date().toISOString()
   const labels = (input.labels || []).filter(Boolean)
 
-  if (isDryRun()) {
+  if (await isDryRun()) {
     const traceRec = {
       kind: 'github.openIssue',
       repo,
@@ -288,7 +288,7 @@ export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
   const branch = input.branch || 'sentinel/proposed-fix'
   const base = input.base || 'main'
 
-  if (isDryRun()) {
+  if (await isDryRun()) {
     const traceRec = {
       kind: 'github.openPR',
       repo,
@@ -387,7 +387,7 @@ export async function getRepoInfo(repo?: string): Promise<{
 
 export async function githubStatus(): Promise<GitHubConnectorStatus> {
   const repo = defaultRepo()
-  const dryRun = isDryRun()
+  const dryRun = await isDryRun()
   const tokenPresent = Boolean(getToken())
   if (dryRun) {
     return { mode: 'trace', repo, dryRun: true, tokenPresent, reachable: false }
