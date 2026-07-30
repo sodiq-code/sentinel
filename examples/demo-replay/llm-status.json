@@ -1,8 +1,9 @@
 {
-  "provider": "zai",
-  "model": "gpt-4o",
+  "provider": "gemini",
+  "model": "gemini-2.0-flash",
   "failoverEnabled": true,
-  "hasNvidiaKey": true,
+  "hasNvidiaKey": false,
+  "hasGroqKey": true,
   "circuit": {
     "isOpen": false,
     "consecutiveFailures": 0,

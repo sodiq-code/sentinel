@@ -42,7 +42,7 @@
 //             LLM_PROVIDER=zai and LLM_FALLBACK_PROVIDER=zai on any runtime
 //             where z-ai-web-dev-sdk is installed to use it as primary.
 //
-//   gemini  — Google Gemini 2.5 Flash (PRODUCTION primary). Free forever,
+//   gemini  — Google Gemini 2.0 Flash (PRODUCTION primary). Free forever,
 //             1M tokens-per-minute, 1M context window, best-in-class native
 //             function-calling. OpenAI-compatible endpoint at
 //             generativelanguage.googleapis.com/v1beta/openai. Solves the
@@ -938,13 +938,13 @@ class GroqLlmClient implements ResilientLlmClient {
 }
 
 // ===========================================================================
-// Provider: Google Gemini 2.5 Flash (OpenAI-compatible — PRODUCTION primary)
+// Provider: Google Gemini 2.0 Flash (OpenAI-compatible — PRODUCTION primary)
 //
 // Google's Gemini OpenAI compatibility layer exposes the same
 // chat/completions surface as Groq/NVIDIA, so this client reuses the exact
 // same resilience primitives (TokenBucket, CircuitBreaker, retry/backoff).
 //
-// Why Gemini 2.5 Flash is the best-by-far production provider for Sentinel:
+// Why Gemini 2.0 Flash is the best-by-far production provider for Sentinel:
 //   • Free forever — 1M tokens-per-minute, 1500 requests-per-day (no credit
 //     card, no time limit). Groq's free tier is 30 RPM / 6k TPM on the 8b
 //     fallback — the 7-8k token Sentinel system prompt exceeds it, so the

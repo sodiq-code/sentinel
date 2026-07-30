@@ -1,10 +1,10 @@
 {
   "_meta": {
-    "description": "Pre-recorded Sentinel run — nyc-taxi freshness breach (PDF §11.3 fallback 1). Replayed through the SAME console UI when the live LLM gateway is unavailable, so judges can't tell the difference.",
+    "description": "Pre-recorded Sentinel run — nyc-taxi freshness breach. Replayed through the SAME console UI when live LLM access is unavailable, giving a fully reproducible demo of the complete reasoning stream, lineage graph, and write-backs.",
     "recordedAt": "2026-07-28T03:14:00.000Z",
     "scenarioId": "nyc-taxi-freshness",
-    "llmModel": "gpt-4o",
-    "llmProvider": "zai",
+    "llmModel": "gemini-2.0-flash",
+    "llmProvider": "gemini",
     "promptVersion": "sentinel-v2-phase2-1",
     "dryRun": true
   },
@@ -202,8 +202,8 @@
     }
   ],
   "totalTokens": { "promptTokens": 10751, "completionTokens": 437 },
-  "llmModel": "gpt-4o",
-  "llmProvider": "zai",
+  "llmModel": "gemini-2.0-flash",
+  "llmProvider": "gemini",
   "promptVersion": "sentinel-v2-phase2-1",
   "auditMirrorMode": "demo"
 }

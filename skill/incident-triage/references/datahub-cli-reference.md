@@ -96,7 +96,7 @@ bun run demo:fixtures    # regenerate the dry-run + demo-replay JSON fixtures
 bun run dev              # start the incident console at http://localhost:3000
 ```
 
-The dry-run trace replays through the SAME incident console UI — judges can't tell the difference from a live run.
+The dry-run trace replays through the SAME incident console UI — a fully reproducible demo that renders the complete reasoning stream, lineage graph, and write-backs without a live LLM call.
 
 ---
 
@@ -116,4 +116,4 @@ See `package.json` and the README's pinned versions table.
 
 - DataHub CLI docs: https://docs.datahub.com/docs/cli/
 - DataHub GraphQL API: https://docs.datahub.com/docs/api/graphql/
-- DataHub REST API: https://docs.datahub.com/docs/api/graphql/
+- DataHub REST API (OpenAPI): https://docs.datahub.com/docs/api/openapi/

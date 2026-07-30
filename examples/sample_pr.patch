@@ -42,7 +42,7 @@ The existing tests in `tests/test_dag.py` pass with the changes.
 - Reasoning trace: https://github.com/sodiq-code/sentinel-demo-pipeline/actions/runs/202608010314
 - Tool calls: 7
 - Guardrail checks: 1 passed, 0 pending
-- LLM: `nvidia/llama-3.3-nemotron-super-49b-v1` @ temperature 0
+- LLM: `gemini-2.0-flash` @ temperature 0
 - Tokens: 4,213 + 1,489
 
 ---

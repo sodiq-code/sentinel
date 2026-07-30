@@ -3,12 +3,14 @@
 // Returns the live state of the LLM resilience layer so the UI can show a
 // circuit-state chip alongside the existing "LLM model / Provider" chips.
 //
-//   provider:         'zai' | 'nvidia'
+//   provider:         'gemini' | 'groq' | 'zai' | 'nvidia'
 //   model:            the configured primary model
-//   failoverEnabled:  bool — whether the z-ai primary can fail over to the
-//                     dormant NVIDIA client (only true when LLM_PROVIDER=zai
-//                     AND LLM_FAILOVER_ENABLED AND a NVIDIA key is present)
+//   failoverEnabled:  bool — whether the primary can fail over to the
+//                     configured fallback provider (LLM_FALLBACK_PROVIDER)
+//                     when its circuit opens. Production default: Gemini
+//                     primary → Groq fallback.
 //   hasNvidiaKey:     bool
+//   hasGroqKey:       bool
 //   circuit:          { isOpen, consecutiveFailures, msUntilReset } | null
 //                     — null until the first LLM call instantiates the client
 //

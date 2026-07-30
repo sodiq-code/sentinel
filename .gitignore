@@ -73,3 +73,5 @@ server.log
 
 # Agent tool-results (transient read outputs, not project code)
 /tool-results/
+# internal dev worklog — not for reviewers (archived out of public repo)
+worklog.md

@@ -257,8 +257,8 @@
     "promptTokens": 10751,
     "completionTokens": 437
   },
-  "llmModel": "gpt-4o",
-  "llmProvider": "zai",
+  "llmModel": "gemini-2.0-flash",
+  "llmProvider": "gemini",
   "promptVersion": "sentinel-v2-phase2-1",
   "auditMirrorMode": "demo"
 }
