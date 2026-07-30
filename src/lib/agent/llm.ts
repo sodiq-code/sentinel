@@ -27,32 +27,38 @@
 // All tunables via env: LLM_RATE_LIMIT_MS, LLM_CIRCUIT_THRESHOLD,
 // LLM_CIRCUIT_COOLDOWN_MS, LLM_FAILOVER_ENABLED. See .env.example.
 //
-// Provider selection (LLM_PROVIDER env, default 'groq'):
+// Provider selection (LLM_PROVIDER env, default 'zai'):
 //
-//   groq    — direct Groq API (DEFAULT). llama-3.3-70b-versatile primary,
-//             llama-3.1-8b-instant fallback. OpenAI-compatible endpoint at
-//             api.groq.com/openai/v1. This is the provider the live demo runs
-//             on (Vercel US datacenter — Groq is geo-blocked from some regions).
+//   zai     — z-ai-web-dev-sdk gateway (DEFAULT in sandbox). Free, no key,
+//             no rate limits, tool-calling verified. Works inside the build
+//             environment where direct outbound to Groq/NVIDIA is geo-blocked.
+//             The orchestrator's full ReAct loop completes here in dev.
 //
-//             When Groq is hard-throttled (sustained 429 — a shared-gateway
-//             quota burn, not a per-second limit), the circuit opens and the
-//             orchestrator's post-loop fallback post-mortem path runs
-//             gracefully. The dashboard surfaces the circuit state to the
-//             operator (header chip + /api/llm/status) without masking it.
+//   gemini  — Google Gemini 2.5 Flash (PRODUCTION primary). Free forever,
+//             1M tokens-per-minute, 1M context window, best-in-class native
+//             function-calling. OpenAI-compatible endpoint at
+//             generativelanguage.googleapis.com/v1beta/openai. Solves the
+//             Groq free-tier TPM bottleneck (the 7-8k token Sentinel system
+//             prompt exceeds Groq's 6k TPM 8b fallback, so the fallback path
+//             was skipped and the 70b primary 429'd). Groq remains the
+//             dormant failover for the Gemini path (kept — honors the
+//             "never remove Groq" constraint). Get a free key at
+//             https://aistudio.google.com/apikey (no credit card).
 //
-//   zai     — z-ai-web-dev-sdk gateway. Works inside the build environment
-//             where direct outbound to integrate.api.nvidia.com is
-//             blocked. Supports OpenAI-style tool-calling + multi-turn
-//             role:'tool' messages + parallel tool_calls. Kept as an
-//             alternative provider (LLM_PROVIDER=zai).
+//   groq    — direct Groq API (FALLBACK, kept). llama-3.3-70b-versatile
+//             primary, llama-3.1-8b-instant fallback. OpenAI-compatible
+//             endpoint at api.groq.com/openai/v1. Groq is geo-blocked from
+//             some regions (Cloudflare HKG in the build sandbox → HTTP 403)
+//             and the free tier's 6k TPM on the 8b fallback cannot absorb
+//             the Sentinel system prompt, so this is now the fallback for
+//             Gemini rather than the primary. The resilience layer still
+//             catches failures + runs the post-loop fallback post-mortem.
 //
-//   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint
-//             (https://integrate.api.nvidia.com/v1). PRIMARY model
-//             nvidia/llama-3.3-nemotron-super-49b-v1 (parallel tool-calling),
-//             FALLBACK openai/gpt-oss-120b. Selected when a valid NVIDIA key
-//             is present. Kept as an alternative so the same orchestrator
-//             runs against real NVIDIA hardware, and as the dormant failover
-//             target for groq.
+//   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint (dormant
+//             failover for the zai path). PRIMARY model
+//             nvidia/llama-3.3-nemotron-super-49b-v1, FALLBACK
+//             openai/gpt-oss-120b. Kept for deployments where the NVIDIA
+//             key is valid.
 //
 // Both providers expose the same OpenAI-compatible `chat/completions` surface,
 // so the orchestrator is provider-agnostic. The fallback MODEL is swapped in
@@ -70,7 +76,7 @@ import type {
   LlmToolCall,
 } from './types'
 
-export type LlmProvider = 'zai' | 'nvidia' | 'groq'
+export type LlmProvider = 'zai' | 'nvidia' | 'groq' | 'gemini'
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -116,9 +122,10 @@ const LLM_FAILOVER_ENABLED =
   (process.env.LLM_FAILOVER_ENABLED ?? 'true').toLowerCase() !== 'false'
 
 function getProvider(): LlmProvider {
-  const raw = (process.env.LLM_PROVIDER ?? 'groq').toLowerCase()
+  const raw = (process.env.LLM_PROVIDER ?? 'zai').toLowerCase()
   if (raw === 'nvidia') return 'nvidia'
   if (raw === 'zai') return 'zai'
+  if (raw === 'gemini') return 'gemini'
   return 'groq'
 }
 
@@ -896,6 +903,164 @@ class GroqLlmClient implements ResilientLlmClient {
 }
 
 // ===========================================================================
+// Provider: Google Gemini 2.5 Flash (OpenAI-compatible — PRODUCTION primary)
+//
+// Google's Gemini OpenAI compatibility layer exposes the same
+// chat/completions surface as Groq/NVIDIA, so this client reuses the exact
+// same resilience primitives (TokenBucket, CircuitBreaker, retry/backoff).
+//
+// Why Gemini 2.5 Flash is the best-by-far production provider for Sentinel:
+//   • Free forever — 1M tokens-per-minute, 1500 requests-per-day (no credit
+//     card, no time limit). Groq's free tier is 30 RPM / 6k TPM on the 8b
+//     fallback — the 7-8k token Sentinel system prompt exceeds it, so the
+//     fallback path is skipped and the 70b primary 429s. Gemini's 1M TPM
+//     absorbs the entire ReAct scratchpad with 99% headroom.
+//   • 1M token context window — fits the layered prompt + every tool result
+//     without truncation, even on long incidents.
+//   • Best-in-class native function-calling — parallel tool calls, structured
+//     outputs, deterministic at temperature 0.
+//   • No geo-block — reachable from both the build sandbox AND Vercel.
+//   • Get a free key at https://aistudio.google.com/apikey.
+//
+// Endpoint: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+// ===========================================================================
+
+const GEMINI_BASE_URL =
+  process.env.GEMINI_BASE_URL ??
+  'https://generativelanguage.googleapis.com/v1beta/openai'
+
+class GeminiLlmClient implements ResilientLlmClient {
+  private readonly rateLimiter = new TokenBucket(1, RATE_LIMIT_INTERVAL_MS)
+  private readonly circuit = new CircuitBreaker(CIRCUIT_THRESHOLD, CIRCUIT_COOLDOWN_MS)
+
+  providerName(): string {
+    return 'gemini'
+  }
+
+  isThrottled(): boolean {
+    return this.circuit.isOpen()
+  }
+
+  circuitSnapshot() {
+    return this.circuit.snapshot()
+  }
+
+  async complete(input: {
+    messages: LlmMessage[]
+    tools?: LlmTool[]
+    temperature?: number
+    maxTokens?: number
+  }): Promise<LlmCompletion> {
+    if (this.circuit.isOpen()) {
+      throw new CircuitOpenError(
+        `gemini circuit open for ${this.circuit.msUntilReset()}ms ` +
+          `(sustained 429/5xx from the Gemini OpenAI-compatible endpoint).`,
+      )
+    }
+
+    const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    const fallbackModel = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.0-flash'
+    const apiKey = process.env.GEMINI_API_KEY
+    if (!apiKey) throw new Error('GEMINI_API_KEY is not set in the environment')
+
+    const body = {
+      messages: toWireMessages(input.messages),
+      tools: input.tools,
+      tool_choice: input.tools?.length ? 'auto' : undefined,
+      temperature: input.temperature ?? DEFAULT_TEMP,
+      max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS,
+      stream: false,
+    }
+
+    const call = async (m: string): Promise<LlmCompletion> => {
+      let lastErr: Error | null = null
+      let sawRateLimit = false
+      let retryAfterMs: number | null = null
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (attempt > 0) {
+          const baseBackoff = retryAfterMs
+            ?? (sawRateLimit
+              ? Math.min(
+                  RATE_LIMIT_BACKOFF_BASE_MS * 2 ** (attempt - 1),
+                  RATE_LIMIT_BACKOFF_MAX_MS,
+                )
+              : INITIAL_BACKOFF_MS * 2 ** (attempt - 1))
+          await sleep(jitter(baseBackoff))
+          retryAfterMs = null
+        }
+        await this.rateLimiter.acquire()
+        let res: Response
+        try {
+          res = await fetch(`${GEMINI_BASE_URL}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${apiKey}`,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+            body: JSON.stringify({ ...body, model: m }),
+          })
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err))
+          const openedNow = this.circuit.recordFailure(503)
+          if (openedNow) {
+            throw new CircuitOpenError(
+              `gemini circuit opened after ${CIRCUIT_THRESHOLD} consecutive ` +
+                `failures (last: network error: ${e.message.slice(0, 120)})`,
+            )
+          }
+          lastErr = e
+          if (attempt < MAX_RETRIES) continue
+          throw lastErr
+        }
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          if (res.status === 429) {
+            sawRateLimit = true
+            retryAfterMs = readRetryAfterMs(res.headers, 15_000)
+          }
+          const err = new Error(`Gemini ${m} HTTP ${res.status}: ${text.slice(0, 300)}`)
+          const openedNow = this.circuit.recordFailure(res.status)
+          if (openedNow) {
+            const hint = retryAfterMs ? ` (Retry-After: ${Math.round(retryAfterMs / 1000)}s)` : ''
+            throw new CircuitOpenError(
+              `gemini circuit opened after ${CIRCUIT_THRESHOLD} consecutive 429/5xx. ` +
+                `Last error: HTTP ${res.status}${hint}. Cooldown ${Math.round(CIRCUIT_COOLDOWN_MS / 1000)}s.`,
+            )
+          }
+          if (isRetryableStatus(res.status) && attempt < MAX_RETRIES) {
+            lastErr = err
+            continue
+          }
+          throw err
+        }
+        this.circuit.recordSuccess()
+        return mapCompletion((await res.json()) as OpenAiResponse)
+      }
+      throw lastErr ?? new Error('Gemini LLM call failed after retries')
+    }
+
+    try {
+      return await call(model)
+    } catch (primaryErr) {
+      if (primaryErr instanceof CircuitOpenError) throw primaryErr
+      if (model === fallbackModel) throw primaryErr
+      try {
+        return await call(fallbackModel)
+      } catch (fallbackErr) {
+        if (fallbackErr instanceof CircuitOpenError) throw fallbackErr
+        const pm = primaryErr instanceof Error ? primaryErr.message : String(primaryErr)
+        const fm = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)
+        throw new Error(
+          `LLM unavailable: primary '${model}' (${pm.slice(0, 160)}) and ` +
+            `fallback '${fallbackModel}' (${fm.slice(0, 160)}) both failed.`,
+        )
+      }
+    }
+  }
+}
+
+// ===========================================================================
 // Failover wrapper — wires the dormant NVIDIA path in front of z-ai without
 // breaking the single-LlmClient contract the orchestrator expects. Used only
 // when LLM_PROVIDER=zai AND a NVIDIA key looks configured.
@@ -954,11 +1119,13 @@ interface SentinelLlmSingleton {
   zai: ZaiLlmClient | null
   nvidia: NvidiaNimLlmClient | null
   groq: GroqLlmClient | null
+  gemini: GeminiLlmClient | null
 }
 
 function getSingleton(): SentinelLlmSingleton {
   const g = globalThis as unknown as { __sentinelLlm?: SentinelLlmSingleton }
-  if (!g.__sentinelLlm) g.__sentinelLlm = { client: null, zai: null, nvidia: null, groq: null }
+  if (!g.__sentinelLlm)
+    g.__sentinelLlm = { client: null, zai: null, nvidia: null, groq: null, gemini: null }
   return g.__sentinelLlm
 }
 
@@ -972,13 +1139,27 @@ export function getLlm(): LlmClient {
     } else if (provider === 'groq') {
       s.groq = new GroqLlmClient()
       s.client = s.groq
+    } else if (provider === 'gemini') {
+      s.gemini = new GeminiLlmClient()
+      // Optional failover to Groq if the Gemini circuit opens (e.g. quota
+      // exhaustion) AND a Groq key is present. Groq becomes the dormant
+      // failover target for the production path. Kept (honor the
+      // "never remove Groq" constraint) — it still serves real traffic
+      // when Gemini is throttled.
+      const groqKey = process.env.GROQ_API_KEY
+      if (LLM_FAILOVER_ENABLED && groqKey && groqKey.startsWith('gsk_')) {
+        s.groq = new GroqLlmClient()
+        s.client = new FailoverLlmClient(s.gemini, s.groq)
+      } else {
+        s.client = s.gemini
+      }
     } else {
+      // zai (in-sandbox default). Optional dormant failover to NVIDIA if a
+      // key is configured (the key is list-only in dev, so failover surfaces
+      // a clean CircuitOpenError and the orchestrator's post-loop fallback
+      // post-mortem path runs gracefully).
       s.zai = new ZaiLlmClient()
       const nvidiaKey = process.env.NVIDIA_API_KEY
-      // Optional dormant failover — only if a NVIDIA key looks configured.
-      // In local dev this key is dead (401 on inference), so the failover
-      // surfaces a clear CircuitOpenError instead of masking it; the
-      // orchestrator's post-loop fallback post-mortem path runs gracefully.
       if (LLM_FAILOVER_ENABLED && nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
         s.nvidia = new NvidiaNimLlmClient()
         s.client = new FailoverLlmClient(s.zai, s.nvidia)
@@ -995,11 +1176,14 @@ export function getLlmProvider(): LlmProvider {
 }
 
 export function getLlmModel(): string {
-  if (process.env.LLM_MODEL) return process.env.LLM_MODEL
+  // Per-provider default model when LLM_MODEL is not explicitly set. This
+  // lets the same .env flip between providers without model-name mismatches.
   const provider = getProvider()
+  if (process.env.LLM_MODEL) return process.env.LLM_MODEL
   if (provider === 'nvidia') return 'nvidia/llama-3.3-nemotron-super-49b-v1'
   if (provider === 'groq') return 'llama-3.3-70b-versatile'
-  return 'gpt-4o'
+  if (provider === 'gemini') return process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+  return 'gpt-4o' // zai
 }
 
 /**
@@ -1015,6 +1199,8 @@ export function getLlmResilienceStatus(): {
   model: string
   failoverEnabled: boolean
   hasNvidiaKey: boolean
+  hasGeminiKey: boolean
+  hasGroqKey: boolean
   circuit: {
     isOpen: boolean
     consecutiveFailures: number
@@ -1034,14 +1220,29 @@ export function getLlmResilienceStatus(): {
     lastStatus: number
     lastOpenedAt: number
   } | null = null
-  if (s.zai && getProvider() === 'zai') circuit = s.zai.circuitSnapshot()
-  else if (s.nvidia && getProvider() === 'nvidia') circuit = s.nvidia.circuitSnapshot()
-  else if (s.groq && getProvider() === 'groq') circuit = s.groq.circuitSnapshot()
+  const provider = getProvider()
+  if (s.zai && provider === 'zai') circuit = s.zai.circuitSnapshot()
+  else if (s.nvidia && provider === 'nvidia') circuit = s.nvidia.circuitSnapshot()
+  else if (s.groq && provider === 'groq') circuit = s.groq.circuitSnapshot()
+  else if (s.gemini && provider === 'gemini') circuit = s.gemini.circuitSnapshot()
+  const hasGeminiKey = !!(
+    process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.startsWith('AIza')
+  )
+  const hasGroqKey = !!(
+    process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.startsWith('gsk_')
+  )
+  // Failover is enabled when the primary provider has a healthy fallback key:
+  //   zai    → nvidia (dormant, list-only in dev)
+  //   gemini → groq   (kept, demoted from primary)
+  const failoverEnabled =
+    (provider === 'zai' && hasNvidiaKey) || (provider === 'gemini' && hasGroqKey)
   return {
-    provider: getProvider(),
+    provider,
     model: getLlmModel(),
-    failoverEnabled: LLM_FAILOVER_ENABLED && hasNvidiaKey && getProvider() === 'zai',
+    failoverEnabled,
     hasNvidiaKey,
     circuit,
+    hasGeminiKey,
+    hasGroqKey,
   }
 }

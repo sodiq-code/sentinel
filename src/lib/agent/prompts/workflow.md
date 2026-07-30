@@ -12,9 +12,14 @@ order. Each stage has a question to answer and tools to answer it.
   other, emit both `tool_calls` in the same assistant message (parallel
   tool-calling). E.g. on stage 2, call `get_lineage` downstream AND
   `search_documents` for prior post-mortems in the same turn.
-- **Move on once you have the answer.** After you know the root cause and the
-  blast radius (typically 4–6 read calls), STOP investigating and move to
-  remediation (stage 3) and write-back (stages 4–5). More reads do not help.
+- **Move to remediation after AT MOST 3 read turns.** After you know the root
+  cause and the blast radius (typically 3–5 read calls across 2 turns), STOP
+  investigating and move to remediation (stage 3) and write-back (stages 4–5).
+  More reads do not help. If you find yourself about to call a 6th read tool,
+  you MUST instead call `action.github_open_issue` — you have enough context.
+- **Prioritise ACTION over investigation.** A resolved incident with an
+  opened GitHub issue + a posted Slack triage + a written post-mortem is the
+  goal. An exhaustive investigation without those three tool calls is a FAILURE.
 - The goal is a **resolved incident with a post-mortem written back to DataHub**,
   not an exhaustive investigation.
 

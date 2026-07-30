@@ -51,11 +51,12 @@ import type {
   Signal,
 } from './types'
 
-// MAX_ITERS caps the ReAct loop. A well-prompted agent converges in 4-5
-// iterations on the seed scenarios. 5 (down from 6) keeps the scratchpad
-// under the Groq 8b fallback's 6,000 TPM limit even with verbose tool
-// results, leaving headroom for the post-loop fallback post-mortem write.
-const MAX_ITERS = 5
+// MAX_ITERS caps the ReAct loop. Now that z-ai (sandbox) and Gemini
+// (production) have generous TPM budgets, we can afford 10 iterations —
+// enough for the agent to do reads (3-4), open the GitHub issue, post the
+// Slack triage, AND write the post-mortem via ack.save_document before the
+// completion gate's 2 nudges. The soft deadline still bounds the wall-clock.
+const MAX_ITERS = 10
 
 // Soft deadline — the Vercel Hobby function timeout is 60s. We break the
 // loop at 45s to leave 15s for the post-loop fallback post-mortem write +
@@ -255,6 +256,9 @@ export async function runSentinel(
   const mandatoryDone = new Set<string>()
   let nudgeCount = 0
   const MAX_NUDGES = 2
+  let readCallCount = 0
+  let readBudgetNudged = false
+  const READ_BUDGET = 4 // after 4 read-only calls with no action, nudge toward actions
   const loopStart = Date.now()
 
   try {
@@ -426,12 +430,45 @@ export async function runSentinel(
         if (effectiveName === 'ack.save_document' && exec.status === 'ok') {
           wrotePostMortem = true
         }
+        // Read-budget accounting: track read-only calls. After READ_BUDGET
+        // reads with zero action calls, inject a nudge forcing the agent to
+        // move to remediation. This counters models that over-investigate.
+        if (effectiveName.startsWith('mcp.')) {
+          readCallCount += 1
+        }
         // Append the tool result back into the LLM conversation.
         messages.push({
           role: 'tool',
           toolCallId: call.id,
           name: effectiveName,
           content: JSON.stringify(exec.result),
+        })
+      }
+
+      // Read-budget nudge: after READ_BUDGET read-only calls with zero action
+      // or write calls, force the agent toward remediation. The agent has
+      // enough context to open the issue + post the triage + write the post-mortem.
+      if (
+        readCallCount >= READ_BUDGET &&
+        !readBudgetNudged &&
+        mandatoryDone.size === 0
+      ) {
+        readBudgetNudged = true
+        emit('observe', {
+          reasoning:
+            `Read budget reached (${readCallCount} read calls, 0 action/write calls). ` +
+            `The agent has enough context to remediate. Forcing the move to action.github_open_issue, ` +
+            `action.slack_post_triage, and ack.save_document.`,
+        })
+        messages.push({
+          role: 'user',
+          content:
+            `You have now made ${readCallCount} read-only tool calls (mcp.*) and ZERO action or write calls. ` +
+            `STOP investigating. You have enough context. Your NEXT response MUST call at least one of:\n` +
+            `  - action.github_open_issue  (open the engineering issue)\n` +
+            `  - action.slack_post_triage  (post the stakeholder triage)\n` +
+            `  - ack.save_document         (write the post-mortem)\n` +
+            `Proceed to remediation and write-back NOW. A summary without these tool calls is a FAILURE.`,
         })
       }
     }
