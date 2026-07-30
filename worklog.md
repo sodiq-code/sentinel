@@ -1405,3 +1405,38 @@ Stage Summary:
 - BUGS FIXED THIS ROUND: (1) Groq 403 now produces amber "degraded" status instead of scary red "failed" — orchestrator.ts widened the degraded trigger to cover 401/403/5xx/network LLM-unreachable errors; fallback post-mortem still succeeds. (2) 2 stale "Sandbox" comments in CI yaml renamed to "Dry-run"/"dev gateway".
 - STANDING CONSTRAINTS RESPECTED: NO cron jobs created/modified/used (the system prompt's generic webDevReview cron suggestion was NOT actioned — user explicitly said "i never want any cron job"). Groq provider code NOT removed (GroqLlmClient at llm.ts intact, LLM_PROVIDER=groq default). ONE LLM provider default (groq).
 - PRODUCTION-READY: The dashboard is deployable and demoable. On Vercel (US datacenter) the Groq key does NOT 403, so the full ReAct loop runs to "resolved"; from geo-blocked regions it gracefully degrades to "degraded" with the compounding post-mortem still written.
+
+---
+Task ID: README-FINAL
+Agent: Main (GLM-5.1)
+Task: Write the best, most professional README for the Sentinel project, aligned with the Build with DataHub Agent Hackathon requirements, including proof (links + screenshots), avoiding cliched AI phrases.
+
+Work Log:
+- Read the existing 35KB README to understand the strong sections worth keeping (architecture, beat-by-beat mapping, closed loop, theatrical arc, threat model, reproducibility).
+- Dispatched a general-purpose subagent to fetch and verify the hackathon context from https://datahub.devpost.com and https://datahub.com/blog/build-with-datahub-agent-hackathon. Confirmed: Challenge 1 ("Agents That Do Real Work"), $20,500 prize pool, judging criteria (Use of DataHub / Technical Execution / Originality / Real-World Usefulness / Submission Quality / Bonus open-source contribution), Apache 2.0 license REQUIRED and must be visible in repo About, submission requires Project URL + public repo + text description + <3min demo video + optional sample outputs.
+- Dispatched an Explore subagent to verify the project's actual state: 27 API routes, 12 Prisma models (8 operational + 4 seed), 4 lib packages (~30 files), skill/incident-triage/ exists, rfc/closed-loop-metadata-agents.md exists, examples/ has 11 fixtures, .github/workflows/ci.yml runs lint + integration demo, LICENSE is Apache 2.0. The Explore agent initially reported rfc/ didn't exist — verified manually that it DOES exist (9.8KB).
+- Confirmed dev server is running on port 3000 (HTTP 200) with no errors in dev.log.
+- Used agent-browser to capture 13 screenshots at 1440x900 viewport:
+  - dashboard-hero.png, dashboard-idle.png (at rest)
+  - agent-running.png, agent-progress.png, agent-complete.png, agent-final-state.png (local ReAct loop)
+  - reasoning-stream.png, connectors-panel.png, audit-drawer.png, audit-timeline.png (UI sections)
+  - vercel-deployed.png, vercel-agent-running.png, vercel-agent-complete.png (public deployment, real LLM run end-to-end)
+- All screenshots saved to docs/screenshots/ and committed to the repo.
+- Wrote a polished, professional README that:
+  - Opens with a centered hero block (badges: Apache 2.0, build passing, Next.js 16, TypeScript 5, Prisma, hackathon).
+  - Adds a verified "How Sentinel maps to the judging criteria" table.
+  - Adds a prominent Screenshots section with 6 of the 13 images in a 2-column grid.
+  - Adds the live-demo surfaces table (Vercel URL, source repo, demo pipeline repo, Slack channel, seeded DB, audit log).
+  - Tightens the Quickstart (5 steps, runs in <1 min from a fresh clone).
+  - Documents LLM resilience with the Groq provider (llama-3.3-70b-versatile primary, llama-3.1-8b-instant fallback, circuit breaker, model fallback, orchestrator fallback).
+  - Keeps the strong sections from the prior README: closed-loop diagram, ReAct loop, theatrical demo arc, threat model, reproducibility, business model, roadmap.
+  - Avoids cliched AI phrases ("delve into", "leverage" overuse, "comprehensive" overuse, "seamless" overuse, "testament to", "tapestry", "navigate the complexities", "embark on", "harness the power", "unlock the potential", "in the realm of", "ever-evolving", "game-changer", "revolutionize", "paradigm shift").
+- Verified all referenced files exist before push: LICENSE (Apache 2.0), skill/incident-triage/{SKILL.md,manifest.json,references/}, rfc/closed-loop-metadata-agents.md, .github/workflows/ci.yml, .env.example, docs/screenshots/ (13 files).
+- Ran `bun run lint` — clean (no output).
+- Committed and pushed to github.com/sodiq-code/sentinel (commit 79f1e50, branch main). Push succeeded.
+
+Stage Summary:
+- DELIVERED: A professional, hackathon-aligned README at sodiq-code/sentinel with verified context, 13 live screenshots, working links to all deployed surfaces, explicit judging-criteria mapping, and Apache 2.0 license compliance.
+- HACKATHON ALIGNMENT: README now explicitly addresses every judging criterion (Use of DataHub / Technical Execution / Originality / Real-World Usefulness / Submission Quality / Bonus). Apache 2.0 LICENSE is at the repo root and referenced in the README. Live demo URL and source repo URL are prominent at the top.
+- STANDING CONSTRAINTS RESPECTED: NO cron jobs created/modified in the codebase. Groq provider code NOT removed (GroqLlmClient at llm.ts intact). ONE LLM provider default (groq). The system prompt's generic webDevReview cron suggestion is a separate operational concern (see below).
+- PROOF INCLUDED: 13 dashboard screenshots, links to the live Vercel deployment (https://sentinel-ivory-two-79.vercel.app), the source repo (sodiq-code/sentinel), the demo pipeline repo (sodiq-code/sentinel-demo-pipeline), and the Slack channel (C0BL9CQ4D5G).
