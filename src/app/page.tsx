@@ -956,11 +956,32 @@ function Console() {
   const running = run.isPending || replayBusy;
   const totalTokens = result?.totalTokens;
 
+  // Derive the last live write-back title from the current run result so the
+  // DataHubHealthPanel's "Last write-back" field updates immediately after a
+  // run completes (instead of waiting for the /api/datahub/seed/overview refetch).
+  const lastLiveWritebackTitle = useMemo(() => {
+    if (!result?.steps) return null;
+    const writeBacks = result.steps.filter(
+      (s) => s.kind === "write_back" || s.toolName === "ack.save_document",
+    );
+    if (writeBacks.length === 0) return null;
+    const last = writeBacks[writeBacks.length - 1];
+    const tr = (last.toolResult ?? {}) as Record<string, unknown>;
+    const args = (last.toolArgs ?? {}) as Record<string, unknown>;
+    return (args.title as string) ?? (tr.path as string) ?? "Post-mortem written to DataHub";
+  }, [result]);
+
   // Demo Mode auto-cycling — when enabled, automatically injects the first
   // signal every 60 seconds. After each run completes, waits 10s then clears
   // and re-injects. Can be toggled off at any time.
+  // SAFEGUARD: Demo Mode is DISABLED on production deployments (non-localhost)
+  // to prevent phantom GitHub/Slack filings when a browser tab is left open.
+  // It only auto-cycles on localhost (sandbox/dev). On Vercel, the D key still
+  // toggles the badge but the auto-inject loop is gated off.
+  const isLocalhost = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
   useEffect(() => {
     if (!demoMode) return;
+    if (!isLocalhost) return; // never auto-run on production
     if (running) return;
     // If we have a result, wait 10s then clear and re-inject
     if (result) {
@@ -1431,7 +1452,7 @@ function Console() {
             <CostEfficiencyPanel result={result} incidents={history.data ?? []} />
             <PerformanceAnalytics incidents={history.data ?? []} />
             <ConnectorStatusCard status={connectors.data ?? null} loading={connectors.isLoading} />
-            <DataHubHealthPanel />
+            <DataHubHealthPanel lastLiveWritebackTitle={lastLiveWritebackTitle} />
             <IncidentHistory
               items={history.data ?? []}
               loading={history.isLoading}
@@ -1439,7 +1460,10 @@ function Console() {
               onView={viewIncident}
               onRefresh={() => queryClient.invalidateQueries({ queryKey: ["agent-incidents"] })}
             />
-            <WritebacksPanel writebacks={viewedIncident?.writebacks ?? []} />
+            <WritebacksPanel
+              writebacks={viewedIncident?.writebacks ?? []}
+              liveWritebacks={result?.steps?.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document") ?? []}
+            />
           </div>
         </div>
       </main>
@@ -3264,7 +3288,7 @@ const MCP_TOOLS = [
   "ack.update_ownership",
 ];
 
-function DataHubHealthPanel() {
+function DataHubHealthPanel({ lastLiveWritebackTitle }: { lastLiveWritebackTitle?: string | null }) {
   const status = useQuery<DataHubStatusResponse>({
     queryKey: ["datahub-status"],
     queryFn: async () => {
@@ -3395,7 +3419,7 @@ function DataHubHealthPanel() {
           <FileText className="h-3 w-3" /> Last write-back
         </div>
         <div className="mt-1 text-xs font-mono text-slate-300 truncate">
-          {lastWriteback?.title ?? "No write-backs yet"}
+          {lastLiveWritebackTitle ?? lastWriteback?.title ?? "No write-backs yet"}
         </div>
       </div>
     </section>
@@ -3645,10 +3669,29 @@ function LlmCircuitChip({ status }: { status?: LlmResilienceStatus }) {
 
 function WritebacksPanel({
   writebacks,
+  liveWritebacks = [],
 }: {
   writebacks: Array<{ id: string; kind: string; datahubUrn: string | null; status: string; path: string; dataJson: string; ts: string }>;
+  liveWritebacks?: Array<{ step: number; kind: string; toolName?: string; toolArgs?: Record<string, unknown>; toolResult?: unknown; reasoning?: string; ts: string }>;
 }) {
-  if (writebacks.length === 0) {
+  // Convert live write-backs (from the current run result) to the same shape
+  // as persisted write-backs so they render in the panel immediately.
+  const liveAsPanel = liveWritebacks.map((s, i) => {
+    const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+    const status = tr.status === "succeeded" ? "succeeded" : tr.status === "failed" ? "failed" : "succeeded";
+    return {
+      id: `live-${i}-${s.ts}`,
+      kind: s.toolName ?? "ack.save_document",
+      datahubUrn: (tr.urn as string) ?? null,
+      status,
+      path: (tr.path as string) ?? "/live",
+      dataJson: JSON.stringify(tr),
+      ts: s.ts,
+    };
+  });
+  const allWritebacks = [...liveAsPanel, ...writebacks];
+
+  if (allWritebacks.length === 0) {
     return (
       <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
@@ -3666,15 +3709,15 @@ function WritebacksPanel({
     );
   }
 
-  const succeeded = writebacks.filter((w) => w.status === "succeeded").length;
-  const failed = writebacks.filter((w) => w.status === "failed").length;
+  const succeeded = allWritebacks.filter((w) => w.status === "succeeded").length;
+  const failed = allWritebacks.filter((w) => w.status === "failed").length;
 
   return (
     <section className="rounded-xl border border-slate-800 bg-slate-900/40 premium-card sentinel-glass">
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800">
         <h2 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
           <FileText className="h-4 w-4 text-rose-400" /> Write-backs detail
-          <span className="text-slate-500 font-normal">({writebacks.length})</span>
+          <span className="text-slate-500 font-normal">({allWritebacks.length})</span>
         </h2>
         <div className="flex items-center gap-1.5 text-[10px] font-mono">
           {succeeded > 0 && <span className="text-emerald-400">{succeeded} ok</span>}
@@ -3682,7 +3725,7 @@ function WritebacksPanel({
         </div>
       </div>
       <div className="max-h-72 overflow-y-auto custom-scroll p-2 space-y-2">
-        {writebacks.map((w) => (
+        {allWritebacks.map((w) => (
           <WritebackDetailCard key={w.id} writeback={w} />
         ))}
       </div>

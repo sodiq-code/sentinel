@@ -44,7 +44,7 @@ export async function POST(req: Request) {
         `- Mode: ${process.env.SENTINEL_DRY_RUN === 'false' ? 'LIVE' : 'DRY-RUN'}`,
         '',
         'A human reviewer should close this issue. Sentinel will NEVER merge',
-        'or close it (PDF §9.3.5).',
+        'or close it.',
       ].join('\n'),
       labels: ['sentinel-test', 'auto-filed'],
     })

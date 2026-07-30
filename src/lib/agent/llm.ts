@@ -98,7 +98,7 @@ const DEFAULT_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS ?? 1500)
 // chance to reset; if still 429, the circuit opens + the orchestrator
 // marks the incident 'degraded' (partial investigation). This keeps the
 // worst-case 429 path under 25s, leaving 35s for the agent loop.
-const MAX_RETRIES = 1
+const MAX_RETRIES = 2
 
 // General backoff (network / 5xx) — keeps the original aggressive curve.
 const INITIAL_BACKOFF_MS = 800
@@ -107,21 +107,21 @@ const INITIAL_BACKOFF_MS = 800
 // per-minute rate-limit window to reset. When the provider returns a
 // `Retry-After` header, that value is used instead (capped at 15s to stay
 // under the Vercel serverless function timeout).
-const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 8000)
-const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 45000)
+const RATE_LIMIT_BACKOFF_BASE_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MS ?? 3000)
+const RATE_LIMIT_BACKOFF_MAX_MS = Number(process.env.LLM_RATE_LIMIT_BACKOFF_MAX_MS ?? 10000)
 const RATE_LIMIT_JITTER_PCT = 0.2
 
 // Pace limiter — at most one call per interval per provider. Default 15s
 // (Groq free tier allows ~30 req/min on llama-3.3-70b-versatile; one call per
 // 15s keeps a full ReAct loop under the per-minute budget). Set to 0 to
 // disable for fast dev loops.
-const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 15000)
+const RATE_LIMIT_INTERVAL_MS = Number(process.env.LLM_RATE_LIMIT_MS ?? 2000)
 
 // Circuit breaker — opens after N consecutive 429/5xx, stays open for cooldown.
 // Threshold 3 (restored) — 3 consecutive 429s open the circuit; cooldown 90s ensures the Groq
 // per-minute rate-limit window fully resets before the circuit recloses.
 const CIRCUIT_THRESHOLD = Number(process.env.LLM_CIRCUIT_THRESHOLD ?? 5)
-const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 90000)
+const CIRCUIT_COOLDOWN_MS = Number(process.env.LLM_CIRCUIT_COOLDOWN_MS ?? 30000)
 
 // Failover toggle — when 'true' (default), the z-ai primary can fail over to
 // the dormant NVIDIA client when its circuit is open AND a NVIDIA key is
@@ -425,10 +425,9 @@ class ZaiLlmClient implements ResilientLlmClient {
     // 60s on retries that will all fail.
     if (this.circuit.isOpen()) {
       throw new CircuitOpenError(
-        `z-ai circuit open for ${this.circuit.msUntilReset()}ms ` +
-          `(sustained 429 from the shared gateway). ` +
-          `Sentinel will fail over to NVIDIA if a key is present, otherwise ` +
-          `the orchestrator's fallback post-mortem path runs (PDF §9.4.2).`,
+        `LLM provider temporarily unavailable (circuit open for ${this.circuit.msUntilReset()}ms). ` +
+          `Sentinel will fail over to the backup provider if one is configured, ` +
+          `otherwise the investigation will be paused and a summary preserved.`,
       )
     }
 
@@ -1187,45 +1186,61 @@ export function getLlm(): LlmClient {
       s.groq = new GroqLlmClient()
       s.client = s.groq
     } else if (provider === 'gemini') {
-      s.gemini = new GeminiLlmClient()
-      // Configurable failover when the Gemini circuit opens (e.g. daily
-      // free-tier quota exhausted). LLM_FALLBACK_PROVIDER picks the target:
-      //   'zai'  — sandbox/local dev (default here): the free z-ai gateway
-      //            has no rate limits, so the agent loop ALWAYS completes
-      //            even when Gemini's daily quota is exhausted. When the
-      //            quota resets at midnight PT, Gemini transparently
-      //            resumes as the primary.
-      //   'groq' — production (Vercel default): Groq free tier. Kept per the
-      //            "never remove Groq" constraint — Groq still serves real
-      //            traffic when Gemini is throttled.
-      //   'none' — disable failover; the orchestrator's post-loop fallback
-      //            post-mortem path runs gracefully.
-      if (LLM_FAILOVER_ENABLED) {
-        const fb = getFallbackProvider()
-        if (fb === 'zai') {
-          s.zai = new ZaiLlmClient()
-          s.client = new FailoverLlmClient(s.gemini, s.zai)
-        } else if (fb === 'groq') {
-          const groqKey = process.env.GROQ_API_KEY
-          if (groqKey && groqKey.startsWith('gsk_')) {
-            s.groq = new GroqLlmClient()
-            s.client = new FailoverLlmClient(s.gemini, s.groq)
-          } else {
-            s.client = s.gemini
-          }
-        } else if (fb === 'nvidia') {
-          const nvidiaKey = process.env.NVIDIA_API_KEY
-          if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
-            s.nvidia = new NvidiaNimLlmClient()
-            s.client = new FailoverLlmClient(s.gemini, s.nvidia)
+      const geminiKey = process.env.GEMINI_API_KEY
+      if (!geminiKey) {
+        // No Gemini key configured (e.g. a cold Vercel deploy without
+        // secrets). The agent MUST always have a working LLM, so fall back
+        // to the always-available z-ai SDK as the PRIMARY. Gemini is
+        // instantiated as a dormant failover target — if a key is added in
+        // a future deploy, the FailoverLlmClient structure is already in
+        // place. In the current process env vars are immutable, so the
+        // dormant Gemini will throw a clean "GEMINI_API_KEY is not set"
+        // only if z-ai also fails (in which case the orchestrator's
+        // post-loop fallback post-mortem path runs gracefully).
+        s.zai = new ZaiLlmClient()
+        s.gemini = new GeminiLlmClient()
+        s.client = new FailoverLlmClient(s.zai, s.gemini)
+      } else {
+        s.gemini = new GeminiLlmClient()
+        // Configurable failover when the Gemini circuit opens (e.g. daily
+        // free-tier quota exhausted). LLM_FALLBACK_PROVIDER picks the target:
+        //   'zai'  — sandbox/local dev (default here): the free z-ai gateway
+        //            has no rate limits, so the agent loop ALWAYS completes
+        //            even when Gemini's daily quota is exhausted. When the
+        //            quota resets at midnight PT, Gemini transparently
+        //            resumes as the primary.
+        //   'groq' — production (Vercel default): Groq free tier. Kept per the
+        //            "never remove Groq" constraint — Groq still serves real
+        //            traffic when Gemini is throttled.
+        //   'none' — disable failover; the orchestrator's post-loop fallback
+        //            post-mortem path runs gracefully.
+        if (LLM_FAILOVER_ENABLED) {
+          const fb = getFallbackProvider()
+          if (fb === 'zai') {
+            s.zai = new ZaiLlmClient()
+            s.client = new FailoverLlmClient(s.gemini, s.zai)
+          } else if (fb === 'groq') {
+            const groqKey = process.env.GROQ_API_KEY
+            if (groqKey && groqKey.startsWith('gsk_')) {
+              s.groq = new GroqLlmClient()
+              s.client = new FailoverLlmClient(s.gemini, s.groq)
+            } else {
+              s.client = s.gemini
+            }
+          } else if (fb === 'nvidia') {
+            const nvidiaKey = process.env.NVIDIA_API_KEY
+            if (nvidiaKey && nvidiaKey.startsWith('nvapi-')) {
+              s.nvidia = new NvidiaNimLlmClient()
+              s.client = new FailoverLlmClient(s.gemini, s.nvidia)
+            } else {
+              s.client = s.gemini
+            }
           } else {
             s.client = s.gemini
           }
         } else {
           s.client = s.gemini
         }
-      } else {
-        s.client = s.gemini
       }
     } else {
       // zai (in-sandbox default). Optional dormant failover to NVIDIA if a

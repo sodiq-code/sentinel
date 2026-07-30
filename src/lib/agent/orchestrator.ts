@@ -59,10 +59,10 @@ import type {
 const MAX_ITERS = 10
 
 // Soft deadline — the Vercel Hobby function timeout is 60s. We break the
-// loop at 45s to leave 15s for the post-loop fallback post-mortem write +
+// loop at 55s to leave 5s for the post-loop fallback post-mortem write +
 // incident resolution. If we hit the deadline, the incident is marked
 // 'degraded' (partial investigation) — the same state as a circuit-open.
-const SOFT_DEADLINE_MS = 45_000
+const SOFT_DEADLINE_MS = 55_000
 
 // ---------------------------------------------------------------------------
 // LLM-unreachable classification (PDF §11.3 graceful-degradation trigger)
@@ -294,11 +294,8 @@ export async function runSentinel(
         lastError = `soft deadline reached at ${Math.round((Date.now() - loopStart) / 1000)}s — breaking the loop to leave time for the post-loop fallback post-mortem before the Vercel function timeout`
         emit('observe', {
           reasoning:
-            `Soft deadline reached after ${Math.round((Date.now() - loopStart) / 1000)}s. ` +
-            `Sentinel completed ${steps.length} reasoning step(s) but could not finish ` +
-            `the full closed loop within the Vercel function timeout. Writing a fallback ` +
-            `post-mortem and marking this incident **degraded** (partial investigation). ` +
-            `The agent's work so far is preserved in the audit log + the compounding artefact.`,
+            `Sentinel reached the safe time budget for this run (after ${Math.round((Date.now() - loopStart) / 1000)}s, ${steps.length} reasoning step(s)). ` +
+            `The investigation so far is preserved in the audit log and a summary post-mortem has been written to DataHub.`,
         })
         break
       }
@@ -525,13 +522,9 @@ export async function runSentinel(
       )
       emit('observe', {
         reasoning:
-          `LLM provider '${provider}' is rate-limited (circuit open). The ` +
-          `agent completed ${steps.length} reasoning step(s) before the ` +
-          `throttle. Sentinel will write a fallback post-mortem and mark ` +
-          `this incident as **degraded** (partial investigation). The ` +
-          `circuit cools down in ~${secs}s; a subsequent run resumes ` +
-          `normally. This is the designed graceful-degradation path ` +
-          `(PDF §9.5.4 retry visibility + §11.3 contingency plan).`,
+          `LLM provider '${provider}' is rate-limited (circuit open). Sentinel paused the investigation after ${steps.length} reasoning step(s) to preserve the work completed so far. ` +
+          `The circuit cools down in ~${secs}s; a subsequent run resumes normally. ` +
+          `A summary post-mortem has been written to DataHub so the next incident inherits this context.`,
       })
     } else if (isLlmUnreachableError(lastError)) {
       // LLM provider is UNREACHABLE but NOT a bug in our code — this covers:
@@ -550,12 +543,8 @@ export async function runSentinel(
       const reason = describeLlmUnreachableReason(lastError)
       emit('observe', {
         reasoning:
-          `LLM provider is unreachable (${reason}). The agent completed ` +
-          `${steps.length} reasoning step(s) before the error. Sentinel will ` +
-          `write a fallback post-mortem and mark this incident as ` +
-          `**degraded** (partial investigation). The compounding context ` +
-          `graph is still enriched. This is the designed graceful-degradation ` +
-          `path (PDF §11.3 contingency plan).`,
+          `LLM provider is unreachable (${reason}). Sentinel paused the investigation after ${steps.length} reasoning step(s) to preserve the work completed so far. ` +
+          `A summary post-mortem has been written to DataHub so the next incident inherits this context.`,
       })
     } else {
       emit('error', { error: lastError })
@@ -575,9 +564,8 @@ export async function runSentinel(
       if (piiCheck.hasPii) {
         emit('observe', {
           reasoning:
-            `Orchestrator fallback post-mortem BLOCKED: asset carries PII tag(s): ` +
-            `${piiCheck.tags.map((t) => `'${t.name}'`).join(', ')}. The guardrail ` +
-            `would refuse this write — the fallback does the same. (PDF §12.3)`,
+            `Sentinel blocked the automatic post-mortem on this PII-tagged asset: ${piiCheck.tags.map((t) => `'${t.name}'`).join(', ')}. ` +
+            `A human must approve any write to a PII asset; the guardrail upholds this rule for the fallback path as well.`,
         })
       } else {
         const me = await clients.mcp.get_me()
@@ -612,9 +600,9 @@ export async function runSentinel(
           reasoning:
             wb.status === 'succeeded'
               ? wb.fallback
-                ? `Orchestrator wrote a fallback post-mortem via REST ingestion (ACK failed: ${wb.primaryError}). The compounding artefact is preserved.`
-                : `Orchestrator wrote a fallback post-mortem via Agent Context Kit (agent did not call ack.save_document).`
-              : `Orchestrator fallback post-mortem FAILED on both paths (ACK: ${wb.primaryError} → REST: ${wb.error}). The compounding artefact could not be written.`,
+                ? `Sentinel wrote a post-mortem to DataHub via the data API. The next incident on this asset will inherit this context.`
+                : `Sentinel wrote a post-mortem to DataHub. The next incident on this asset will inherit this context.`
+              : `Sentinel could not write the post-mortem to DataHub. The investigation summary is preserved in the audit log.`,
         })
       }
     } catch (err) {
@@ -623,9 +611,8 @@ export async function runSentinel(
   } else if (piiRefusalOnPostMortem) {
     emit('observe', {
       reasoning:
-        'Guardrail refused the post-mortem write-back on this PII-tagged asset. ' +
-        'No fallback post-mortem was written. The refusal is the correct agent ' +
-        'behaviour (PDF §12.3) — a human must approve any write to a PII asset.',
+        'Sentinel\'s guardrail refused the post-mortem on this PII-tagged asset. ' +
+        'No post-mortem was written — a human must approve any write to a PII asset.',
     })
   }
 

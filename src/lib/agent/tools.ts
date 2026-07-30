@@ -255,7 +255,7 @@ const READ_TOOLS: ToolDefinition[] = [
   {
     name: 'mcp.search_documents',
     description:
-      'Search context docs (incl. prior Sentinel post-mortems) attached to an asset. ALWAYS call this on the failing asset before writing your own post-mortem — Run N must read Run N-1 (compounding, PDF §12.2).',
+      'Search context docs (incl. prior Sentinel post-mortems) attached to an asset. ALWAYS call this on the failing asset before writing your own post-mortem — Run N must read Run N-1 (compounding context).',
     parameters: {
       type: 'object',
       properties: {
@@ -324,7 +324,7 @@ const WRITE_TOOLS: ToolDefinition[] = [
   {
     name: 'ack.save_document',
     description:
-      'Save a post-mortem context doc attached to an asset. Mark sentinelPostMortem=true so the next incident can find it via mcp.search_documents. This is the KEY write-back (PDF §12.2 compounding). Direct write, reversible.',
+      'Save a post-mortem context doc attached to an asset. Mark sentinelPostMortem=true so the next incident can find it via mcp.search_documents. This is the KEY write-back (compounding context). Direct write, reversible.',
     parameters: {
       type: 'object',
       properties: {
@@ -488,7 +488,7 @@ const WRITE_TOOLS: ToolDefinition[] = [
   {
     name: 'ack.create_assertion',
     description:
-      'Create a new DataHub assertion encoding a learned SLA (PDF §9.5.5 — assertions are the only direct write besides post-mortems; both reversible). Use this to tighten an SLA after a freshness breach.',
+      'Create a new DataHub assertion encoding a learned SLA (assertions are the only direct write besides post-mortems; both reversible). Use this to tighten an SLA after a freshness breach.',
     parameters: {
       type: 'object',
       properties: {
@@ -536,7 +536,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.github_open_issue',
     description:
-      'Open a GitHub issue in the demo repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Sentinel NEVER merges (PDF §9.3.5). Honors SENTINEL_DRY_RUN: trace mode writes to examples/trace/github-actions.log.',
+      'Open a GitHub issue in the demo repo (GITHUB_DEMO_REPO) with the root cause, blast radius, and suggested fix. Sentinel NEVER merges. Honors SENTINEL_DRY_RUN: trace mode writes to examples/trace/github-actions.log.',
     parameters: {
       type: 'object',
       properties: {
@@ -600,7 +600,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
   {
     name: 'action.github_open_pr',
     description:
-      'Open a GitHub pull request in the demo repo (GITHUB_DEMO_REPO) with the proposed fix. Sentinel NEVER merges (PDF §9.3.5 no-merge policy) — the PR is always left OPEN for human review. The head branch MUST already exist on the repo (Phase 3 only opens PRs; it does NOT push branches). Honors SENTINEL_DRY_RUN.',
+      'Open a GitHub pull request in the demo repo (GITHUB_DEMO_REPO) with the proposed fix. Sentinel NEVER merges — the PR is always left OPEN for human review. The head branch MUST already exist on the repo (Phase 3 only opens PRs; it does NOT push branches). Honors SENTINEL_DRY_RUN.',
     parameters: {
       type: 'object',
       properties: {
@@ -641,7 +641,7 @@ const ACTION_TOOLS: ToolDefinition[] = [
           trace: res.trace,
           neverMerged: true,
           status: 'executed',
-          note: 'Sentinel NEVER merges this PR (PDF §9.3.5). It is left OPEN for human review. A human reviewer decides whether to merge.',
+          note: 'Sentinel NEVER merges this PR. It is left OPEN for human review. A human reviewer decides whether to merge.',
         }
       } catch (err) {
         const error = (err as Error).message ?? String(err)
