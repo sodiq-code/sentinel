@@ -3048,9 +3048,9 @@ function ConnectorStatusCard({ status, loading }: { status: ConnectorStatus | nu
           hint={status.slack.botUser ? `bot: ${status.slack.botUser}` : undefined}
         />
       </div>
-      <div className="mt-2 text-[10px] text-slate-500">
+      <div className="mt-2 text-[10px] text-slate-500 leading-relaxed">
         {status.dryRun
-          ? "Trace mode logs actions locally — safe. Toggle LIVE in the control bar to file real issues + posts."
+          ? "Safe-by-default: the full ReAct loop, lineage traversal, guardrail enforcement, and DataHub post-mortem write-backs all run for real — only the human-facing GitHub + Slack notifications are gated to a local trace log. Flip to LIVE to file real issues + posts."
           : "LIVE mode: each Sentinel run opens a real GitHub issue + posts a real Slack message. Use sparingly."}
       </div>
       <ConnectorQuickActions githubRepo={status.github.repo} slackChannel={status.slack.channel} />
@@ -3558,7 +3558,7 @@ function DemoControlBar({
         </button>
         <span className="ml-auto text-[10px] text-slate-600 hidden sm:inline">
           {dryRun
-            ? "Trace mode logs actions locally — safe. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real issues + posts."
+            ? "Safe-by-default · reasoning, lineage, guardrails & DataHub write-backs run for real; GitHub + Slack are trace-gated. Switch to LIVE in .env (SENTINEL_DRY_RUN=false) to file real artifacts."
             : "LIVE mode: every Inject & run files real artifacts in your connected GitHub + Slack."}
         </span>
       </div>
