@@ -1496,7 +1496,7 @@ function Console() {
             />
             <WritebacksPanel
               writebacks={viewedIncident?.writebacks ?? []}
-              liveWritebacks={result?.steps?.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document") ?? []}
+              liveWritebacks={result?.steps?.filter((s) => s.kind === "write_back") ?? []}
             />
           </div>
         </div>
@@ -2296,6 +2296,14 @@ function WriteBackPanel({
   const viaAck = writebacks.filter((w) => w.path === "agent_context_kit").length;
   const viaRest = writebacks.filter((w) => w.path === "rest_ingestion").length;
   const allSucceeded = succeeded > 0 && failed === 0;
+  // Accurate banner when the run wrote BOTH a post-mortem AND an SLA assertion.
+  const pmCount = writebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.save_document" || w.kind === "context_doc")).length;
+  const asrtCount = writebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.create_assertion" || w.kind === "assertion")).length;
+  const bannerText = asrtCount > 0 && pmCount > 0
+    ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
+    : asrtCount > 0
+      ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
+      : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
 
   return (
     <div className={`rounded-lg border p-3.5 ${
@@ -2321,7 +2329,7 @@ function WriteBackPanel({
       {allSucceeded && (
         <div className="mb-3 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-200">
           <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
-          <span className="font-medium">{succeeded} post-mortem{pluralS(succeeded)} written to DataHub</span>
+          <span className="font-medium">{bannerText}</span>
           <span className="text-emerald-400/70">· verified</span>
         </div>
       )}
@@ -3754,20 +3762,30 @@ function WritebacksPanel({
   liveWritebacks?: Array<{ step: number; kind: string; toolName?: string; toolArgs?: Record<string, unknown>; toolResult?: unknown; reasoning?: string; ts: string }>;
 }) {
   // Convert live write-backs (from the current run result) to the same shape
-  // as persisted write-backs so they render in the panel immediately.
-  const liveAsPanel = liveWritebacks.map((s, i) => {
-    const tr = (s.toolResult ?? {}) as Record<string, unknown>;
-    const status = tr.status === "succeeded" ? "succeeded" : tr.status === "failed" ? "failed" : "succeeded";
-    return {
-      id: `live-${i}-${s.ts}`,
-      kind: s.toolName ?? "ack.save_document",
-      datahubUrn: (tr.urn as string) ?? null,
-      status,
-      path: (tr.path as string) ?? "/live",
-      dataJson: JSON.stringify(tr),
-      ts: s.ts,
-    };
-  });
+  // as persisted write-backs so they render in the panel immediately. Dedup
+  // by toolName + URN so a duplicate emit never produces two cards.
+  const _liveSeen = new Set<string>();
+  const liveAsPanel = liveWritebacks
+    .filter((s) => {
+      const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+      const key = `${s.toolName ?? ""}|${(tr.urn as string) ?? ""}`;
+      if (_liveSeen.has(key)) return false;
+      _liveSeen.add(key);
+      return true;
+    })
+    .map((s, i) => {
+      const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+      const status = tr.status === "succeeded" ? "succeeded" : tr.status === "failed" ? "failed" : "succeeded";
+      return {
+        id: `live-${i}-${s.ts}`,
+        kind: s.toolName ?? "ack.save_document",
+        datahubUrn: (tr.urn as string) ?? null,
+        status,
+        path: (tr.path as string) ?? "/live",
+        dataJson: JSON.stringify(tr),
+        ts: s.ts,
+      };
+    });
   const allWritebacks = [...liveAsPanel, ...writebacks];
 
   if (allWritebacks.length === 0) {
@@ -3791,6 +3809,15 @@ function WritebacksPanel({
   const succeeded = allWritebacks.filter((w) => w.status === "succeeded").length;
   const failed = allWritebacks.filter((w) => w.status === "failed").length;
   const allSucceeded = succeeded > 0 && failed === 0;
+  // Break down the succeeded write-backs by kind so the banner is accurate
+  // when the run wrote BOTH a post-mortem AND an SLA assertion.
+  const pmCount = allWritebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.save_document" || w.kind === "context_doc")).length;
+  const asrtCount = allWritebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.create_assertion" || w.kind === "assertion")).length;
+  const bannerText = asrtCount > 0 && pmCount > 0
+    ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
+    : asrtCount > 0
+      ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
+      : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
 
   return (
     <section className={`rounded-xl border premium-card sentinel-glass ${
@@ -3816,7 +3843,7 @@ function WritebacksPanel({
       {allSucceeded && (
         <div className="mx-3 mt-3 flex items-center gap-1.5 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1.5 text-[10px] text-emerald-200">
           <ShieldCheck className="h-3 w-3 text-emerald-400 shrink-0" />
-          <span className="font-medium">{succeeded} post-mortem{pluralS(succeeded)} written to DataHub</span>
+          <span className="font-medium">{bannerText}</span>
           <span className="text-emerald-400/70">· verified</span>
         </div>
       )}
@@ -4731,10 +4758,21 @@ function RunSummaryCard({
   const resolved = result.incident?.resolvedAt ? new Date(result.incident.resolvedAt).getTime() : 0;
   const resolutionTime = resolved && created ? ((resolved - created) / 1000).toFixed(1) : null;
 
-  // Key metrics
+  // Key metrics. Write-backs count keys off kind === "write_back" (the
+  // canonical orchestrator emit, one per logical write) so a single post-
+  // mortem counts as 1, not 3 (tool_call + tool_result + write_back).
   const reasoningSteps = result.steps.length;
   const toolCalls = result.steps.filter((s) => s.kind === "tool_call").length;
-  const writebacks = result.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document").length;
+  const writebackSteps = result.steps.filter((s) => s.kind === "write_back");
+  // Dedup by toolName + URN so a duplicate emit never inflates the count.
+  const _writebackSeen = new Set<string>();
+  const writebacks = writebackSteps.filter((s) => {
+    const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+    const key = `${s.toolName ?? ""}|${(tr.urn as string) ?? ""}`;
+    if (_writebackSeen.has(key)) return false;
+    _writebackSeen.add(key);
+    return true;
+  }).length;
 
   // Actions taken — extract from tool_call steps. Each action includes its
   // kind + payload so the action chip can open a preview modal.
@@ -4761,21 +4799,29 @@ function RunSummaryCard({
     }
   }
 
-  // Write-backs — brief list
+  // Write-backs — brief list. Key ONLY off kind === "write_back" (the canonical
+  // emit from the orchestrator). Matching every step with toolName ===
+  // "ack.save_document" triple-counts (tool_call + tool_result + write_back).
+  // Dedup by toolName + URN so a duplicate emit never produces two chips.
   const writebackItems: string[] = [];
+  const writebackSeen = new Set<string>();
   for (const s of result.steps) {
-    if (s.kind === "write_back" || s.toolName === "ack.save_document") {
-      const tr = s.toolResult as Record<string, unknown> | undefined;
-      const title = tr?.title ? String(tr.title) : "";
-      if (title.toLowerCase().includes("post-mortem") || title.toLowerCase().includes("postmortem")) {
-        writebackItems.push("Post-mortem written to DataHub");
-      } else if (s.toolName === "ack.create_assertion" || (tr?.assertionType)) {
-        writebackItems.push("SLA assertion tightened");
-      } else if (title) {
-        writebackItems.push(title);
-      } else {
-        writebackItems.push("Write-back to DataHub");
-      }
+    if (s.kind !== "write_back") continue;
+    const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+    const urn = (tr.urn as string) ?? "";
+    const title = tr?.title ? String(tr.title) : "";
+    const dedupKey = `${s.toolName ?? ""}|${urn}`;
+    if (writebackSeen.has(dedupKey)) continue;
+    writebackSeen.add(dedupKey);
+
+    if (s.toolName === "ack.create_assertion" || tr.kind === "assertion" || tr.assertionType) {
+      writebackItems.push("SLA assertion tightened on DataHub");
+    } else if (title.toLowerCase().includes("post-mortem") || title.toLowerCase().includes("postmortem") || s.toolName === "ack.save_document") {
+      writebackItems.push("Post-mortem written to DataHub");
+    } else if (title) {
+      writebackItems.push(title);
+    } else {
+      writebackItems.push("Context doc written to DataHub");
     }
   }
 
@@ -4887,16 +4933,26 @@ function RunSummaryCard({
         </div>
       )}
 
-      {/* Write-backs */}
+      {/* Write-backs — durable context persisted to DataHub (the system of
+          record). Slack + GitHub are ephemeral notifications and appear in the
+          Actions section above. This distinction is intentional: a post-mortem
+          belongs in the knowledge graph so the NEXT incident can read it, not
+          in a Slack scrollback that scrolls away in hours. */}
       {writebackItems.length > 0 && (
         <div className="mb-3">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-rose-300 mb-2">Write-backs</div>
+          <div className="flex items-center gap-1.5 mb-2">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-rose-300">Write-backs</div>
+            <span className="text-[9px] text-slate-500 font-mono">· durable · DataHub</span>
+          </div>
           <div className="flex flex-wrap gap-2">
             {writebackItems.map((w, i) => (
               <span key={i} className="inline-flex items-center gap-1.5 rounded-md border border-rose-500/30 bg-rose-500/5 px-2.5 py-1 text-xs font-mono text-rose-200">
                 <FileText className="h-3 w-3 text-rose-400" /> {w}
               </span>
             ))}
+          </div>
+          <div className="mt-1.5 text-[9px] text-slate-500 leading-relaxed">
+            Persisted to DataHub so the next incident on this asset inherits this context. Slack + GitHub are ephemeral notifications — see Actions above.
           </div>
         </div>
       )}

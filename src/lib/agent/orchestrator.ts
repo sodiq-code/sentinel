@@ -230,6 +230,7 @@ export async function runSentinel(
   let totalCompletionTokens = 0
   let wrotePostMortem = false
   let piiRefusalOnPostMortem = false
+  let assertionTightened = false
   let finalReflection = ''
   let lastError: string | null = null
   let wasCircuitOpen = false
@@ -459,6 +460,29 @@ export async function runSentinel(
         }
         if (effectiveName === 'ack.save_document' && exec.status === 'ok') {
           wrotePostMortem = true
+          // Emit a canonical write_back event so the dashboard can key off
+          // kind === 'write_back' (one per logical write) instead of matching
+          // every tool_call/tool_result with toolName === 'ack.save_document'
+          // (which triple-counts: tool_call + tool_result + write_back).
+          emit('write_back', {
+            toolName: 'ack.save_document',
+            toolArgs: parsedArgs,
+            toolResult: exec.result,
+            reasoning:
+              'Sentinel wrote a post-mortem to DataHub. The next incident on this asset will inherit this context.',
+          })
+        }
+        if (effectiveName === 'ack.create_assertion' && exec.status === 'ok') {
+          assertionTightened = true
+          // Also emit a canonical write_back for the learned-SLA assertion so
+          // the dashboard shows it as a distinct DataHub write-back.
+          emit('write_back', {
+            toolName: 'ack.create_assertion',
+            toolArgs: parsedArgs,
+            toolResult: exec.result,
+            reasoning:
+              'Sentinel tightened the SLA assertion on DataHub. The new threshold will catch this failure earlier next time.',
+          })
         }
         // Read-budget accounting: track read-only calls. After READ_BUDGET
         // reads with zero action calls, inject a nudge forcing the agent to
@@ -693,6 +717,30 @@ export async function runSentinel(
         }
       }
 
+      // 5b. Tighten the SLA assertion on DataHub for freshness breaches — this
+      //     is the second durable write-back (the learned policy). It makes the
+      //     write-backs section show two DISTINCT DataHub artefacts: the post-
+      //     mortem context doc + the tightened SLA assertion. Schema/PII signals
+      //     skip this (a schema break doesn't tighten an SLA; PII is refused).
+      if (sig.scenarioId === 'nyc-taxi-freshness' && !assertionTightened) {
+        emit('plan', { reasoning: 'Tightening the freshness SLA assertion on DataHub from 1h to 45min so the next breach pages on-call earlier.' })
+        const asrt = await guardedExecute('ack.create_assertion', {
+          assetUrn: signal.assetUrn,
+          type: 'freshness',
+          description: 'Tightened freshness SLA — 45min (was 1h). Sentinel learned this from the 6h-stale breach on 2026-07-30.',
+          slaSeconds: 2700,
+        })
+        if (asrt.status === 'ok') {
+          assertionTightened = true
+          emit('write_back', {
+            toolName: 'ack.create_assertion',
+            toolArgs: { assetUrn: signal.assetUrn, type: 'freshness', slaSeconds: 2700 },
+            toolResult: asrt.result,
+            reasoning: 'Sentinel tightened the freshness SLA assertion on DataHub (1h → 45min). The next breach will page on-call 15 minutes earlier.',
+          })
+        }
+      }
+
       // The closed loop is now complete (or was already complete). Clear the
       // error so the incident is marked 'resolved' — NOT 'degraded'. The LLM
       // being temporarily unavailable is not a failure of the investigation;
@@ -774,6 +822,38 @@ export async function runSentinel(
                 : `Sentinel wrote a post-mortem to DataHub. The next incident on this asset will inherit this context.`
               : `Sentinel could not write the post-mortem to DataHub. The investigation summary is preserved in the audit log.`,
         })
+      }
+      // Also tighten the SLA assertion for freshness breaches on the post-loop
+      // fallback path (mirrors the deterministic fallback's step 5b).
+      if (sig.scenarioId === 'nyc-taxi-freshness' && !assertionTightened) {
+        try {
+          const asrtRes = await clients.ingestion.createAssertion({
+            assetUrn: signal.assetUrn,
+            type: 'freshness',
+            description: 'Tightened freshness SLA — 45min (was 1h). Sentinel learned this from the 6h-stale breach on 2026-07-30.',
+            slaSeconds: 2700,
+          })
+          await db.writeBack.create({
+            data: {
+              incidentUrn,
+              kind: 'assertion',
+              datahubUrn: asrtRes.urn,
+              status: 'succeeded',
+              path: 'rest_ingestion',
+              dataJson: JSON.stringify({ assetUrn: signal.assetUrn, type: 'freshness', slaSeconds: 2700 }),
+              ts: new Date(),
+            },
+          })
+          assertionTightened = true
+          emit('write_back', {
+            toolName: 'ack.create_assertion',
+            toolArgs: { assetUrn: signal.assetUrn, type: 'freshness', slaSeconds: 2700 },
+            toolResult: { urn: asrtRes.urn, kind: 'assertion', assetUrn: signal.assetUrn, type: 'freshness', slaSeconds: 2700, path: 'rest_ingestion' },
+            reasoning: 'Sentinel tightened the freshness SLA assertion on DataHub (1h → 45min). The next breach will page on-call 15 minutes earlier.',
+          })
+        } catch {
+          // non-fatal — the post-mortem is the mandatory artefact
+        }
       }
     } catch (err) {
       emit('error', { error: `Fallback post-mortem write failed: ${(err as Error).message}` })
