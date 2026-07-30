@@ -26,9 +26,9 @@ When a freshness, schema, or quality signal trips in DataHub, **Sentinel autonom
 2. **Acts** — opens a real GitHub issue + a draft pull request in the demo pipeline repo (never merged), posts a Block Kit triage card to the on-call Slack channel.
 3. **Writes back** — composes a structured post-mortem, a glossary proposal, an ownership proposal, and a new SLA assertion, then ingests them back into DataHub via the Agent Context Kit so the next incident is faster.
 
-The post-mortem Sentinel writes in Run 1 is the post-mortem it reads in Run 2 — every incident leaves the catalog richer. That's the closed loop. The agent runs a ReAct loop over DataHub's MCP tools (read), the Agent Context Kit (write), and real GitHub + Slack connectors — under a **code-level guardrail** that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass the guardrail by rephrasing.
+Every incident leaves the catalog richer: the post-mortem Sentinel writes in Run 1 is the post-mortem it reads in Run 2. That's the closed loop. The agent runs a ReAct loop over DataHub's MCP tools (read), the Agent Context Kit (write), and real GitHub + Slack connectors — under a **code-level guardrail** that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass the guardrail by rephrasing.
 
-The full loop runs live: real GitHub issues, real Slack posts, real DataHub write-backs. [Proof below.](#-verified-end-to-end)
+The full loop runs live: real GitHub issues, real Slack posts, real DataHub write-backs. [Proof below.](#verified-end-to-end)
 
 <p align="center">
   <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
@@ -92,13 +92,13 @@ bun run dev              # http://localhost:3000
 
 Open the dashboard, click **"Inject signal"** (or "Replay loop" for the compounding demo), and watch Sentinel triage → act → write back.
 
-To enable **live GitHub + Slack actions** (real issues, real Slack posts), drop real tokens into `.env` and flip `SENTINEL_DRY_RUN=false`. See [`.env.example`](./.env.example).
+**Live vs dry-run:** a fresh clone defaults to dry-run mode (`SENTINEL_DRY_RUN=true`) — the connectors write to a local trace log instead of calling GitHub/Slack. This is a safety + reproducibility choice so a cold clone runs without tokens. The [live Vercel deployment](https://sentinel-ivory-two-79.vercel.app) runs with real tokens and fires real actions (see the [verified artefacts below](#verified-end-to-end)). To test live actions from your own clone, add your own GitHub + Slack tokens to `.env` and set `SENTINEL_DRY_RUN=false` — see [`.env.example`](./.env.example).
 
 ---
 
-## ✅ Verified end-to-end — live artefacts produced by Sentinel
+## Verified end-to-end
 
-The full closed loop ran live on 2026-07-30. Every action below is a real, externally-verifiable artefact. No mocks, no dry-run.
+✅ The full closed loop ran live on 2026-07-30. Every action below is a real, externally-verifiable artefact. No mocks, no dry-run.
 
 | Action | Live artefact (click to verify) |
 |---|---|
@@ -122,7 +122,7 @@ The GitHub connector is **idempotent** (search-before-create): if an open issue 
 | Language | TypeScript 5 (strict) |
 | Styling | Tailwind CSS 4 + shadcn/ui (New York) |
 | Database | Prisma + SQLite (Turso libSQL in production) |
-| LLM | Multi-provider with failover: Gemini 2.0 Flash (production primary) → Groq (fallback) / z-ai gateway (sandbox default). Code-level circuit breaker + rate limiter. |
+| LLM | Multi-provider with failover: Gemini 2.0 Flash (production primary) → Groq (fallback). Code-level circuit breaker + rate limiter. No single provider's rate limit can stop the agent. |
 | Real-time | Streaming reasoning tokens via Server-Sent Events |
 | Connectors | GitHub REST API (issues + PRs, never merges), Slack Web API (Block Kit triage cards) |
 | Agent pattern | ReAct loop over DataHub MCP tools + Agent Context Kit, under a code-level guardrail |
@@ -165,21 +165,14 @@ sentinel/
 
 ---
 
-## Roadmap
-
-### Shipped with this submission
+## What ships in this repo
 
 - ✅ **[`incident-triage` DataHub Skill](./skill/incident-triage/)** — packaged, with `manifest.json` + `SKILL.md`, compatible with Cursor / Claude Code / Copilot / Codex / Gemini CLI.
 - ✅ **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** — generalises the closed-loop write-back pattern beyond incidents (applies to any metadata agent).
-- ✅ **Live demo** on Vercel + **source repo** with Apache 2.0 LICENSE + CI workflow.
-
-### Post-hackathon community work
-
-These are **external community actions** — the artefacts above already ship with this repo; what follows is getting them adopted beyond the hackathon:
-
-- **Week 1–2**: open a PR to merge `incident-triage` into [`datahub-project/datahub-skills`](https://github.com/datahub-project/datahub-skills); publish the RFC to the DataHub community; write the launch blog post.
-- **Month 1–3**: ML-audit sub-agent; second incident type (schema breakage) wired into the same loop; multi-reviewer approval UI.
-- **Quarter 2**: open-core enterprise pack (policy DSL, SSO, approval workflows, audit export, cross-incident pattern mining).
+- ✅ **[Live demo on Vercel](https://sentinel-ivory-two-79.vercel.app)** — real LLM, real GitHub, real Slack, real DataHub write-backs.
+- ✅ **[Apache 2.0 LICENSE](./LICENSE)** at the repo root.
+- ✅ **[CI workflow](./.github/workflows/ci.yml)** — lint + type-check + integration demo.
+- ✅ **[Examples](./examples/)** — sample issue, PR patch, post-mortem, assertion, demo-replay fixtures.
 
 ---
 
