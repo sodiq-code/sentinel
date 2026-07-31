@@ -24,6 +24,8 @@ Sentinel is the autonomous agent that **closes the loop** on data incidents. Whe
 
 This is live, not theatre: real GitHub issues, real Slack posts, real DataHub write-backs — under a code-level guardrail that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass it by rephrasing. [Proof below.](#verified-end-to-end)
 
+> 🔄 **Closed loop** — Run 1's post-mortem is Run 2's context · ✅ **Live proof** — 2 GitHub issues, 2 Slack cards, 1 DataHub write-back (real, not mock) · 🛡️ **Code-level guardrail** — refuses PII writes, never merges PRs · ⚡ **Groq llama-3.3-70b** + multi-provider failover
+
 <p align="center">
   <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
 </p>
@@ -86,15 +88,13 @@ bun run dev              # http://localhost:3000
 
 Open the dashboard, click **"Inject signal"** (or "Replay loop" for the compounding demo), and watch Sentinel triage → act → write back.
 
-**Live vs dry-run:** a fresh clone defaults to dry-run mode (`SENTINEL_DRY_RUN=true`) — the connectors write to a local trace log instead of calling GitHub/Slack. This is a safety + reproducibility choice so a cold clone runs without tokens. The [live Vercel deployment](https://sentinel-ivory-two-79.vercel.app) runs with real tokens and fires real actions (see the [verified artefacts below](#verified-end-to-end)).
-
-The dashboard ships a **DRY-RUN ↔ LIVE toggle** in the sticky demo control bar — flip it at runtime to switch the GitHub + Slack connectors between trace-log mode and real-API mode without touching `.env`. The toggle is persisted in a server-side `Setting` table (env vars are read-only on Vercel serverless, so the DB is the writable store) and a 3-second in-memory cache keeps warm lambdas fast. When LIVE, the control bar shows the live repo + Slack channel it will write to. To test live actions from your own clone, add your own GitHub + Slack tokens to `.env` and flip the toggle — see [`.env.example`](./.env.example).
+**Live vs dry-run:** a fresh clone defaults to dry-run (`SENTINEL_DRY_RUN=true`) — connectors write to a local trace log, no tokens needed. The [live Vercel deploy](https://sentinel-ivory-two-79.vercel.app) runs with real tokens and fires real actions (see [verified artefacts below](#verified-end-to-end)). The dashboard's **DRY-RUN ↔ LIVE toggle** flips connector mode at runtime without touching `.env` — add your own GitHub + Slack tokens to [`.env.example`](./.env.example) to test live actions from your clone.
 
 ---
 
 ## Verified end-to-end
 
-✅ The full closed loop ran live on 2026-07-30. Every action below is a real, externally-verifiable artefact. No mocks, no dry-run.
+✅ **Ran live on 2026-07-30** — 2 real GitHub issues · 2 real Slack triage cards · 1 real DataHub write-back · 23-step ReAct loop · zero mocks, zero dry-run. Every row below is a clickable, externally-verifiable artefact.
 
 | Action | Live artefact (click to verify) |
 |---|---|
@@ -152,11 +152,11 @@ sentinel/
 
 | Criterion | How Sentinel delivers |
 |---|---|
-| **Use of DataHub** | ReAct loop over the DataHub MCP Server (read tools) + Agent Context Kit (write-back). Lineage traversal, ownership/glossary/governance-tag reads, prior post-mortem search, structured write-back of post-mortem + glossary + ownership + assertion. |
-| **Technical Execution** | Multi-provider LLM with circuit breaker + failover. Code-level guardrail (not prompt-level) — PII refusal, no-merge rule, approval gate. Idempotent GitHub connector. Streaming reasoning. Prisma + Turso. |
-| **Originality** | The closed-loop write-back: the post-mortem Sentinel writes in Run 1 is the context it reads in Run 2. Each incident leaves the catalog smarter — structural compounding, not just a chat bot. |
-| **Real-World Usefulness** | Solves a real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs — not theatre. |
-| **Submission Quality** | Runs from a fresh clone in under a minute. Deterministic seed. Polished shadcn/ui console. Apache 2.0 LICENSE at the repo root. This README, a packaged DataHub Skill, and a closed-loop-metadata-agents RFC. |
+| **Use of DataHub** | ReAct loop over the MCP Server (read) + Agent Context Kit (write-back) — lineage, ownership, glossary, governance tags, prior post-mortems read; post-mortem + glossary + ownership + assertion written back. |
+| **Technical Execution** | Multi-provider LLM with circuit breaker + failover. **Code-level** guardrail (not prompt-level): PII refusal, no-merge, approval gate. Idempotent GitHub connector. Streaming reasoning. Prisma + Turso. |
+| **Originality** | **The closed loop** — Run 1's post-mortem is Run 2's context. Each incident leaves the catalog smarter. Structural compounding, not a chat bot. |
+| **Real-World Usefulness** | Real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs — not theatre. |
+| **Submission Quality** | Fresh clone runs in <1 min. Deterministic seed. Polished shadcn/ui console. Apache 2.0 LICENSE. This README + packaged Skill + RFC. |
 | **Bonus** | Ships a new **[`incident-triage` DataHub Skill](./skill/incident-triage/)** (compatible with Cursor, Claude Code, Copilot, Codex, Gemini CLI) and a **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** generalising the pattern beyond incidents. |
 
 ---
@@ -178,7 +178,7 @@ sentinel/
 
 ## Roadmap
 
-The closed loop is live and verified end-to-end. The foundation — multi-provider LLM with failover, code-level guardrail, idempotent connectors, the write-back bus, the runtime DRY-RUN toggle — is production-shaped. Where it grows next:
+**The closed loop is live.** The foundation — multi-provider LLM failover, code-level guardrail, idempotent connectors, write-back bus, runtime DRY-RUN toggle — is production-shaped. Where it grows next:
 
 - **Production DataHub binding** — the live GraphQL + MCP Server clients are already implemented in `src/lib/datahub/live/`; pointing Sentinel at a real DataHub deployment is a configuration step, and a webhook subscription turns the manual "Inject signal" button into autonomous event-driven response.
 - **Connector ecosystem** — PagerDuty, Jira, and MS Teams behind the same idempotent + dry-run + trace-log contract as GitHub and Slack today, so the action layer extends without new guardrail surface.
