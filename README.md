@@ -22,9 +22,9 @@ Sentinel is the autonomous agent that **closes the loop** on data incidents. Whe
 
 **The post-mortem it writes in Run 1 is the context it reads in Run 2.** Each run compounds. The catalog doesn't just record failures — it learns from them.
 
-This is live, not theatre: real GitHub issues, real Slack posts, real DataHub write-backs — under a code-level guardrail that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass it by rephrasing. [Proof below.](#verified-end-to-end)
+This runs live: real GitHub issues, real Slack posts, real DataHub write-backs — under a code-level guardrail that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass it by rephrasing. [Proof below.](#verified-end-to-end)
 
-> 🔄 **Closed loop** — Run 1's post-mortem is Run 2's context · ✅ **Live proof** — 2 GitHub issues, 2 Slack cards, 1 DataHub write-back (real, not mock) · 🛡️ **Code-level guardrail** — refuses PII writes, never merges PRs · ⚡ **Groq llama-3.3-70b** + multi-provider failover
+> 🔄 **Closed loop** — Run 1's post-mortem is Run 2's context · ✅ **Live proof** — 2 GitHub issues, 2 Slack cards, 1 post-mortem persisted to DataHub · 🛡️ **Code-level guardrail** — refuses PII writes, never merges PRs · ⚡ **Groq llama-3.3-70b** + multi-provider failover
 
 <p align="center">
   <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the Priya persona, three injectable DataHub signals, lineage graph, ReAct loop panel, and live connectors bar." width="860" />
@@ -94,7 +94,7 @@ Open the dashboard, click **"Inject signal"** (or "Replay loop" for the compound
 
 ## Verified end-to-end
 
-✅ **Ran live on 2026-07-30** — 2 real GitHub issues · 2 real Slack triage cards · 1 real DataHub write-back · 23-step ReAct loop · zero mocks, zero dry-run. Every row below is a clickable, externally-verifiable artefact.
+✅ **Ran live on 2026-07-30** — 2 GitHub issues · 2 Slack triage cards · 1 post-mortem persisted to DataHub · 23-step ReAct loop. Every row below is a clickable, externally-verifiable artefact.
 
 | Action | Live artefact (click to verify) |
 |---|---|
@@ -155,7 +155,7 @@ sentinel/
 | **Use of DataHub** | ReAct loop over the MCP Server (read) + Agent Context Kit (write-back) — lineage, ownership, glossary, governance tags, prior post-mortems read; post-mortem + glossary + ownership + assertion written back. |
 | **Technical Execution** | Multi-provider LLM with circuit breaker + failover. **Code-level** guardrail (not prompt-level): PII refusal, no-merge, approval gate. Idempotent GitHub connector. Streaming reasoning. Prisma + Turso. |
 | **Originality** | **The closed loop** — Run 1's post-mortem is Run 2's context. Each incident leaves the catalog smarter. Structural compounding, not a chat bot. |
-| **Real-World Usefulness** | Real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs — not theatre. |
+| **Real-World Usefulness** | Real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs. |
 | **Submission Quality** | Fresh clone runs in <1 min. Deterministic seed. Polished shadcn/ui console. Apache 2.0 LICENSE. This README + packaged Skill + RFC. |
 | **Bonus** | Ships a new **[`incident-triage` DataHub Skill](./skill/incident-triage/)** (compatible with Cursor, Claude Code, Copilot, Codex, Gemini CLI) and a **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** generalising the pattern beyond incidents. |
 
