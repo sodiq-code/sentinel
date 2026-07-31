@@ -31,7 +31,7 @@ when_not_to_use:
 
 This Skill teaches any agent (Claude Code, Cursor, Codex, Copilot, Gemini) how to perform the same closed-loop incident triage that the Sentinel agent (`github.com/sodiq-code/sentinel`) runs in code. It is the open-source, agent-agnostic form of the workflow.
 
-> Built for [Build with DataHub: The Agent Hackathon](https://datahub.devpost.com/) — bonus contribution. Targets Challenge 1: *Agents That Do Real Work*.
+> Built for [Build with DataHub: The Agent Hackathon](https://datahub.devpost.com/) — open-source contribution targeting Challenge 1, *Agents That Do Real Work*.
 
 ---
 
@@ -283,7 +283,7 @@ See:
 
 ## Acknowledgements
 
-Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends this to autonomous response with a write-back loop. Block's prior art is in the sponsor-validated category, not a competitor.
+Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends this to autonomous response with a write-back loop.
 
 ---
 

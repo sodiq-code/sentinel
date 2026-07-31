@@ -815,7 +815,7 @@ class GroqLlmClient implements ResilientLlmClient {
     // free tier, so the request almost always still succeeds. Only when
     // BOTH models 429 do we count one failure against the circuit breaker.
     //
-    // CAVEAT: the 8b model has a 6,000 tokens-per-minute TPM limit (vs 70b's
+    // NOTE: the 8b model has a 6,000 tokens-per-minute TPM limit (vs 70b's
     // higher tier). If the scratchpad has grown large after several tool
     // calls, the request may exceed 8b's TPM and return 413 "Request too
     // large". We estimate the prompt token count and SKIP the 8b fallback

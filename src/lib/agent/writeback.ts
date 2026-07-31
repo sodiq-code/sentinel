@@ -73,7 +73,7 @@ export interface WriteBackDocumentOutcome {
 // mutation (the same mutation the ACK wraps, exposed directly). In DEMO
 // mode the mock inspects the mutation name to persist the doc into the
 // SeedContextDoc table — so the fallback path produces a findable artefact,
-// not just a synthetic URN.
+// a persisted document retrievable on the next run.
 // ---------------------------------------------------------------------------
 
 const POSTMORTEM_MUTATION = `mutation SentinelPostMortemDoc($input: CreateDatahubPostMortemDocInput!) {

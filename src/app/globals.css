@@ -973,7 +973,7 @@ body {
 
 /* ───────────────────────────────────────────────────────────────────────────
    Cost & Efficiency Panel — shows estimated time saved, token cost, and
-   ROI metrics. Hackathons love ROI numbers. Sits in the right column.
+   ROI metrics. Quantifies the business value. Sits in the right column.
    ─────────────────────────────────────────────────────────────────────────── */
 @keyframes sentinel-cost-count {
   0% { transform: translateY(8px); opacity: 0; }

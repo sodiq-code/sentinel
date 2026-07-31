@@ -2,7 +2,7 @@
 
 **A generalisable pattern for agents that read AND write the context graph.**
 
-- **Status**: Draft — filed as a hackathon bonus contribution
+- **Status**: Live — reference implementation shipping at [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel)
 - **Author**: Sentinel Contributors
 - **Discussion**: https://github.com/sodiq-code/sentinel/discussions
 - **License**: Apache 2.0
@@ -182,7 +182,7 @@ The `incident-triage` Skill is the agent-agnostic form of the same loop — inst
 
 ## Acknowledgements
 
-Block's Goose + DataHub MCP Server use case demonstrated human-driven incident response with the MCP Server. Sentinel extends this to autonomous response with a write-back loop. Block's prior art is in the sponsor-validated category, not a competitor — the closed-loop pattern subsumes and extends it.
+Block's Goose + DataHub MCP Server use case demonstrated human-driven incident response with the MCP Server. Sentinel extends this to autonomous response with a write-back loop — the closed-loop pattern subsumes and extends it.
 
 The DataHub team's `datahub-skills` registry provided the Skill format the `incident-triage` Skill follows.
 

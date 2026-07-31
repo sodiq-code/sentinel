@@ -6383,7 +6383,7 @@ function IdleMonitoringState() {
 // ---------------------------------------------------------------------------
 // Cost & Efficiency Panel — estimated time saved, token cost, ROI metrics.
 // Sits in the right column between MetricsCard and PerformanceAnalytics.
-// Hackathons love ROI numbers — this panel quantifies Sentinel's value.
+// Quantifies Sentinel's business value: time saved vs. manual triage.
 // ---------------------------------------------------------------------------
 
 // Rough cost estimates (per 1M tokens) for the public providers.
@@ -7671,7 +7671,7 @@ const TOUR_STEPS = [
   { id: "reasoning-stream", title: "Reasoning Stream", description: "Watch Sentinel think in real-time. Each step shows the LLM's reasoning, tool calls, and results as they happen — the 'watch the agent think' effect." },
   { id: "lineage-graph", title: "Lineage Graph", description: "The data lineage graph from DataHub. Sentinel traverses upstream and downstream nodes to find the root cause and assess blast radius." },
   { id: "performance-analytics", title: "Performance Analytics", description: "Resolution rate, average response time, and efficiency metrics. Proves the agent's ROI — faster than human triage at a fraction of the cost." },
-  { id: "cost-efficiency", title: "Cost & Efficiency", description: "Time saved vs. manual triage, token cost, and ROI. Judges love ROI numbers — this panel quantifies the business value of autonomous incident response." },
+  { id: "cost-efficiency", title: "Cost & Efficiency", description: "Time saved vs. manual triage, token cost, and ROI. Quantifies the business value of autonomous incident response." },
   { id: "connectors", title: "Connectors", description: "GitHub and Slack connector status. In LIVE mode, Sentinel opens real GitHub issues and posts real Slack triage cards. In DRY-RUN mode, actions are logged locally." },
 ];
 

@@ -154,7 +154,7 @@ sentinel/
 |---|---|
 | **Use of DataHub** | ReAct loop over the MCP Server (read) + Agent Context Kit (write-back) — lineage, ownership, glossary, governance tags, prior post-mortems read; post-mortem + glossary + ownership + assertion written back. |
 | **Technical Execution** | Multi-provider LLM with circuit breaker + failover. **Code-level** guardrail (not prompt-level): PII refusal, no-merge, approval gate. Idempotent GitHub connector. Streaming reasoning. Prisma + Turso. |
-| **Originality** | **The closed loop** — Run 1's post-mortem is Run 2's context. Each incident leaves the catalog smarter. Structural compounding, not a chat bot. |
+| **Originality** | **The closed loop** — Run 1's post-mortem is Run 2's context. Each incident leaves the catalog smarter. Structural compounding across runs. |
 | **Real-World Usefulness** | Real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs. |
 | **Submission Quality** | Fresh clone runs in <1 min. Deterministic seed. Polished shadcn/ui console. Apache 2.0 LICENSE. This README + packaged Skill + RFC. |
 | **Bonus** | Ships a new **[`incident-triage` DataHub Skill](./skill/incident-triage/)** (compatible with Cursor, Claude Code, Copilot, Codex, Gemini CLI) and a **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** generalising the pattern beyond incidents. |
@@ -190,7 +190,7 @@ sentinel/
 
 ## Acknowledgements
 
-Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends that to **autonomous** response with a **write-back loop** — Block's prior art is in the sponsor-validated category, not a competitor. The `nyc-taxi` planted-freshness scenario uses the sponsor-provided sample dataset from the hackathon Resources tab.
+Block demonstrated human-driven incident response with Goose + the DataHub MCP Server. Sentinel extends that to **autonomous** response with a **write-back loop**. The `nyc-taxi` planted-freshness scenario uses the sponsor-provided sample dataset from the hackathon Resources tab.
 
 ---
 
