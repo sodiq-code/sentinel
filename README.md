@@ -27,7 +27,7 @@ This is live, not theatre: real GitHub issues, real Slack posts, real DataHub wr
 > 🔄 **Closed loop** — Run 1's post-mortem is Run 2's context · ✅ **Live proof** — 2 GitHub issues, 2 Slack cards, 1 DataHub write-back (real, not mock) · 🛡️ **Code-level guardrail** — refuses PII writes, never merges PRs · ⚡ **Groq llama-3.3-70b** + multi-provider failover
 
 <p align="center">
-  <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
+  <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the Priya persona, three injectable DataHub signals, lineage graph, ReAct loop panel, and live connectors bar." width="860" />
 </p>
 
 ---
