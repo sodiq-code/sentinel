@@ -2,7 +2,7 @@
 
 # Sentinel
 
-### An Autonomous Data Incident Response Agent for DataHub
+### Every incident leaves the catalog smarter.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)](./.github/workflows/ci.yml)
@@ -10,25 +10,19 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![Hackathon](https://img.shields.io/badge/DataHub-Agent%20Hackathon-emerald.svg)](https://datahub.devpost.com)
 
-**Submission for [Build with DataHub: The Agent Hackathon](https://datahub.devpost.com) · Challenge 1 — *Agents That Do Real Work***
+**The autonomous data-incident agent for DataHub.**
 
-**Live demo:** [sentinel-ivory-two-79.vercel.app](https://sentinel-ivory-two-79.vercel.app) · **Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel)
+**Live:** [sentinel-ivory-two-79.vercel.app](https://sentinel-ivory-two-79.vercel.app) · **Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel) · **Submission:** [Build with DataHub: The Agent Hack](https://datahub.devpost.com) — Challenge 1, *Agents That Do Real Work*
 
 </div>
 
 ---
 
-## What Sentinel does
+Sentinel is the autonomous agent that **closes the loop** on data incidents. When DataHub trips a freshness, schema, or quality signal, Sentinel triages the failing asset, opens the GitHub issue and Slack triage card an on-call engineer would have opened, then writes a structured post-mortem back into DataHub — so the next incident on that asset starts where the last one ended.
 
-When a freshness, schema, or quality signal trips in DataHub, **Sentinel autonomously**:
+**The post-mortem it writes in Run 1 is the context it reads in Run 2.** Each run compounds. The catalog doesn't just record failures — it learns from them.
 
-1. **Triages** the incident — reads the failing asset, traverses upstream lineage, reads ownership, glossary, governance tags, and any prior post-mortems via DataHub's MCP tools.
-2. **Acts** — opens a real GitHub issue + a draft pull request in the demo pipeline repo (never merged), posts a Block Kit triage card to the on-call Slack channel.
-3. **Writes back** — composes a structured post-mortem, a glossary proposal, an ownership proposal, and a new SLA assertion, then ingests them back into DataHub via the Agent Context Kit so the next incident is faster.
-
-Every incident leaves the catalog richer: the post-mortem Sentinel writes in Run 1 is the post-mortem it reads in Run 2. That's the closed loop. The agent runs a ReAct loop over DataHub's MCP tools (read), the Agent Context Kit (write), and real GitHub + Slack connectors — under a **code-level guardrail** that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass the guardrail by rephrasing.
-
-The full loop runs live: real GitHub issues, real Slack posts, real DataHub write-backs. [Proof below.](#verified-end-to-end)
+This is live, not theatre: real GitHub issues, real Slack posts, real DataHub write-backs — under a code-level guardrail that refuses destructive actions and gates governance writes behind human approval. The LLM cannot bypass it by rephrasing. [Proof below.](#verified-end-to-end)
 
 <p align="center">
   <img src="./docs/screenshots/dashboard-hero.png" alt="Sentinel dashboard — the incident console at rest, with the Priya persona, three injectable signals, lineage graph, and the sticky demo control bar." width="960" />
@@ -160,7 +154,7 @@ sentinel/
 |---|---|
 | **Use of DataHub** | ReAct loop over the DataHub MCP Server (read tools) + Agent Context Kit (write-back). Lineage traversal, ownership/glossary/governance-tag reads, prior post-mortem search, structured write-back of post-mortem + glossary + ownership + assertion. |
 | **Technical Execution** | Multi-provider LLM with circuit breaker + failover. Code-level guardrail (not prompt-level) — PII refusal, no-merge rule, approval gate. Idempotent GitHub connector. Streaming reasoning. Prisma + Turso. |
-| **Originality** | The closed-loop write-back: the post-mortem Sentinel writes in Run 1 is the context it reads in Run 2. Each incident leaves the catalog richer — structural compounding, not just a chat bot. |
+| **Originality** | The closed-loop write-back: the post-mortem Sentinel writes in Run 1 is the context it reads in Run 2. Each incident leaves the catalog smarter — structural compounding, not just a chat bot. |
 | **Real-World Usefulness** | Solves a real on-call pain (Priya persona, freshness breaches, PII exposure). Real GitHub issues, real Slack posts, real DataHub write-backs — not theatre. |
 | **Submission Quality** | Runs from a fresh clone in under a minute. Deterministic seed. Polished shadcn/ui console. Apache 2.0 LICENSE at the repo root. This README, a packaged DataHub Skill, and a closed-loop-metadata-agents RFC. |
 | **Bonus** | Ships a new **[`incident-triage` DataHub Skill](./skill/incident-triage/)** (compatible with Cursor, Claude Code, Copilot, Codex, Gemini CLI) and a **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** generalising the pattern beyond incidents. |
