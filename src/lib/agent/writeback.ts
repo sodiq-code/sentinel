@@ -49,6 +49,8 @@ export interface WriteBackDocumentInput {
   authorUrn?: Urn
   sentinelPostMortem?: boolean
   audit: AuditLogger
+  /** Override the WriteBack row's `kind` column. Default: 'context_doc'. */
+  dbKind?: string
 }
 
 export interface WriteBackDocumentOutcome {
@@ -108,6 +110,7 @@ export async function writeBackDocument(
   const format = input.format ?? 'markdown'
   const authorUrn = input.authorUrn
   const sentinelPostMortem = input.sentinelPostMortem ?? true
+  const dbKind = input.dbKind ?? 'context_doc'
 
   await audit.record({
     incidentUrn,
@@ -129,7 +132,7 @@ export async function writeBackDocument(
     await db.writeBack.create({
       data: {
         incidentUrn,
-        kind: 'context_doc',
+        kind: dbKind,
         datahubUrn: res.urn,
         status: 'succeeded',
         path: 'agent_context_kit',
@@ -168,7 +171,7 @@ export async function writeBackDocument(
       await db.writeBack.create({
         data: {
           incidentUrn,
-          kind: 'context_doc',
+          kind: dbKind,
           datahubUrn: null,
           status: 'failed',
           path: 'agent_context_kit',
@@ -215,7 +218,7 @@ export async function writeBackDocument(
       await db.writeBack.create({
         data: {
           incidentUrn,
-          kind: 'context_doc',
+          kind: dbKind,
           datahubUrn: fallbackRes.urn,
           status: 'succeeded',
           path: 'rest_ingestion',
@@ -261,7 +264,7 @@ export async function writeBackDocument(
       await db.writeBack.create({
         data: {
           incidentUrn,
-          kind: 'context_doc',
+          kind: dbKind,
           datahubUrn: null,
           status: 'failed',
           path: 'rest_ingestion',

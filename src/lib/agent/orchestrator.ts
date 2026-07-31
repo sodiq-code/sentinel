@@ -231,6 +231,7 @@ export async function runSentinel(
   let wrotePostMortem = false
   let piiRefusalOnPostMortem = false
   let assertionTightened = false
+  let governanceRefusalWritten = false
   let finalReflection = ''
   let lastError: string | null = null
   let wasCircuitOpen = false
@@ -266,6 +267,103 @@ export async function runSentinel(
         usage: partial.usage,
       },
     })
+  }
+
+  // ---------------------------------------------------------------------------
+  // Governance refusal write-back (PDF §12.3)
+  //
+  // When the PII guardrail refuses ack.save_document on a PII-tagged asset, the
+  // post-mortem itself is NOT written (correct — PII content must not be
+  // persisted without human approval). BUT the governance DECISION is a durable
+  // artefact: the next incident on this asset must be able to retrieve "Sentinel
+  // previously refused to write here because it is PII-tagged" so a human
+  // reviewer understands the governance history.
+  //
+  // This helper writes a governance refusal record to DataHub via the SAME dual
+  // write-back path (ACK → REST fallback) as a post-mortem, but with:
+  //   - sentinelPostMortem: false  (it's a governance audit entry, NOT a PM)
+  //   - a title/content that records the DECISION, not any PII data
+  //
+  // The record contains: the asset URN, the PII tags that triggered the refusal,
+  // the incident URN, the timestamp, and the next-step for a human data owner.
+  // It contains NO PII content — only governance metadata.
+  // ---------------------------------------------------------------------------
+  const writeGovernanceRefusalRecord = async (
+    piiTags: string[],
+    refusalReason: string,
+  ): Promise<void> => {
+    if (governanceRefusalWritten) return
+    const asset = sig.assetName
+    const ts = new Date().toISOString()
+    const title = `Sentinel governance refusal — PII write blocked on ${asset}`
+    const content = [
+      `# Sentinel governance refusal — PII write blocked on \`${asset}\``,
+      '',
+      '> **Governance audit entry** — this is NOT a post-mortem. Sentinel\'s code-level guardrail refused to write a post-mortem to this asset because it is tagged PII. This record documents the refusal decision so the next incident inherits the governance history.',
+      '',
+      `**Asset**: \`${signal.assetUrn}\``,
+      `**Incident**: \`${incidentUrn}\``,
+      `**Refused at**: ${ts}`,
+      `**Signal type**: pii (governance)`,
+      '',
+      '## Refusal reason',
+      refusalReason,
+      '',
+      '## PII governance tags detected',
+      ...piiTags.map((t) => `- \`${t}\``),
+      '',
+      '## What happened',
+      `A downstream consumer requested unmasked PII columns from \`${asset}\`. Sentinel's guardrail ran a code-level PII check via the DataHub MCP \`get_entities\` tool, detected the PII governance tags above, and REFUSED the \`ack.save_document\` write-back. No post-mortem content was written to this asset. The GitHub issue + Slack triage were still filed so humans are notified.`,
+      '',
+      '## What a human data owner must do',
+      '- Review the consumer access request and approve or deny unmasked field access.',
+      '- If approved, record the decision in the access-control log and update the consumer\'s policy.',
+      '- If documentation of this incident is required, a human must manually author the post-mortem after redacting any PII content.',
+      '',
+      '## Compounding',
+      'This governance refusal record is now attached to the asset. The next incident on this asset will retrieve it via \`mcp.search_documents\` and know that Sentinel previously refused to write here — a human has not yet approved documentation.',
+    ].join('\n')
+
+    try {
+      emit('plan', {
+        reasoning:
+          `Recording the PII governance refusal as a durable audit entry on DataHub. ` +
+          `This is NOT a post-mortem — it records only the governance DECISION (asset URN, tags, reason, timestamp). ` +
+          `The next incident on this asset will retrieve it and know Sentinel refused to write here.`,
+      })
+      const wb = await writeBackDocument({
+        clients,
+        incidentUrn,
+        assetUrn: signal.assetUrn,
+        title,
+        content,
+        format: 'markdown',
+        authorUrn: (await clients.mcp.get_me().catch(() => ({ urn: 'urn:li:corpuser:sentinel' }))).urn,
+        sentinelPostMortem: false,
+        audit,
+        dbKind: 'governance_refusal',
+      })
+      governanceRefusalWritten = true
+      emit('write_back', {
+        toolName: 'ack.save_document',
+        toolArgs: { assetUrn: signal.assetUrn, sentinelPostMortem: false, governanceRefusal: true },
+        toolResult: {
+          urn: wb.urn,
+          kind: 'governance_refusal',
+          path: wb.path,
+          status: wb.status,
+          fallback: wb.fallback,
+          primaryError: wb.primaryError,
+          title,
+        },
+        reasoning:
+          wb.status === 'succeeded'
+            ? `Sentinel recorded the PII governance refusal as a durable audit entry on DataHub (${wb.urn}). The next incident on this asset will inherit this governance history — no PII content was written, only the decision metadata.`
+            : `Sentinel could not persist the governance refusal record to DataHub. The refusal is still recorded in the audit log.`,
+      })
+    } catch (err) {
+      emit('error', { error: `Governance refusal write-back failed: ${(err as Error).message}` })
+    }
   }
 
   // 2. The ReAct loop.
@@ -436,9 +534,24 @@ export async function runSentinel(
           // For PII refusals on ack.save_document, mark the refusal so the
           // post-loop fallback does NOT re-attempt the write (PDF §12.3 — the
           // refusal is the correct agent behaviour, not a missing post-mortem).
+          // THEN write a durable governance refusal record to DataHub — this is
+          // NOT a post-mortem (no PII content), it records only the governance
+          // DECISION so the next incident inherits the history.
           if (effectiveName === 'ack.save_document' && verdict.decision === 'refuse') {
             wrotePostMortem = true
             piiRefusalOnPostMortem = true
+            const piiCheck = await checkPiiForAssetInline(clients.mcp, signal.assetUrn)
+            if (piiCheck) {
+              await writeGovernanceRefusalRecord(
+                piiCheck.tags.map((t) => t.name),
+                piiCheck.reason ?? verdict.reason ?? 'PII governance tag detected',
+              )
+            } else {
+              await writeGovernanceRefusalRecord(
+                ['PII'],
+                verdict.reason ?? 'PII governance tag detected',
+              )
+            }
           }
           messages.push({
             role: 'tool',
@@ -714,6 +827,21 @@ export async function runSentinel(
               'Sentinel\'s guardrail REFUSED the post-mortem write-back because the asset is tagged PII + Restricted. ' +
               'No post-mortem was written — a human data owner must approve any write to a PII asset. The GitHub issue and Slack triage were still filed.',
           })
+          // Write a durable governance refusal record to DataHub (not PII
+          // content — just the decision metadata). The governanceRefusalWritten
+          // flag dedupes if the main loop already wrote it.
+          const piiCheck = await checkPiiForAssetInline(clients.mcp, signal.assetUrn)
+          if (piiCheck) {
+            await writeGovernanceRefusalRecord(
+              piiCheck.tags.map((t) => t.name),
+              piiCheck.reason ?? 'PII governance tag detected',
+            )
+          } else {
+            await writeGovernanceRefusalRecord(
+              ['PII', 'Restricted'],
+              'Asset carries PII + Restricted governance tags. Write-back refused.',
+            )
+          }
         }
       }
 
@@ -781,6 +909,12 @@ export async function runSentinel(
             `Sentinel blocked the automatic post-mortem on this PII-tagged asset: ${piiCheck.tags.map((t) => `'${t.name}'`).join(', ')}. ` +
             `A human must approve any write to a PII asset; the guardrail upholds this rule for the fallback path as well.`,
         })
+        // Write a durable governance refusal record to DataHub (not PII content —
+        // just the decision metadata). The governanceRefusalWritten flag dedupes.
+        await writeGovernanceRefusalRecord(
+          piiCheck.tags.map((t) => t.name),
+          piiCheck.reason ?? 'PII governance tag detected on fallback path',
+        )
       } else {
         const me = await clients.mcp.get_me()
         // Use the type-specific post-mortem content (freshness / schema / pii)
@@ -864,6 +998,24 @@ export async function runSentinel(
         'Sentinel\'s guardrail refused the post-mortem on this PII-tagged asset. ' +
         'No post-mortem was written — a human must approve any write to a PII asset.',
     })
+    // Safety net: if neither the main loop nor the deterministic fallback
+    // wrote the governance refusal record (e.g. the LLM path refused but the
+    // deterministic fallback didn't run because the circuit was open), write
+    // it here. The governanceRefusalWritten flag dedupes.
+    if (!governanceRefusalWritten) {
+      const piiCheck = await checkPiiForAssetInline(clients.mcp, signal.assetUrn)
+      if (piiCheck) {
+        await writeGovernanceRefusalRecord(
+          piiCheck.tags.map((t) => t.name),
+          piiCheck.reason ?? 'PII governance tag detected',
+        )
+      } else {
+        await writeGovernanceRefusalRecord(
+          ['PII', 'Restricted'],
+          'Asset carries PII + Restricted governance tags. Write-back refused.',
+        )
+      }
+    }
   }
 
   // 4. Resolve the incident.

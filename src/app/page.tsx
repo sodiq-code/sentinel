@@ -819,9 +819,21 @@ function Console() {
       if (status === "resolved") addToast("Incident resolved", "success");
       else if (status === "degraded") addToast("Incident degraded", "warning");
       else if (status === "failed") addToast("Incident failed", "error");
-      // Toast: write-backs
-      const writebackSteps = data.steps.filter((s) => s.kind === "write_back" || s.toolName === "ack.save_document");
-      if (writebackSteps.length > 0) addToast("Post-mortem written to DataHub", "success");
+      // Toast: write-backs — distinguish governance refusals from post-mortems
+      const writebackSteps = data.steps.filter((s) => s.kind === "write_back");
+      if (writebackSteps.length > 0) {
+        const hasGovRefusal = writebackSteps.some((s) => {
+          const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+          return tr.kind === "governance_refusal" || (tr.title && String(tr.title).toLowerCase().includes("governance refusal"));
+        });
+        const hasPostMortem = writebackSteps.some((s) => {
+          const tr = (s.toolResult ?? {}) as Record<string, unknown>;
+          return tr.kind !== "governance_refusal" && !(tr.title && String(tr.title).toLowerCase().includes("governance refusal"));
+        });
+        if (hasGovRefusal && hasPostMortem) addToast("Post-mortem + governance refusal written to DataHub", "success");
+        else if (hasGovRefusal) addToast("Governance refusal recorded on DataHub", "success");
+        else addToast("Post-mortem written to DataHub", "success");
+      }
       // Toast: guardrail refusals
       const guardrailRefusals = data.steps.filter(
         (s) => s.toolResult && typeof s.toolResult === "object" && (s.toolResult as Record<string, unknown>)?.guardrail === true && (s.toolResult as Record<string, unknown>)?.decision === "refuse",
@@ -2321,11 +2333,19 @@ function WriteBackPanel({
   // Accurate banner when the run wrote BOTH a post-mortem AND an SLA assertion.
   const pmCount = writebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.save_document" || w.kind === "context_doc")).length;
   const asrtCount = writebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.create_assertion" || w.kind === "assertion")).length;
-  const bannerText = asrtCount > 0 && pmCount > 0
-    ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
-    : asrtCount > 0
-      ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
-      : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
+  const govCount = writebacks.filter((w) => w.status === "succeeded" && w.kind === "governance_refusal").length;
+  const bannerText =
+    govCount > 0 && asrtCount > 0
+      ? `${govCount} governance refusal${pluralS(govCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} recorded on DataHub`
+    : govCount > 0 && pmCount > 0
+      ? `${pmCount} post-mortem${pluralS(pmCount)} + ${govCount} governance refusal${pluralS(govCount)} written to DataHub`
+    : govCount > 0
+      ? `${govCount} governance refusal${pluralS(govCount)} recorded on DataHub`
+    : asrtCount > 0 && pmCount > 0
+      ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
+      : asrtCount > 0
+        ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
+        : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
 
   return (
     <div className={`rounded-lg border p-3.5 ${
@@ -3868,7 +3888,7 @@ function WritebacksPanel({
       const status = tr.status === "succeeded" ? "succeeded" : tr.status === "failed" ? "failed" : "succeeded";
       return {
         id: `live-${i}-${s.ts}`,
-        kind: s.toolName ?? "ack.save_document",
+        kind: (tr.kind as string) ?? s.toolName ?? "ack.save_document",
         datahubUrn: (tr.urn as string) ?? null,
         status,
         path: (tr.path as string) ?? "/live",
@@ -3903,11 +3923,19 @@ function WritebacksPanel({
   // when the run wrote BOTH a post-mortem AND an SLA assertion.
   const pmCount = allWritebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.save_document" || w.kind === "context_doc")).length;
   const asrtCount = allWritebacks.filter((w) => w.status === "succeeded" && (w.kind === "ack.create_assertion" || w.kind === "assertion")).length;
-  const bannerText = asrtCount > 0 && pmCount > 0
-    ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
-    : asrtCount > 0
-      ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
-      : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
+  const govCount = allWritebacks.filter((w) => w.status === "succeeded" && w.kind === "governance_refusal").length;
+  const bannerText =
+    govCount > 0 && asrtCount > 0
+      ? `${govCount} governance refusal${pluralS(govCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} recorded on DataHub`
+    : govCount > 0 && pmCount > 0
+      ? `${pmCount} post-mortem${pluralS(pmCount)} + ${govCount} governance refusal${pluralS(govCount)} written to DataHub`
+    : govCount > 0
+      ? `${govCount} governance refusal${pluralS(govCount)} recorded on DataHub`
+    : asrtCount > 0 && pmCount > 0
+      ? `${pmCount} post-mortem${pluralS(pmCount)} + ${asrtCount} SLA assertion${pluralS(asrtCount)} written to DataHub`
+      : asrtCount > 0
+        ? `${asrtCount} SLA assertion${pluralS(asrtCount)} tightened on DataHub`
+        : `${pmCount || succeeded} post-mortem${pluralS(pmCount || succeeded)} written to DataHub`;
 
   return (
     <section className={`rounded-xl border premium-card sentinel-glass ${
@@ -5048,6 +5076,8 @@ function RunSummaryCard({
 
     if (s.toolName === "ack.create_assertion" || tr.kind === "assertion" || tr.assertionType) {
       writebackItems.push("SLA assertion tightened on DataHub");
+    } else if (tr.kind === "governance_refusal" || (title && title.toLowerCase().includes("governance refusal"))) {
+      writebackItems.push("Governance refusal recorded on DataHub");
     } else if (title.toLowerCase().includes("post-mortem") || title.toLowerCase().includes("postmortem") || s.toolName === "ack.save_document") {
       writebackItems.push("Post-mortem written to DataHub");
     } else if (title) {
