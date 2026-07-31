@@ -22,7 +22,7 @@ import { PROMPT_LAYERS_INLINE } from './_inline'
 const PROMPTS_DIR = join(process.cwd(), 'src', 'lib', 'agent', 'prompts')
 
 /** Bumped when a prompt layer materially changes — emitted in the system message. */
-export const PROMPT_VERSION = 'sentinel-v2-phase3-1'
+export const PROMPT_VERSION = 'sentinel-v2.3'
 
 function readLayer(name: string): string {
   // 1) Try the live .md file from disk (local dev — the canonical source).

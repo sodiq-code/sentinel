@@ -1197,7 +1197,7 @@ function Console() {
             )}
             <LlmCircuitChip status={llmStatus.data} />
             <Chip icon={Activity} label="Tokens" value={totalTokens ? `${(totalTokens.promptTokens + totalTokens.completionTokens).toLocaleString()}` : "awaiting…"} />
-            <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
+            <Chip icon={BookOpen} label="Prompt" value={result?.promptVersion ?? "sentinel-v2.3"} mono />
             {/* Auto-Resolve toggle — visual indicator that Sentinel would
                 execute write-backs without manual approval (PII still gated
                 server-side by the guardrail policy). Default OFF. */}
@@ -5892,7 +5892,7 @@ function SettingsDrawer({
               mono
               accent={llmStatus?.failoverEnabled ? "emerald" : "slate"}
             />
-            <SettingsRow label="Prompt version" value={result?.promptVersion ?? "sentinel-v2-phase2-1"} mono />
+            <SettingsRow label="Prompt version" value={result?.promptVersion ?? "sentinel-v2.3"} mono />
           </SettingsSection>
 
           {/* API keys presence (redacted) */}

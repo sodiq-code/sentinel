@@ -5,7 +5,7 @@
     "scenarioId": "nyc-taxi-freshness",
     "llmModel": "gemini-2.0-flash",
     "llmProvider": "gemini",
-    "promptVersion": "sentinel-v2-phase2-1",
+    "promptVersion": "sentinel-v2.3",
     "dryRun": true
   },
   "incident": {
@@ -204,6 +204,6 @@
   "totalTokens": { "promptTokens": 10751, "completionTokens": 437 },
   "llmModel": "gemini-2.0-flash",
   "llmProvider": "gemini",
-  "promptVersion": "sentinel-v2-phase2-1",
+  "promptVersion": "sentinel-v2.3",
   "auditMirrorMode": "demo"
 }

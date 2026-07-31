@@ -259,6 +259,6 @@
   },
   "llmModel": "llama-3.3-70b-versatile",
   "llmProvider": "groq",
-  "promptVersion": "sentinel-v2-phase2-1",
+  "promptVersion": "sentinel-v2.3",
   "auditMirrorMode": "demo"
 }
