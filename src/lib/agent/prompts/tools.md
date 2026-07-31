@@ -36,9 +36,9 @@ Tool names use the `mcp.*`, `ack.*`, and `action.*` namespaces:
 
 | Tool | What it does | Governance |
 |---|---|---|
-| `action.github_open_issue` | Open a GitHub issue in the demo pipeline repo. | **Executed** (trace log by default; live GitHub when `SENTINEL_DRY_RUN=false`). |
+| `action.github_open_issue` | Open a GitHub issue in the demo pipeline repo. | **Executed** (trace log when DRY-RUN is on; live GitHub when DRY-RUN is off — controllable from the dashboard toggle or the `SENTINEL_DRY_RUN` env var). |
 | `action.github_open_pr` | Open a GitHub pull request in the demo pipeline repo. **Sentinel NEVER merges** — the PR is left OPEN for human review. | **Executed**; `NoMergeRule` enforced in code. |
-| `action.slack_post_triage` | Post a triage card (3 bullets) to the demo Slack channel. | **Executed** (trace log by default; live Slack when `SENTINEL_DRY_RUN=false`). |
+| `action.slack_post_triage` | Post a triage card (3 bullets) to the demo Slack channel. | **Executed** (trace log when DRY-RUN is on; live Slack when DRY-RUN is off — controllable from the dashboard toggle or the `SENTINEL_DRY_RUN` env var). |
 
 ## Calling convention
 

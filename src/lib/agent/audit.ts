@@ -1,10 +1,10 @@
 // =============================================================================
-// Sentinel — Audit log (Prisma-backed, PDF §9.4.3)
+// Sentinel — Audit log (Prisma-backed)
 //
 // Every reasoning step + lifecycle event is recorded to the AuditEvent table.
 // The reasoning trace is reconstructed from AuditEvents ordered by ts, so the
-// Phase 2 console can render the full "I can see the agent thinking" view
-// (PDF §5.3) without a separate trace table.
+// console can render the full "I can see the agent thinking" view
+// without a separate trace table.
 // =============================================================================
 
 import { db } from '@/lib/db'

@@ -1,5 +1,5 @@
 // =============================================================================
-// Sentinel — Connector environment helpers (Phase 3)
+// Sentinel — Connector environment helpers
 //
 // Tiny shared helpers used by both connectors (github, slack):
 //   - requireEnv(name, who) — fail loudly if a secret is missing, so the

@@ -1,13 +1,13 @@
 // =============================================================================
-// Sentinel — Live IngestionClient (LIVE mode — Phase 1 stub)
+// Sentinel — Live IngestionClient (LIVE mode — structure stub)
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1 — Real implementation shipped alongside")
+// Live implementation that ships alongside the mock.
 //
-// The REST/GraphQL fallback for write-back (PDF §12.2 dual write-back path).
+// The REST/GraphQL fallback for write-back (dual write-back path).
 // Used when the Agent Context Kit path is unavailable OR for `createAssertion`
-// (the only direct write — reversible, per PDF §9.5.5 threat model).
+// (the only direct write — reversible).
 //
-// Phase 1 ships the structure. Phase 4 wires the orchestrator to use it.
+// Ships the structure. The orchestrator is wired to use it via DATAHUB_MODE.
 // =============================================================================
 
 import type {
@@ -82,7 +82,7 @@ export class LiveIngestionClient implements IngestionClient {
 
   async createAssertion(input: AssertionInput): Promise<{ urn: Urn }> {
     // DataHub assertion creation is the only direct, reversible write Sentinel
-    // performs (PDF §9.5.5). We POST to /api/entities with the assertion JSON-LD.
+    // performs. We POST to /api/entities with the assertion JSON-LD.
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {

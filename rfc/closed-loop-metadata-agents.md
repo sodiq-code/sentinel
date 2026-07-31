@@ -45,7 +45,7 @@ Read-only agents cannot accumulate this knowledge. They start from scratch every
 
 ## Specification
 
-The closed-loop-metadata-agent pattern has six phases:
+The closed-loop-metadata-agent pattern has six stages:
 
 ```
 observe signal
@@ -57,13 +57,13 @@ observe signal
   → update graph
 ```
 
-### Phase 1 — observe signal
+### 1. Observe signal
 
 The agent subscribes to a signal source. For incidents: DataHub assertion failures (freshness, schema, quality). For ML audits: feature drift signals. For compliance: policy violations. For code generation: a PR comment.
 
 The signal is structured (typed URN + payload), not free text.
 
-### Phase 2 — ground in context graph
+### 2. Ground in context graph
 
 The agent reads the relevant subgraph via the catalog's API:
 
@@ -75,7 +75,7 @@ The agent reads the relevant subgraph via the catalog's API:
 
 This is RAG over a typed graph, not a vector store. The graph provides lineage constraints, ownership constraints, and governance constraints that embeddings alone cannot.
 
-### Phase 3 — reason over lineage + ownership + governance
+### 3. Reason over lineage + ownership + governance
 
 A ReAct-style loop (plan → act → observe → reflect) over the read tools. The agent reasons about:
 
@@ -84,9 +84,9 @@ A ReAct-style loop (plan → act → observe → reflect) over the read tools. T
 - Does the governance posture allow the proposed action? (PII refusal, no-merge policy, human-approval gate)
 - Has this happened before? What did the post-mortem say?
 
-The reasoning is visible (streamed to a UI) because judges and on-call engineers reward "I can see the agent thinking".
+The reasoning is visible (streamed to a UI) because on-call engineers need to verify the agent's logic before trusting its actions.
 
-### Phase 4 — act in the world
+### 4. Act in the world
 
 The agent takes real-world actions via external connectors:
 
@@ -96,7 +96,7 @@ The agent takes real-world actions via external connectors:
 
 All actions are scoped (scoped tokens, demo repos/channels/workspaces). All actions are audited.
 
-### Phase 5 — write structured knowledge back to the graph
+### 5. Write structured knowledge back to the graph
 
 The agent writes back to the catalog:
 
@@ -107,7 +107,7 @@ The agent writes back to the catalog:
 
 The dual write-back path (Agent Context Kit primary + REST ingestion fallback) ensures robustness against API version drift.
 
-### Phase 6 — await human feedback → update graph
+### 6. Await human feedback → update graph
 
 The pending approvals surface in a UI. When a human approves, the glossary/ownership proposals are applied. The audit log records every step. The next incident reads the post-mortem this one wrote — the loop compounds.
 
@@ -162,7 +162,7 @@ A correctly-implemented closed-loop-metadata-agent has five properties:
 
 Sentinel (https://github.com/sodiq-code/sentinel) is the reference implementation of this pattern. It targets the *Agents That Do Real Work* challenge at the Build with DataHub Agent Hackathon.
 
-- **Stack**: Next.js 16 + TypeScript + Prisma/Turso + shadcn/ui + Gemini 2.0 Flash (primary) → Groq (fallback)
+- **Stack**: Next.js 16 + TypeScript + Prisma/Turso + shadcn/ui + Groq `llama-3.3-70b-versatile` (production primary) with a multi-provider failover bus (Gemini, NVIDIA NIM, z-ai gateway swappable via `LLM_PROVIDER`)
 - **Read tools**: DataHub MCP Server (12 tools)
 - **Write tools**: DataHub Agent Context Kit (8 tools) + REST ingestion fallback
 - **Action connectors**: GitHub, Slack (scoped)

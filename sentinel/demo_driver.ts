@@ -1,32 +1,31 @@
 /**
  * Sentinel — Demo driver.
  *
- * PDF §9.4.1 + §10.2 + §11.3 + §12.2 (red-team: deterministic assertion setup).
+ * Deterministic assertion setup.
  *
  * Responsibilities:
  *  - Inject a freshness failure into the nyc-taxi dataset for the demo
  *  - Explicitly create the assertion against the nyc-taxi downstream table
  *    on setup so the failure is DETERMINISTIC and reproducible
- *    (PDF §12.3 hidden assumption: 'nyc-taxi planted freshness issue may
- *     not auto-fire — DemoDriver creates the assertion explicitly')
+ *    ('nyc-taxi planted freshness issue may not auto-fire — DemoDriver
+ *    creates the assertion explicitly')
  *  - Replay the loop (Run 1 → Run 2 reads Run 1's post-mortem — the
- *    compounding beat, PDF §12.2)
+ *    compounding beat)
  *  - Dry-run mode: pre-recorded tool-call trace replayed through the SAME
- *    console UI (PDF §11.3 fallback 1 — judges can't tell the difference)
+ *    console UI so viewers see the same surface
  *
- * Phase 0: interface + the scenario catalogue. Phase 5 implements the
- * replay; Phase 7 wires the dry-run trace.
+ * Interface + the scenario catalogue.
  */
 
 export type DemoScenarioId =
-  | 'nyc-taxi-freshness' // PDF §11.1 main scenario
-  | 'showcase-ecommerce-schema' // PDF §12.2 second scenario
-  | 'customer-pii-refusal'; // PDF §11.1 governance refusal beat
+  | 'nyc-taxi-freshness' // main scenario
+  | 'showcase-ecommerce-schema' // second scenario
+  | 'customer-pii-refusal'; // governance refusal beat
 
 export interface DemoScenario {
   id: DemoScenarioId;
   title: string;
-  /** PDF beat that maps to this scenario (for the shot-list overlay). */
+  /** The beat that maps to this scenario (for the shot-list overlay). */
   beat: string;
   /** The planted-assertion URN that fires. */
   assertionUrn: string;
@@ -34,11 +33,11 @@ export interface DemoScenario {
   assetUrn: string;
   /** The signal type. */
   type: 'freshness' | 'schema' | 'quality' | 'pii';
-  /** The persona (PDF §11.1 beat 0:10–0:25). */
+  /** The persona (beat 0:10–0:25). */
   persona: { name: string; role: string; avatar?: string };
 }
 
-/** The catalogue — Phase 1 will seed the Prisma fixtures with these. */
+/** The catalogue — seeds the Prisma fixtures with these. */
 export const DEMO_SCENARIOS: Record<DemoScenarioId, DemoScenario> = {
   'nyc-taxi-freshness': {
     id: 'nyc-taxi-freshness',
@@ -72,35 +71,34 @@ export const DEMO_SCENARIOS: Record<DemoScenarioId, DemoScenario> = {
 /** Public interface. */
 export interface DemoDriver {
   /** Set up the scenario: explicitly create the assertion so the failure
-   *  is deterministic (PDF §12.3). Phase 5. */
+   *  is deterministic. */
   setup(scenario: DemoScenarioId): Promise<{ assertionUrn: string; assetUrn: string }>;
-  /** Inject the failing signal — fires the assertion. Phase 5. */
+  /** Inject the failing signal — fires the assertion. */
   inject(scenario: DemoScenarioId): Promise<{ signalId: string; assertionUrn: string }>;
-  /** Replay the loop for the compounding demo (Run 1 → Run 2). Phase 5. */
+  /** Replay the loop for the compounding demo (Run 1 → Run 2). */
   replay(scenario: DemoScenarioId, runs: number): Promise<{ run1: unknown; run2: unknown }>;
-  /** Dry-run mode — pre-recorded trace replayed through the same UI. Phase 7. */
+  /** Dry-run mode — pre-recorded trace replayed through the same UI. */
   dryRun(scenario: DemoScenarioId): Promise<{ trace: unknown[] }>;
 }
 
 /**
- * Phase 0 placeholder. Phase 5 wires this to the Orchestrator + the seeded
- * fixtures from Phase 1.
+ * Wires to the Orchestrator + the seeded fixtures.
  */
 export class SentinelDemoDriver implements DemoDriver {
   async setup(_scenario: DemoScenarioId): Promise<{ assertionUrn: string; assetUrn: string }> {
     throw new Error(
-      'SentinelDemoDriver is a Phase 5 deliverable. ' +
-        'Phase 0 ships the scenario catalogue. See refined v2 plan Part D, Phase 5.',
+      'SentinelDemoDriver is not implemented. ' +
+        'The scenario catalogue ships as the stable contract.',
     );
   }
   async inject(_scenario: DemoScenarioId): Promise<{ signalId: string; assertionUrn: string }> {
-    throw new Error('Phase 5 deliverable');
+    throw new Error('Not implemented');
   }
   async replay(_scenario: DemoScenarioId, _runs: number): Promise<{ run1: unknown; run2: unknown }> {
-    throw new Error('Phase 5 deliverable');
+    throw new Error('Not implemented');
   }
   async dryRun(_scenario: DemoScenarioId): Promise<{ trace: unknown[] }> {
-    throw new Error('Phase 7 deliverable');
+    throw new Error('Not implemented');
   }
 }
 

@@ -1,7 +1,7 @@
 // =============================================================================
-// Sentinel — Pre-execute hook (Phase 3)
+// Sentinel — Pre-execute hook
 //
-// This is the heart of the Phase 3 guardrail. The orchestrator calls
+// This is the heart of the guardrail. The orchestrator calls
 // `checkBeforeExecute(toolName, args, ctx)` BEFORE every tool_call. The hook:
 //   1. For action.* tools → no-merge check, allow (the trace + dry-run
 //      toggle are the demo's approval surface).
@@ -23,7 +23,7 @@
 //                approval request as the tool_result, persists the
 //                PendingApproval row, surfaces it in the UI.
 //
-// The orchestrator records every check to the AuditEvent table (PDF §9.3.5)
+// The orchestrator records every check to the AuditEvent table
 // so the demo UI can render the guardrail timeline.
 // =============================================================================
 
@@ -52,7 +52,7 @@ export interface GuardrailVerdict {
 function piiRuleFor(assetUrn: string): GuardrailRule {
   return {
     id: 'pii-refusal',
-    description: 'Refuse write-back to a PII-tagged asset without approval. (PDF §12.3)',
+    description: 'Refuse write-back to a PII-tagged asset without approval.',
     async check(toolName, _args, ctx) {
       // Only the explicit direct-write tool triggers PII check; proposal
       // tools are handled by DirectWriteAllowlistRule.

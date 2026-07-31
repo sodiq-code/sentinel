@@ -1,12 +1,12 @@
 // =============================================================================
 // Sentinel — Orchestrator (the ReAct reasoning loop)
 //
-// PDF §9.3.2 Option A: single orchestrator + tools.
-// PDF §9.4.2 incident lifecycle, implemented as a ReAct loop:
+// Single orchestrator + tools design.
+// Incident lifecycle, implemented as a ReAct loop:
 //   detect → triage → diagnose → remediate → document → write-back.
-// PDF §9.4.4: layered system prompt.
-// PDF §9.5.4: retries with exponential backoff on tool failure.
-// PDF §5.3: visible reasoning — every step is emitted + recorded.
+// Layered system prompt.
+// Retries with exponential backoff on tool failure.
+// Visible reasoning — every step is emitted + recorded.
 //
 // The loop:
 //   1. Create the Incident + SignalRecord in the DB; emit signal_received.
@@ -18,7 +18,7 @@
 //        - execute each tool_call (structured args, schema-validated),
 //          emit tool_call + tool_result steps, append results to the scratchpad
 //   4. Post-loop: ensure a post-mortem context doc was written (the compounding
-//      artefact, PDF §12.2). If the agent did not call ack.save_document, the
+//      artefact). If the agent did not call ack.save_document, the
 //      orchestrator writes one from the final reflection.
 //   5. Mark the incident resolved (or failed) and emit incident_resolved.
 // =============================================================================
@@ -53,7 +53,7 @@ import type {
   Signal,
 } from './types'
 
-// MAX_ITERS caps the ReAct loop. Now that z-ai (sandbox) and Gemini
+// MAX_ITERS caps the ReAct loop. Now that z-ai (local development) and Gemini
 // (production) have generous TPM budgets, we can afford 10 iterations —
 // enough for the agent to do reads (3-4), open the GitHub issue, post the
 // Slack triage, AND write the post-mortem via ack.save_document before the
@@ -67,7 +67,7 @@ const MAX_ITERS = 10
 const SOFT_DEADLINE_MS = 55_000
 
 // ---------------------------------------------------------------------------
-// LLM-unreachable classification (PDF §11.3 graceful-degradation trigger)
+// LLM-unreachable classification (fallback path trigger)
 // ---------------------------------------------------------------------------
 // The orchestrator distinguishes two failure classes:
 //   • DEGRADED — the LLM was externally unreachable (rate-limit, auth/geo
@@ -80,7 +80,7 @@ const SOFT_DEADLINE_MS = 55_000
 // `wasCircuitOpen` (legacy name, kept for minimal diff) is set true for the
 // DEGRADED class. The final-status block at the bottom maps it to
 // 'degraded'. This helper widens the trigger beyond a literal 429 to also
-// cover 401/403 (Groq key geo-block from non-US regions), 5xx, and network
+// cover 401/403 (region-restricted Groq key), 5xx, and network
 // errors reaching the LLM endpoint — all of which are "LLM unreachable,
 // not our bug" and all of which leave the fallback post-mortem intact.
 // ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ function describeLlmUnreachableReason(message: string): string {
     return 'rate-limited (HTTP 429)'
   }
   if (/HTTP\s+40[13]/i.test(message)) {
-    return 'auth/geo-blocked (HTTP 401/403)'
+    return 'auth/region-restricted (HTTP 401/403)'
   }
   if (/HTTP\s+5\d\d/i.test(message)) {
     return 'gateway error (HTTP 5xx)'
@@ -128,12 +128,12 @@ export interface OrchestratorResult {
    */
   failoverOccurred: boolean
   promptVersion: string
-  /** Phase 4: where the audit log is mirrored (DataHub Assertions or seed). */
+  /** Where the audit log is mirrored (DataHub Assertions or seed). */
   auditMirrorMode: AuditMirrorMode
 }
 
 export interface RunOptions {
-  /** Emitted on every reasoning step (for live SSE in Phase 5). */
+  /** Emitted on every reasoning step (for live SSE). */
   onStep?: (step: ReasoningStep) => void
 }
 
@@ -204,7 +204,7 @@ export async function runSentinel(
     summary: `Incident created: ${incidentUrn}`,
     payload: { incidentUrn, signalType: signal.type },
   })
-  // Phase 4: mirror incident_created to DataHub Assertions (best-effort,
+  // Mirror incident_created to DataHub Assertions (best-effort,
   // non-fatal — the mirror must never block the incident).
   void getAuditMirror().mirror({
     incidentUrn,
@@ -270,7 +270,7 @@ export async function runSentinel(
   }
 
   // ---------------------------------------------------------------------------
-  // Governance refusal write-back (PDF §12.3)
+  // Governance refusal write-back
   //
   // When the PII guardrail refuses ack.save_document on a PII-tagged asset, the
   // post-mortem itself is NOT written (correct — PII content must not be
@@ -374,7 +374,7 @@ export async function runSentinel(
   // LLM until these have been called (or the agent has been nudged twice, to
   // respect an explicit governance refusal such as PII). This makes the closed
   // loop a contract, not a suggestion — the agent cannot 'summarise and stop'
-  // before the write-back (PDF §9.4.2 lifecycle steps 12-14).
+  // before the write-back (lifecycle steps 12-14).
   const MANDATORY = ['action.github_open_issue', 'action.slack_post_triage', 'ack.save_document']
   const mandatoryDone = new Set<string>()
   let nudgeCount = 0
@@ -391,7 +391,7 @@ export async function runSentinel(
       // The incident is marked 'degraded' (partial investigation), the same
       // state as a circuit-open — the agent did real work but couldn't finish.
       if (Date.now() - loopStart > SOFT_DEADLINE_MS) {
-        wasCircuitOpen = true // treat deadline as a graceful degradation
+        wasCircuitOpen = true // treat deadline as a fallback path
         lastError = `soft deadline reached at ${Math.round((Date.now() - loopStart) / 1000)}s — breaking the loop to leave time for the post-loop fallback post-mortem before the Vercel function timeout`
         emit('observe', {
           reasoning:
@@ -490,12 +490,12 @@ export async function runSentinel(
           toolArgs: parsedArgs,
         })
 
-        // Phase 3 GUARDRAIL — run the pre-execute hook before every tool call.
+        // GUARDRAIL — run the pre-execute hook before every tool call.
         // For action.* + ack.save_document this can REFUSE (e.g. PII tag on
         // the asset) or surface a NEEDS_APPROVAL gate (e.g. ownership/glossary
         // proposals). For mcp.* read tools it always allows. The check is on
         // the structured args, not on the model's text — so the LLM cannot
-        // bypass it by rephrasing. (PDF §12.3 prompt-injection mitigation)
+        // bypass it by rephrasing. (prompt-injection mitigation)
         const verdict = await checkBeforeExecute(effectiveName, parsedArgs, ctx)
         await recordGuardrailCheck(incidentUrn, verdict, call.id)
         if (verdict.decision !== 'allow') {
@@ -532,8 +532,8 @@ export async function runSentinel(
             },
           })
           // For PII refusals on ack.save_document, mark the refusal so the
-          // post-loop fallback does NOT re-attempt the write (PDF §12.3 — the
-          // refusal is the correct agent behaviour, not a missing post-mortem).
+          // post-loop fallback does NOT re-attempt the write — the
+          // refusal is the correct agent behaviour, not a missing post-mortem.
           // THEN write a durable governance refusal record to DataHub — this is
           // NOT a post-mortem (no PII content), it records only the governance
           // DECISION so the next incident inherits the history.
@@ -668,16 +668,15 @@ export async function runSentinel(
     } else if (isLlmUnreachableError(lastError)) {
       // LLM provider is UNREACHABLE but NOT a bug in our code — this covers:
       //   • 429 rate-limit (Groq free-tier per-minute throttle)
-      //   • 401/403 auth or geo-block (Groq key geo-blocked from some regions;
-      //     works from Vercel US datacenter — verified)
+      //   • 401/403 auth or region-restricted Groq key (the key is
+      //     unreachable from some regions; works from Vercel US datacenter — verified)
       //   • 5xx server error from the LLM gateway
       //   • network / fetch / ECONN / timeout reaching the LLM endpoint
       // In ALL these cases the LLM is externally unreachable, the orchestrator
       // did partial work (0..N reasoning steps), and the post-loop fallback
       // post-mortem below will still write the compounding artefact. This is
       // DEGRADED, not FAILED — the dashboard must not show a scary red
-      // "failed" every time the LLM is unreachable. (PDF §11.3 contingency
-      // plan + §9.5.4 graceful degradation.)
+      // "failed" every time the LLM is unreachable.
       wasCircuitOpen = true
       const reason = describeLlmUnreachableReason(lastError)
       emit('observe', {
@@ -895,13 +894,13 @@ export async function runSentinel(
 
   // 3. Post-loop: guarantee a post-mortem context doc (the compounding artefact).
   // SKIP the fallback if the guardrail refused the post-mortem on a PII-tagged
-  // asset (PDF §12.3 — the refusal IS the correct agent behaviour, not a
-  // missing post-mortem).
+  // asset — the refusal IS the correct agent behaviour, not a
+  // missing post-mortem.
   if (!wrotePostMortem && !piiRefusalOnPostMortem) {
     try {
-      // Phase 3: re-run the PII check on the asset before writing the fallback.
+      // Re-run the PII check on the asset before writing the fallback.
       // The fallback bypasses the tool-call loop, so the guardrail's pre-exec
-      // hook doesn't fire — we inline the same PII check here. (PDF §12.3)
+      // hook doesn't fire — we inline the same PII check here.
       const piiCheck = await checkPiiForAssetInline(clients.mcp, signal.assetUrn)
       if (piiCheck.hasPii) {
         emit('observe', {
@@ -922,7 +921,7 @@ export async function runSentinel(
         const det = buildDeterministicActions(sig, signal, incidentUrn, steps, finalReflection, lastError)
         const postMortemContent = det.postMortem.content
         const postMortemTitle = det.postMortem.title
-        // Phase 4: dual write-back path. The orchestrator's post-loop fallback
+        // Dual write-back path. The orchestrator's post-loop fallback
         // now goes through the same helper as the agent's ack.save_document
         // tool: try Agent Context Kit → fall back to REST ingestion on a
         // 5xx/network error. A 4xx is a hard failure (no fallback). Both paths
@@ -1021,10 +1020,10 @@ export async function runSentinel(
   // 4. Resolve the incident.
   // Three terminal states:
   //   - 'resolved'  — the agent completed the closed loop (no error)
-  //   - 'degraded'  — the LLM was UNREACHABLE (rate-limit / auth-geo-block /
+  //   - 'degraded'  — the LLM was UNREACHABLE (rate-limit / auth / region-restricted /
   //                   gateway 5xx / network); the agent did partial work and a
   //                   fallback post-mortem was written. This is NOT a failure —
-  //                   it's the designed graceful-degradation path (PDF §11.3).
+  //                   it's the designed fallback path.
   //                   The dashboard surfaces an amber 'degraded' chip, not a
   //                   scary red 'failed'.
   //   - 'failed'    — a real bug (non-LLM exception). The agent could not
@@ -1050,9 +1049,9 @@ export async function runSentinel(
     summary: resolutionSummary,
     payload: { steps: steps.length, totalPromptTokens, totalCompletionTokens, wasCircuitOpen },
   })
-  // Phase 4: mirror the resolution milestone to DataHub Assertions (best-effort,
+  // Mirror the resolution milestone to DataHub Assertions (best-effort,
   // non-fatal). This is the assertion a DataHub operator sees on the asset page:
-  // "Sentinel incident resolved / failed on {asset}". (PDF §13.4)
+  // "Sentinel incident resolved / failed on {asset}".
   void getAuditMirror().mirror({
     incidentUrn,
     kind: resolutionKind,

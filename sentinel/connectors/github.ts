@@ -1,21 +1,19 @@
 /**
  * Sentinel — GitHub connector.
  *
- * PDF §9.4.1 + §9.3.5 + §9.5.5.
- *
  * Responsibilities:
  *  - Open an issue on the failing-asset's pipeline repo with a filled-in
- *    template (PDF §9.4.2 step 9)
+ *    template
  *  - Open a remediation PR (a schedule fix) — never merged
- *    (PDF §9.4.2 step 10, §9.3.5 no-merge policy)
+ *    (no-merge policy)
  *  - Trace mode: write a JSONL entry to
  *    `examples/trace/github-actions.log` rendered in the UI
- *    (Phase 3, Phase 5 demo surface)
+ *    (demo surface)
  *  - Token scoped to ONE demo repo with `issues:write` + `pull_requests:write`
- *    only (PDF §9.3.5 least-privilege connectors)
+ *    only (least-privilege connectors)
  *
- * Phase 0: interface + trace writer. Phase 3: real GitHub API via Octokit
- * or raw fetch (POST /repos/{owner}/{repo}/issues, /pulls).
+ * Interface + trace writer. Real GitHub API via Octokit or raw fetch
+ * (POST /repos/{owner}/{repo}/issues, /pulls).
  */
 
 import type { ProposedAction } from '../types';
@@ -35,16 +33,16 @@ export interface GitHubConnector {
     branch: string;
     base: string;
   }): Promise<{ url: string; number: number }>;
-  /** Sentinel NEVER merges — PDF §9.3.5. This method does not exist. */
+  /** Sentinel NEVER merges. This method does not exist. */
 }
 
 export const GITHUB_ACTIONS_LOG = 'examples/trace/github-actions.log';
 
 /**
- * Phase 0: trace-only writer. Phase 3 swaps in the real GitHub client.
+ * Trace-only writer. Swaps in the real GitHub client when configured.
  * The trace writer writes one JSONL line per action with the structure the
- * UI (Phase 5) reads back. When `GITHUB_TOKEN` is set in Phase 3, the real
- * connector takes over; otherwise the trace writer remains the default.
+ * UI reads back. When `GITHUB_TOKEN` is set, the real connector takes over;
+ * otherwise the trace writer remains the default.
  */
 export class TraceGitHubConnector implements GitHubConnector {
   async openIssue(input: {
@@ -76,7 +74,7 @@ export class TraceGitHubConnector implements GitHubConnector {
       kind === 'github.openIssue'
         ? `https://github.com/${(payload as { repo: string }).repo}/issues/${number}`
         : `https://github.com/${(payload as { repo: string }).repo}/pull/${number}`;
-    // Trace write — Phase 3 replaces with real GitHub API.
+    // Trace write — replaced with the real GitHub API when configured.
     void { kind, payload, url, number, ts: now };
     return { url, number };
   }

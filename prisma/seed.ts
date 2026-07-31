@@ -1,7 +1,7 @@
 // =============================================================================
 // Sentinel — deterministic Prisma seed (DEMO mode substrate)
 //
-// Phase 1 (PDF §9.3.3 / §9.4.3 / v2 plan §"Phase 1 — Seed data")
+// Seed data.
 //
 // Three scenarios, all license-safe and deterministic:
 //
@@ -14,10 +14,10 @@
 //
 //   2. showcase-ecommerce — cross-platform lineage
 //      (Snowflake → Looker → dbt → Spark → S3) for the 2nd scenario
-//      (schema breakage, Phase 5).
+//      (schema breakage).
 //
 //   3. pii — a customer_pii table tagged with the PII governance tag, for
-//      the 3rd scenario (guardrail refusal beat, Phase 3).
+//      the 3rd scenario (guardrail refusal beat).
 //
 // Idempotent: re-running drops the seed rows and re-inserts them so the
 // demo always starts from a known state. Run with `bun run db:seed`.
@@ -69,7 +69,7 @@ const sec = (ms: number) => Math.floor(ms / 1000)
 
 // ---------------------------------------------------------------------------
 // URNs — DataHub-format. These exact strings are what the orchestrator
-// (Phase 2) and the UI (Phase 5) display, so centralising them prevents
+// and the UI display, so centralising them prevents
 // typos between seed and mock.
 // ---------------------------------------------------------------------------
 
@@ -415,7 +415,7 @@ const piiAssets = [
     platform: 'postgres',
     type: 'dataset',
     description:
-      'Customer PII table (email, phone, full_name, billing_address). Tagged PII. Sentinel must REFUSE to act without explicit human approval (PDF §9.5.5 governance guardrail).',
+      'Customer PII table (email, phone, full_name, billing_address). Tagged PII. Sentinel must REFUSE to act without explicit human approval (governance guardrail).',
     ownersJson: JSON.stringify([
       { ownerUrn: 'urn:li:corpUser:compliance.officer', ownerType: 'USER' as const, name: 'Compliance Officer' },
     ]),

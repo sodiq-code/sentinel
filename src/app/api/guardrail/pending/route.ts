@@ -5,7 +5,7 @@
 //   ?status=pending   — pending | approved | denied (default: all)
 //   ?limit=50          — max rows
 //
-// PDF §10.3 approval-gate.ts: "returns a structured { needsApproval,
+// Approval gate: "returns a structured { needsApproval,
 // reason, proposedAction, approver } object that surfaces in the UI".
 import { NextResponse } from 'next/server'
 import { listApprovals } from '@/lib/guardrail/approval-gate'

@@ -2,25 +2,25 @@
 // Sentinel — Tool registry
 //
 // Maps the LLM's `tool_calls` to executable functions backed by the three
-// DataHub client interfaces (mcp / contextKit / ingestion) + the Phase 3
-// action connectors (github / slack). PDF §12.3: tool-call inputs are
+// DataHub client interfaces (mcp / contextKit / ingestion) + the
+// action connectors (github / slack). Tool-call inputs are
 // structured JSON validated against a schema — never free-text execution —
 // so a malicious DataHub doc cannot inject a tool call.
 //
-// Catalogue (Phase 3):
+// Catalogue:
 //   mcp.*     — 9 read tools (DataHub MCP Server)
 //   ack.*     — 6 write tools (Agent Context Kit) — post-mortem is a direct
 //               write, glossary/ownership/tags/description are proposals
-//   action.*  — 3 action tools (Phase 3): github_open_issue, github_open_pr
+//   action.*  — 3 action tools: github_open_issue, github_open_pr
 //               (NEVER merges), slack_post_triage. All call the real
 //               connectors against the demo repo / channel. SENTINEL_DRY_RUN
 //               flips them to the trace log.
 //
-// Every tool call is recorded to the ToolCall table (PDF §9.4.3) and the audit
+// Every tool call is recorded to the ToolCall table and the audit
 // trail. Action tools additionally record an Action row (status: executed /
 // refused). Write tools additionally record a WriteBack row.
 //
-// GUARDRAIL (Phase 3): the orchestrator calls `checkBeforeExecute` from
+// GUARDRAIL: the orchestrator calls `checkBeforeExecute` from
 // src/lib/guardrail BEFORE every action.* + ack.save_document call. The hook
 // can refuse (PII) or surface an approval gate (ownership/glossary proposals).
 // See src/lib/guardrail/pre-exec.ts.
@@ -91,7 +91,7 @@ function truncate(result: unknown): unknown {
 }
 
 // ---------------------------------------------------------------------------
-// Record a ToolCall row (PDF §9.4.3) — every tool call is persisted, win or
+// Record a ToolCall row — every tool call is persisted, win or
 // fail, so the audit trail is complete.
 // ---------------------------------------------------------------------------
 
@@ -341,7 +341,7 @@ const WRITE_TOOLS: ToolDefinition[] = [
       const content = asString(args.content)
       const isPostMortem = args.sentinelPostMortem !== false
       const me = await ctx.clients.mcp.get_me()
-      // Phase 4: dual write-back path (PDF §12.2). The agent's explicit
+      // Dual write-back path. The agent's explicit
       // ack.save_document call now goes through the same helper as the
       // orchestrator's post-loop fallback: try Agent Context Kit → fall back
       // to REST ingestion on a 5xx/network error. A 4xx is a hard failure.
@@ -524,11 +524,11 @@ const WRITE_TOOLS: ToolDefinition[] = [
 ]
 
 // ---------------------------------------------------------------------------
-// ACTION tools — action.* (Phase 3: real GitHub + Slack connectors)
+// ACTION tools — action.* (real GitHub + Slack connectors)
 // These now call src/lib/connectors/{github,slack}.ts. SENTINEL_DRY_RUN=true
 // (default) routes to the trace JSONL log; SENTINEL_DRY_RUN=false calls the
 // live GitHub + Slack APIs against the demo repo + channel.
-// Sentinel NEVER merges (PDF §9.3.5). The guardrail's NoMergeRule enforces this
+// Sentinel NEVER merges. The guardrail's NoMergeRule enforces this
 // in code even if the LLM attempts to call a merge tool.
 // ---------------------------------------------------------------------------
 
@@ -743,8 +743,8 @@ export function toLlmTools(defs: ToolDefinition[]): LlmTool[] {
 /**
  * Execute a single LLM tool_call: parse args, find the tool, execute, record to
  * the ToolCall table. Errors are caught and returned as a structured `error`
- * result so the agent can adapt (PDF §9.5.4 — never crash the loop on a tool
- * failure). The loop only throws on a bug in this harness itself.
+ * result so the agent can adapt — never crash the loop on a tool
+ * failure. The loop only throws on a bug in this harness itself.
  */
 export async function executeToolCall(
   call: LlmToolCall,
@@ -778,7 +778,7 @@ export async function executeToolCall(
     return runTool(def, name, parsedArgs, ctx, startedAt)
   }
 
-  // Robustness (PDF §9.5.4): some OpenAI-compatible gateways occasionally
+  // Robustness: some OpenAI-compatible gateways occasionally
   // concatenate the model's reasoning into the tool-name field, producing a
   // malformed name like "<reasoning...> action.github_open_issue". Recover
   // the model's intent by finding the longest valid tool name that appears
@@ -808,7 +808,7 @@ export async function executeToolCall(
 
 // ---------------------------------------------------------------------------
 // runTool — execute a resolved ToolDefinition, catching errors so the loop
-// never crashes (PDF §9.5.4). Records every call to the ToolCall table.
+// never crashes. Records every call to the ToolCall table.
 // ---------------------------------------------------------------------------
 
 async function runTool(

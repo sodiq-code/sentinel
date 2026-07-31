@@ -1,12 +1,12 @@
 // =============================================================================
-// Sentinel — System-prompt assembler (PDF §9.4.4 layered prompt architecture)
+// Sentinel — System-prompt assembler (layered prompt architecture)
 //
 // Assembles the four layered prompt files (role.md, workflow.md,
 // governance.md, tools.md) into the single system message the orchestrator
 // sends to the LLM. The layers are separated by a visible `---` fence so the
 // agent can cite which layer a rule came from.
 //
-// The .md files are the canonical, versioned source (PDF §10.2: "committed
+// The .md files are the canonical, versioned source ("committed
 // to repo, versioned"). This module reads them at runtime from
 // `<cwd>/src/lib/agent/prompts/` so the repo's .md files are always the live
 // prompt in local dev. On Vercel the serverless function filesystem is
@@ -60,7 +60,7 @@ export function loadPromptParts(): SystemPromptParts {
   }
 }
 
-/** Assemble the layered system message. PDF §9.4.4: layers joined with `---`. */
+/** Assemble the layered system message. Layers joined with `---`. */
 export function assembleSystemPrompt(): string {
   const p = loadPromptParts()
   return [

@@ -1,5 +1,5 @@
 // =============================================================================
-// Sentinel — Guardrail barrel (Phase 3)
+// Sentinel — Guardrail barrel
 //
 // Exports the four guardrail modules:
 //   policy.ts      — policy DSL (rules: no-merge, direct-write allowlist, action gate)

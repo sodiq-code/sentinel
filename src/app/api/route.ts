@@ -2,8 +2,8 @@
 //
 // Returns the service identity, build metadata, and a catalogue of every
 // API route the dashboard exposes. This replaces the default Next.js
-// "Hello, world!" placeholder with a real health-check that operators +
-// hackathon judges can hit to verify the backend is alive and discover
+// "Hello, world!" placeholder with a real health-check that operators
+// can hit to verify the backend is alive and discover
 // every endpoint without reading the source.
 //
 // Every route listed here is a REAL implementation backed by:

@@ -1,4 +1,4 @@
-// GET /api/agent/signals — list the injectable seed signals (the Phase 2 demo inputs).
+// GET /api/agent/signals — list the injectable seed signals (the demo inputs).
 
 import { NextResponse } from 'next/server'
 import { listSeedSignals } from '@/lib/agent'

@@ -6,12 +6,12 @@
 //   1. The key authenticates with Google's OpenAI-compatible endpoint
 //      (HTTP 401/403 → invalid key; anything else → key is accepted).
 //   2. The endpoint is reachable from this environment
-//      (network error → geo-block or DNS).
+//      (network error → region-restricted or DNS).
 //   3. The GeminiLlmClient + FailoverLlmClient + circuit-breaker are
 //      correctly wired (the resilience snapshot is returned).
 //   4. The agent loop will complete even when Gemini is throttled, because
 //      the FailoverLlmClient routes to the configured fallback (zai in
-//      sandbox, groq in production).
+//      local development, groq in production).
 //
 // Verdict:
 //   "working"            — Gemini served a real completion. This is the
@@ -21,9 +21,9 @@
 //                          but the free-tier daily quota is exhausted for
 //                          today. Resets at midnight Pacific Time. The
 //                          agent loop still completes via the fallback
-//                          (zai in sandbox, groq in production).
+//                          (zai in local development, groq in production).
 //   "key_invalid"        — HTTP 401/403. The key was rejected.
-//   "unreachable"        — Network error. Possible geo-block or DNS.
+//   "unreachable"        — Network error. Possible region restriction or DNS.
 //   "not_configured"     — GEMINI_API_KEY is empty.
 //
 // This endpoint never throws — it always returns 200 with a structured
@@ -199,7 +199,7 @@ export async function GET() {
       keyPresent: true,
       keyValid: true, // couldn't verify — but the key format is accepted
       reason: `Network/parse error: ${message.slice(0, 300)}`,
-      hint: 'Could not reach generativelanguage.googleapis.com — possible DNS/network issue or sandbox geo-block. The agent will use the configured fallback (zai in sandbox, groq in production).',
+      hint: 'Could not reach generativelanguage.googleapis.com — possible DNS/network issue or region restriction. The agent will use the configured fallback provider.',
       resilience: getLlmResilienceStatus(),
       latencyMs: Date.now() - start,
     })

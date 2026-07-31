@@ -1,4 +1,4 @@
-// GET /api/llm/status — Phase 3 resilience: LLM circuit + failover state.
+// GET /api/llm/status — resilience: LLM circuit + failover state.
 //
 // Returns the live state of the LLM resilience layer so the UI can show a
 // circuit-state chip alongside the existing "LLM model / Provider" chips.
@@ -14,8 +14,8 @@
 //   circuit:          { isOpen, consecutiveFailures, msUntilReset } | null
 //                     — null until the first LLM call instantiates the client
 //
-// Read-only. Never throws. PDF §9.5.4 (retry visibility) + §11.3 (contingency
-// plan: surface throttle state to the operator, don't mask it).
+// Read-only. Never throws. (retry visibility +
+// fallback path: surface throttle state to the operator, don't mask it).
 import { NextResponse } from 'next/server'
 import { getLlmResilienceStatus } from '@/lib/agent/llm'
 import { isPreviewMode, previewFixture } from '@/lib/demo-mode'

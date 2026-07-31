@@ -1,7 +1,7 @@
 // =============================================================================
 // Sentinel — DataHub domain types
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1 — DataHub Mock + Seed")
+// DataHub mock + seed types.
 //
 // These types are the shared vocabulary between the three DataHub client
 // interfaces (McpClient, ContextKitClient, IngestionClient) and the Sentinel
@@ -256,7 +256,7 @@ export interface SaveDocumentInput {
 }
 
 // ---------------------------------------------------------------------------
-// Ingestion — REST fallback (PDF §12.2 dual write-back path)
+// Ingestion — REST fallback (dual write-back path)
 // ---------------------------------------------------------------------------
 
 export interface GraphQlProposal {

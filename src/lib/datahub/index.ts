@@ -1,7 +1,7 @@
 // =============================================================================
 // Sentinel — DataHub client factory
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1 — Switch by DATAHUB_MODE env var")
+// Switch by DATAHUB_MODE env var.
 //
 //   import { getDataHub } from '@/lib/datahub'
 //   const { mcp, contextKit, ingestion, mode } = await getDataHub()
@@ -9,7 +9,7 @@
 // `getDataHub()` returns a `DataHubClients` bundle. In DEMO mode all three
 // clients are backed by the Prisma seed (./mock/mock-datahub.ts). In LIVE
 // mode they are the real HTTP/GraphQL clients (./live/*). The orchestrator
-// (Phase 2) calls the same methods either way — flipping the env var flips
+// calls the same methods either way — flipping the env var flips
 // the whole agent from a local SQLite demo to a real DataHub deployment.
 // =============================================================================
 

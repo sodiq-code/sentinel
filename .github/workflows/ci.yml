@@ -1,21 +1,12 @@
 # =============================================================================
 # Sentinel — CI
 #
-# PDF §10.3: ".github/workflows/ci.yml (lint + integration demo)"
-# PDF §10.2:  "Tests for the load-bearing parts. Guardrail refusal logic,
-#             write-back composer, and the integration test that runs the demo.
-#             Skip tests for glue code."
-# PDF §12.2:  gitleaks secret scan in CI (token leakage mitigation).
-# PDF §13.5:  "If it passes in CI, the demo will run on the judge's laptop."
-# =============================================================================
-#
-# Phase 7: the integration-demo job is now live. It runs the full ReAct loop
-# end-to-end via the API (the orchestrator's fallback post-mortem path runs
-# when the LLM gateway is unreachable in CI — that's the PDF §11.3 contingency
-# plan working as designed) and asserts a context doc (WriteBack kind=
-# 'context_doc') + a mirrored assertion (SeedAssertion, counted via
-# /api/agent/audit/[urn] mirroredCount) were created. gitleaks is enabled
-# from Phase 0 to protect against accidental token commits.
+# Lint + type-check + Prisma schema validation + an end-to-end integration
+# demo that runs the full ReAct loop via the API, plus a gitleaks secret scan.
+# The integration test asserts a context doc (WriteBack kind='context_doc')
+# and a mirrored assertion (SeedAssertion, counted via /api/agent/audit/[urn]
+# mirroredCount) are created. gitleaks runs on every push/PR to protect against
+# accidental token commits.
 # =============================================================================
 
 name: Sentinel CI
@@ -57,7 +48,7 @@ jobs:
         #   pre-existing tsc errors unrelated to the production app. The
         #   production code (src/) is type-checked implicitly by Next.js
         #   at build/dev time. The integration-demo job is the load-bearing
-        #   test (PDF §10.3) — it runs the real app end-to-end.
+        #   test — it runs the real app end-to-end.
 
   prisma-validate:
     name: Prisma schema valid
@@ -86,14 +77,13 @@ jobs:
           rm -f prisma/ci-check.db
 
   integration-demo:
-    name: Integration demo (PDF §10.3)
+    name: Integration demo
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Phase 7: live. Runs the full ReAct loop end-to-end via the API and
-    # asserts a context doc + a mirrored assertion were created. The
-    # orchestrator's fallback post-mortem path runs when the LLM gateway is
-    # unreachable in CI (PDF §11.3 contingency plan) — the test asserts the
-    # WRITE-BACK happens regardless, which is the PDF §10.3 requirement.
+    # Runs the full ReAct loop end-to-end via the API and asserts a context
+    # doc + a mirrored assertion were created. The orchestrator's fallback
+    # post-mortem path runs when the LLM gateway is unreachable in CI — the
+    # test asserts the WRITE-BACK happens regardless.
     env:
       DATABASE_URL: "file:./ci-demo.db"
       # Demo mode (seeded Prisma fixtures — no live DataHub needed).
@@ -138,14 +128,14 @@ jobs:
           curl -fsS http://localhost:3000/api/agent/signals | head -c 200
           echo
 
-      - name: Run the demo end-to-end + assert (PDF §10.3)
+      - name: Run the demo end-to-end + assert
         run: |
           set -e
           # 1. Inject the nyc-taxi freshness signal — runs the full ReAct loop.
           #    The LLM gateway is unreachable in CI, so the circuit opens, the
-          #    orchestrator catches it, and the fallback post-mortem path runs
-          #    (PDF §11.3). The incident is marked 'failed' but the write-back
-          #    still happens — that's the contract.
+          #    orchestrator catches it, and the fallback post-mortem path runs.
+          #    The incident is marked 'failed' but the write-back still happens
+          #    — that's the contract.
           echo "→ POST /api/agent/run (signalId=sig:nyc-taxi:freshness)"
           RUN_RESP=$(curl -fsS -X POST http://localhost:3000/api/agent/run \
             -H "Content-Type: application/json" \
@@ -165,20 +155,20 @@ jobs:
           CONTEXT_DOCS=$(echo "$HYDRATED" | grep -oE '"kind":"context_doc"' | wc -l)
           echo "→ writebacks kind=context_doc: $CONTEXT_DOCS"
           if [ "$CONTEXT_DOCS" -lt 1 ]; then
-            echo "FAIL: no context_doc writeback created (PDF §10.3 requires one)"
+            echo "FAIL: no context_doc writeback created (integration test requires one)"
             echo "$HYDRATED" | head -c 800
             exit 1
           fi
           echo "PASS: context doc written back to DataHub ✓"
 
           # 3. Fetch the audit log — mirroredCount is the number of SeedAssertion
-          #    rows the audit mirror created (PDF §10.3 "assertion created").
+          #    rows the audit mirror created.
           echo "→ GET /api/agent/audit/$INCIDENT_URN"
           AUDIT=$(curl -fsS "http://localhost:3000/api/agent/audit/$INCIDENT_URN")
           MIRRORED=$(echo "$AUDIT" | grep -oE '"mirroredCount":[0-9]+' | head -1 | sed -E 's/"mirroredCount"://')
           echo "→ mirroredCount (SeedAssertions): $MIRRORED"
           if [ "$MIRRORED" -lt 1 ]; then
-            echo "FAIL: no assertions mirrored to DataHub (PDF §10.3 requires one)"
+            echo "FAIL: no assertions mirrored to DataHub (integration test requires one)"
             echo "$AUDIT" | head -c 800
             exit 1
           fi
@@ -199,7 +189,7 @@ jobs:
 
           echo ""
           echo "============================================================"
-          echo "Phase 7 integration demo PASSED (PDF §10.3)"
+          echo "Integration demo PASSED"
           echo "  - context doc written back: $CONTEXT_DOCS"
           echo "  - assertions mirrored:      $MIRRORED"
           echo "  - incident terminal state:  $STATUS"
@@ -219,7 +209,7 @@ jobs:
           tail -80 /tmp/sentinel-ci.log || true
 
   secret-scan:
-    name: gitleaks (PDF §12.2 token leakage mitigation)
+    name: gitleaks (token leakage mitigation)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

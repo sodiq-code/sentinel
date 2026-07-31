@@ -1,13 +1,13 @@
 // =============================================================================
-// Sentinel — Agent types (canonical Phase 2 location)
+// Sentinel — Agent types (canonical location)
 //
 // These are the orchestrator-level types: the LLM wire shapes, the signal/
 // incident model, the ReAct reasoning trace, the guardrail decisions, and the
 // audit events. The domain (DataHub entity) types live in ../datahub/types and
 // are re-exported here for one-stop imports.
 //
-// The Phase-0 `sentinel/types.ts` stub shipped the same shape; this module is
-// the live, evolved Phase 2 contract.
+// The earlier `sentinel/types.ts` stub shipped the same shape; this module is
+// the live, evolved contract.
 // =============================================================================
 
 export type {
@@ -111,7 +111,7 @@ export interface Incident {
 
 // ---------------------------------------------------------------------------
 // ReAct reasoning trace — emitted on every step for the live console
-// (PDF §5.3: "I can see the agent thinking")
+// ("I can see the agent thinking")
 // ---------------------------------------------------------------------------
 
 export type ReasoningStepKind =
@@ -192,7 +192,7 @@ export interface AuditEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Write-back artefacts (PDF §9.4.2 sequence, steps 12–14)
+// Write-back artefacts (sequence, steps 12–14)
 // ---------------------------------------------------------------------------
 
 export interface WriteBackResult {

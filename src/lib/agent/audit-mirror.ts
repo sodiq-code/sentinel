@@ -1,5 +1,5 @@
 // =============================================================================
-// Sentinel — Audit mirror to DataHub Assertions (Phase 4, PDF §9.4.3 / §13.4)
+// Sentinel — Audit mirror to DataHub Assertions
 //
 // The AuditEvent table (Prisma SQLite) is Sentinel's detailed, local audit
 // trail — the "I can see the agent thinking" trace. But DataHub itself is the

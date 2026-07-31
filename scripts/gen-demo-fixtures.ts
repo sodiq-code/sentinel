@@ -1,7 +1,7 @@
 // =============================================================================
 // Sentinel — Vercel Demo Replay fixture generator
 //
-// Derives the Vercel-safe read-only fixtures from the Phase 7 dry-run trace
+// Derives the Vercel-safe read-only fixtures from the dry-run trace
 // (examples/dry-run/nyc-taxi-freshness.json). All fixtures share the same
 // incident URN so the page's after-run + click-incident flows are internally
 // consistent.

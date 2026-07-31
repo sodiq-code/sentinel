@@ -1,15 +1,15 @@
 // =============================================================================
-// Sentinel — PII check (Phase 3)
+// Sentinel — PII check
 //
-// PDF §10.3 Phase 3 spec:
+// PII check spec:
 //   pii-check.ts — reads DataHub governance tags via MCP `get_entities`,
 //   refuses if a PII tag is present without prior approval.
 //
-// The Phase 2 PII scenario (`customer_pii` table tagged PII + Restricted)
+// The PII scenario (`customer_pii` table tagged PII + Restricted)
 // should now hit a CODE-level refusal when the agent attempts to write back
 // to it via `ack.save_document`. The LLM cannot bypass it by rephrasing the
 // request — the check fetches the entity's governance tags directly via the
-// MCP `get_entities` tool and inspects them. (PDF §12.3 — prompt-injection
+// MCP `get_entities` tool and inspects them. (prompt-injection
 // mitigation: the LLM cannot "say" the asset isn't PII and have it be true.)
 // =============================================================================
 

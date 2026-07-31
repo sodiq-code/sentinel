@@ -1,16 +1,16 @@
 // =============================================================================
-// Sentinel — GitHub connector (Phase 3)
+// Sentinel — GitHub connector
 //
-// PDF §10.3 Phase 3 spec:
+// Connector spec:
 //   - openIssue(repo, title, body, labels) — POST /repos/{repo}/issues
 //   - openPR(repo, title, body, branch, base) — POST /repos/{repo}/pulls
-//   - **NEVER merges** a PR (PDF §9.3.5 no-merge policy). There is no `merge`
+//   - **NEVER merges** a PR (no-merge policy). There is no `merge`
 //     method on this connector. The PR is always left OPEN for human review.
 //   - Trace mode (SENTINEL_DRY_RUN=true): writes a JSON line to
 //     `examples/trace/github-actions.log`, returns a trace URL — no
-//     GitHub API call is made. This is the dry-run toggle (PDF §11.3).
+//     GitHub API call is made. This is the dry-run toggle.
 //
-// Token scope (PDF §10.3): a single PAT scoped to the demo repo
+// Token scope: a single PAT scoped to the demo repo
 // with `issues:write` + `pull_requests:write` only. We never ask for
 // `repo:admin` or `contents:write` — so we cannot push branches, cannot
 // merge, cannot delete.
@@ -50,7 +50,7 @@ export interface GitHubPrInput {
   repo?: string
   title: string
   body: string
-  /** Head branch — must already exist on the repo (Phase 3 does NOT push branches). */
+  /** Head branch — must already exist on the repo (Sentinel does NOT push branches). */
   branch: string
   /** Base branch to merge into. Defaults to 'main'. */
   base?: string
@@ -62,7 +62,7 @@ export interface GitHubPrResult {
   number: number
   url: string
   state: 'open'
-  /** Sentinel NEVER merges — surfaced in UI as a NOT MERGED badge (PDF §9.3.5). */
+  /** Sentinel NEVER merges — surfaced in UI as a NOT MERGED badge. */
   mergeable: boolean | null
   /** True when the action was logged to a trace file instead of hitting the live API. */
   trace: boolean
@@ -313,7 +313,7 @@ export async function openPR(input: GitHubPrInput): Promise<GitHubPrResult> {
   }
 
   // Live: open the PR. Sentinel does NOT push branches — the head branch must
-  // already exist on the repo (Phase 3 only opens PRs the human can review).
+  // already exist on the repo (Sentinel only opens PRs the human can review).
   const { status, body } = await ghFetch(`/repos/${repo}/pulls`, {
     method: 'POST',
     body: JSON.stringify({

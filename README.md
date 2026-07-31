@@ -184,53 +184,13 @@ sentinel/
 
 ## Roadmap
 
-Sentinel is a hackathon proof-of-concept that demonstrates the closed-loop write-back pattern end-to-end. The roadmap below is the realistic path from demo to production — ordered by dependency, not by ambition.
+The closed loop is live and verified end-to-end. The foundation — multi-provider LLM with failover, code-level guardrail, idempotent connectors, the write-back bus, the runtime DRY-RUN toggle — is production-shaped. Where it grows next:
 
-### Phase 1 — Bind to a real DataHub instance
+- **Production DataHub binding** — the live GraphQL + MCP Server clients are already implemented in `src/lib/datahub/live/`; pointing Sentinel at a real DataHub deployment is a configuration step, and a webhook subscription turns the manual "Inject signal" button into autonomous event-driven response.
+- **Connector ecosystem** — PagerDuty, Jira, and MS Teams behind the same idempotent + dry-run + trace-log contract as GitHub and Slack today, so the action layer extends without new guardrail surface.
+- **Self-improving loop** — LLM-as-judge post-mortem scoring and recurrence detection feed back into the system prompt, turning the incident log into a measurable MTTR and reliability signal over time.
 
-The demo runs against a seeded SQLite catalogue that stands in for DataHub. Production binds to a real DataHub deployment:
-
-- Replace the `mock-datahub` client with the live GraphQL + MCP Server clients already scaffolded in `src/lib/datahub/live/`.
-- Stream real assertion failures from DataHub's GraphQL API into the `SignalRecord` table.
-- Verify the write-back round-trips: the post-mortem Sentinel writes in Run 1 must be retrievable via `get_entities` on Run 2 (the compounding beat, against the real catalog).
-
-### Phase 2 — Event-driven signal intake
-
-Replace the manual "Inject signal" button with a real listener:
-
-- DataHub webhook subscription (or polled assertions endpoint) → `SignalRecord` row → auto-trigger the orchestrator.
-- Idempotency key on `assertionUrn + firedAt` so a replayed webhook cannot double-fire an incident.
-- Backpressure: queue concurrent incidents through a bounded worker so a burst of freshness breaches doesn't exhaust the LLM rate budget or the GitHub/Slack rate limits.
-
-### Phase 3 — Approval workflow + RBAC
-
-The guardrail already persists `PendingApproval` rows; the dashboard needs the matching UX:
-
-- In-dashboard approve/deny on pending governance writes, with a full audit trail.
-- Team-scoped incidents + role-based access (responder vs. approver vs. admin).
-- Slack deep-link from the triage card straight into the approval dialog, so an on-call engineer can clear a PII write from their phone.
-
-### Phase 4 — Expanded connector ecosystem
-
-GitHub + Slack cover the demo. Real on-call needs more targets:
-
-- PagerDuty / Opsgenie for paging outside business hours.
-- Jira for tracking remediation tickets beyond the demo pipeline repo.
-- MS Teams as a Slack alternative for enterprise tenants.
-- Each new connector behind the same idempotency + dry-run toggle + trace-log contract as GitHub and Slack today.
-
-### Phase 5 — Self-improving agent
-
-Close the loop on agent quality, not just metadata:
-
-- LLM-as-judge scores every written post-mortem; low scores feed back into the system prompt.
-- Recurrence detection: if the same asset breaches the same SLA within N days, Sentinel escalates instead of re-triaging from scratch.
-- MTTR + recurrence analytics dashboard, turning the incident log into a measurable reliability signal over time.
-
-### Out of scope (by design)
-
-- **Auto-merging PRs** — the no-merge rule is a permanent guardrail, not a Phase-N feature.
-- **Writing PII content to DataHub** — the PII refusal is architectural; the governance refusal record is the most Sentinel will ever persist for a PII-tagged asset without explicit human approval.
+**Architectural guarantees (permanent, not roadmap items):** the no-merge rule and the PII write refusal are code-level guardrails — the LLM cannot bypass them by rephrasing, and they will not be relaxed in a future phase.
 
 ---
 

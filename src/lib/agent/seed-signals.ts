@@ -1,9 +1,9 @@
 // =============================================================================
-// Sentinel — Seed signals (the injectable inputs for the Phase 2 demo)
+// Sentinel — Seed signals (the injectable inputs for the demo)
 //
 // In DEMO mode there is no live DataHub to push a webhook. Instead the
 // orchestrator is fed a Signal constructed from a seeded failing assertion
-// (Phase 1 seed). This module lists the available seed signals and constructs
+// (from the seed fixtures). This module lists the available seed signals and constructs
 // a Signal object from one.
 //
 // Three injectable scenarios:

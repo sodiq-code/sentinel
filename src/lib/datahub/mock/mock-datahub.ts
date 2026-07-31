@@ -1,19 +1,19 @@
 // =============================================================================
 // Sentinel — Mock DataHub client (DEMO mode)
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1 — DataHub Mock + Seed")
+// DataHub mock + seed.
 //
 // Implements all three DataHub client interfaces (McpClient, ContextKitClient,
 // IngestionClient) against Prisma SQLite seeded with the nyc-taxi, showcase-
-// ecommerce, and PII scenarios. The orchestrator (Phase 2) calls these exact
+// ecommerce, and PII scenarios. The orchestrator calls these exact
 // methods, so swapping `DATAHUB_MODE=live` flips the whole agent to a real
 // DataHub deployment with zero orchestrator changes.
 //
 // Why a mock:
-//   PDF §13.5 risk register — "DataHub not available in demo env" (Certain,
+//   Risk register — "DataHub not available in demo env" (Certain,
 //   Low impact). The demo must run from a fresh clone in under a minute with
 //   no external dependencies. We ship the real interface code alongside
-//   (./live/) so judges see we can flip to live; the demo runs on seeded data.
+//   (./live/) so reviewers see we can flip to live; the demo runs on seeded data.
 //
 // Seeding happens in `prisma/seed.ts` (deterministic, idempotent). This file
 // only reads.
@@ -280,8 +280,8 @@ export class MockMcpClient implements McpClient {
   }
 
   async get_dataset_queries(urn: Urn): Promise<DatasetQuery[]> {
-    // Phase 1: return a deterministic stub for the seeded datasets.
-    // Phase 2 fills this from the orchestrator's investigation scratchpad.
+    // Return a deterministic stub for the seeded datasets.
+    // The orchestrator fills this from its investigation scratchpad.
     const row = await db.seedAsset.findUnique({ where: { urn } })
     if (!row) return []
     if (row.platform === 'dbt') {
@@ -320,7 +320,7 @@ export class MockMcpClient implements McpClient {
   }
 
   async get_glossary_term_versions(urn: Urn): Promise<GlossaryVersion[]> {
-    // Phase 1: single version per term. Phase 4 adds the post-incident proposal as v2.
+    // Single version per term. A post-incident proposal adds a v2.
     const row = await db.seedAsset.findFirst({
       where: { glossaryTermsJson: { contains: urn } },
     })
@@ -345,7 +345,7 @@ export class MockMcpClient implements McpClient {
     v1: string,
     v2: string,
   ): Promise<GlossaryDiff[]> {
-    // Phase 4 will produce real diffs after a glossary proposal is applied.
+    // Real diffs will be produced after a glossary proposal is applied.
     return []
   }
 }
@@ -434,7 +434,7 @@ export class MockContextKitClient implements ContextKitClient {
   }
 
   async set_domains(urn: Urn, domainUrns: Urn[]): Promise<void> {
-    // Phase 4 will persist domains; for Phase 1 this is a no-op that completes.
+    // Persisting domains is a no-op that completes in the mock.
     void urn
     void domainUrns
   }
@@ -455,7 +455,7 @@ export class MockContextKitClient implements ContextKitClient {
 }
 
 // ---------------------------------------------------------------------------
-// Mock IngestionClient — REST fallback (PDF §12.2 dual write-back path).
+// Mock IngestionClient — REST fallback (dual write-back path).
 // In DEMO mode: ingestProposal / patchEntity are no-ops that return a stable
 // URN; createAssertion persists into SeedAssertion so the UI can render it.
 // ---------------------------------------------------------------------------
@@ -463,10 +463,10 @@ export class MockContextKitClient implements ContextKitClient {
 export class MockIngestionClient implements IngestionClient {
   async ingestProposal(proposal: GraphQlProposal): Promise<{ urn: Urn }> {
     // DEMO: no live DataHub GMS to send the GraphQL proposal to. For the
-    // Phase 4 dual write-back path, when the mutation is a Sentinel
+    // dual write-back path, when the mutation is a Sentinel
     // post-mortem doc creation, we persist the doc into SeedContextDoc so
     // the fallback path produces a findable artefact (mcp.search_documents
-    // can find it on the next incident — PDF §12.2 compounding). For any
+    // can find it on the next incident — compounding). For any
     // other mutation, return a stable synthetic URN.
     const isPostMortem = /PostMortem|ContextDoc/i.test(proposal.mutation)
     if (isPostMortem) {
@@ -502,7 +502,7 @@ export class MockIngestionClient implements IngestionClient {
 
   async patchEntity(urn: Urn, patch: Patch): Promise<void> {
     // DEMO: patches are recorded in the audit log; the mock does not apply
-    // arbitrary JSON patches to seeded assets. Phase 4 may refine this.
+    // arbitrary JSON patches to seeded assets. This may be refined later.
     void urn
     void patch
   }
@@ -529,7 +529,7 @@ export class MockIngestionClient implements IngestionClient {
 
 // ---------------------------------------------------------------------------
 // Snapshot helper — used by the /api/datahub/seed/overview route to render
-// the whole seeded graph in the Phase 1 status UI.
+// the whole seeded graph in the status UI.
 // ---------------------------------------------------------------------------
 
 export interface SeedOverview {
@@ -613,7 +613,7 @@ export async function getSeedOverview(): Promise<SeedOverview> {
 }
 
 // ---------------------------------------------------------------------------
-// "Print lineage" — the Phase 1 deliverable ("a script that prints lineage").
+// "Print lineage" — the deliverable ("a script that prints lineage").
 // Renders a tree from a given URN, depth-first, downstream by default.
 // ---------------------------------------------------------------------------
 

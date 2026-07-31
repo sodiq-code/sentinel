@@ -1,7 +1,7 @@
 // POST /api/guardrail/approve — mark a pending approval as approved.
 //
 // Body: { id: string, approverUrn: string }
-// PDF §9.3.5 audit log — records WHO approved what. In the demo we do NOT
+// Audit log — records WHO approved what. In the demo we do NOT
 // re-execute the action automatically (the operator re-triggers the run if
 // they want); we just mark the decision so the audit trail is complete.
 import { NextResponse } from 'next/server'

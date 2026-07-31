@@ -1,16 +1,15 @@
 // =============================================================================
-// Sentinel — Guardrail policy DSL (Phase 3)
+// Sentinel — Guardrail policy DSL
 //
-// PDF §10.3 Phase 3 spec:
+// Policy DSL spec:
 //   policy.ts — policy DSL (configurable rules: PII refusal, no-merge,
 //   no-direct-patch-on-glossary)
 //
-// The Phase 2 guardrail lived only in the prompt text (governance.md). In
-// Phase 3 it is real CODE that runs BEFORE every action.* + ack.write tool.
+// The guardrail is real CODE that runs BEFORE every action.* + ack.write tool.
 // A refusal blocks the tool call entirely and surfaces a structured
 // "REQUIRES APPROVAL" or "REFUSED" card in the UI. The LLM cannot bypass it
 // by rephrasing the request — the check is on the structured tool args, not
-// on the model's text. (PDF §12.3 — prompt-injection mitigation)
+// on the model's text. (prompt-injection mitigation)
 //
 // The policy is a small plugin DSL so a future operator can add rules without
 // touching the orchestrator. Each rule receives the tool name + parsed args
@@ -48,7 +47,7 @@ export interface GuardrailRule {
 // ---------------------------------------------------------------------------
 // Rule 1: No-merge. Sentinel NEVER merges a PR. There is no merge tool, but if
 // the LLM ever invents `github.merge` or calls `github.openPR` with a
-// `merge:true` arg, refuse. Defence in depth (PDF §9.3.5).
+// `merge:true` arg, refuse. Defence in depth.
 // ---------------------------------------------------------------------------
 
 export const NoMergeRule: GuardrailRule = {
@@ -85,7 +84,7 @@ export const NoMergeRule: GuardrailRule = {
 // reversible) and `ack.create_assertion` (learned SLA, reversible) are direct
 // writes. Everything else — `ack.add_owners`, `ack.add_glossary_terms`,
 // `ack.add_tags`, `ack.update_description` — is a PROPOSAL and surfaces an
-// approval gate. (PDF §9.5.5 threat model; PDF §9.4.2 steps 12-14)
+// approval gate.
 // ---------------------------------------------------------------------------
 
 export const DIRECT_WRITE_ALLOWLIST = new Set(['ack.save_document', 'ack.create_assertion'])
@@ -122,8 +121,8 @@ export const DirectWriteAllowlistRule: GuardrailRule = {
 // Rule 3: Action approval gate. The action.* tools (github.openIssue,
 // github.openPR, slack.postTriage) target external systems. In trace mode the
 // trace log absorbs the side effect (trace JSONL log) — but they are still
-// surfaced for human review per the PDF §11.1 beat 2:00–2:20 governance
-// refusal beat. For the demo we let them through (the trace log is the demo's
+// surfaced for human review per the governance refusal beat. For the demo we
+// let them through (the trace log is the demo's
 // approvals surface) but mark the audit. In a non-demo deployment this rule
 // returns `needs_approval`.
 // ---------------------------------------------------------------------------

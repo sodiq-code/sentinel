@@ -5,7 +5,7 @@
 // real write-backs). On Vercel's serverless runtime the local LLM
 // gateway is unreachable and SQLite is ephemeral, so a second read-only path
 // is used: every API route returns a pinned, pre-recorded run derived from the
-// Phase 7 dry-run trace. The page auto-populates on first load so a visitor
+// dry-run trace. The page auto-populates on first load so a visitor
 // lands on a fully-rendered incident console without clicking anything.
 //
 // This file is server-only. It is inert in local dev (VERCEL_DEMO_MODE is

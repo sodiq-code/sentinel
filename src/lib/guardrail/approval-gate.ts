@@ -1,20 +1,20 @@
 // =============================================================================
-// Sentinel — Approval gate (Phase 3)
+// Sentinel — Approval gate
 //
-// PDF §10.3 Phase 3 spec:
+// Approval gate spec:
 //   approval-gate.ts — returns a structured
 //   `{ needsApproval: true, reason, proposedAction, approver }` object that
 //   surfaces in the UI for human confirmation.
 //
-// A PendingApproval row is persisted to the DB (Phase 0 already added the
-// model). The orchestrator returns the approval request as the tool_result
+// A PendingApproval row is persisted to the DB (the model is part of the
+// schema). The orchestrator returns the approval request as the tool_result
 // for the LLM (so the agent sees "needs human approval — proceeding to the
 // next step") AND surfaces it to the UI via /api/guardrail/pending.
 //
 // The human can approve or deny via POST /api/guardrail/approve|deny. In the
 // demo we don't re-execute the action automatically on approval (the
 // operator re-triggers the run if they want); we just mark the decision so
-// the audit log records who approved what. (PDF §9.3.5 audit log)
+// the audit log records who approved what.
 // =============================================================================
 
 import { db } from '@/lib/db'

@@ -1,7 +1,7 @@
 // =============================================================================
 // Sentinel — DataHub client interfaces (barrel)
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1")
+// DataHub client interfaces.
 //
 // The three interfaces live in `./types` next to their DTOs. This file is a
 // convenience barrel so callers can write:

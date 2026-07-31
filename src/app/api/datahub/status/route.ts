@@ -6,7 +6,7 @@ import { ensureSeeded } from '@/lib/ensure-seeded'
 export const dynamic = 'force-dynamic'
 
 // GET /api/datahub/status
-// Returns the mode (demo|live), seeded bool, and counts for the Phase 1 status UI.
+// Returns the mode (demo|live), seeded bool, and counts for the status UI.
 export async function GET() {
   await ensureSeeded()
   const mode = getDataHubMode()

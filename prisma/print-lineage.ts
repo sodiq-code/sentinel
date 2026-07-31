@@ -1,10 +1,10 @@
 // =============================================================================
-// Sentinel — `bun run db:print-lineage <urn>` — the Phase 1 deliverable
+// Sentinel — `bun run db:print-lineage <urn>` — the lineage-printing script
 //
-// v2 plan §"Phase 1 — DataHub Mock + Seed": "A script that prints lineage · 1 day"
+// Deliverable: "A script that prints lineage"
 //
 // Renders the lineage tree of a dataset URN using the MockMcpClient against
-// the seeded Prisma data. In LIVE mode it would use LiveMcpClient (Phase 2).
+// the seeded Prisma data. In LIVE mode it would use LiveMcpClient.
 //
 // Usage:
 //   bun run db:print-lineage urn:li:dataset:(urn:li:dataPlatform:dbt,dbt_daily_revenue_dashboard,PROD)

@@ -1,20 +1,17 @@
 /**
  * Sentinel — Orchestrator (the ReAct reasoning loop).
  *
- * PDF §9.3.2 Option A: single orchestrator + tools.
- * PDF §9.4.4 layered prompt architecture.
+ * Single orchestrator + tools, with a layered prompt architecture.
  *
- * Phase 0 (this file): the public interface + the structure of the ReAct loop,
- * wired to the LLM client + tool registry + guardrail + connectors + write-back.
- * The actual tool execution is a Phase 2 deliverable (Demo Mode) and Phase 4
- * (real write-back).
+ * The public interface and the structure of the ReAct loop are wired to the
+ * LLM client, tool registry, guardrail, connectors, and write-back.
  *
  * Blueprint fidelity:
- *  - One LLM provider, temperature 0 (PDF §10.2).
- *  - Visible reasoning: every intermediate step is observable (PDF §5.3).
- *  - Retry with exponential backoff on any tool failure (PDF §9.5.4).
- *  - Structured tool-call inputs, never free-text execution (PDF §12.3 —
- *    prompt-injection mitigation).
+ *  - One LLM provider, temperature 0.
+ *  - Visible reasoning: every intermediate step is observable.
+ *  - Retry with exponential backoff on any tool failure.
+ *  - Structured tool-call inputs, never free-text execution
+ *    (prompt-injection mitigation).
  */
 
 import type {
@@ -37,32 +34,31 @@ export interface Orchestrator {
 
 /**
  * The orchestrator's dependencies — injected for testability.
- * Phase 2 fills these in with real implementations.
  */
 export interface OrchestratorDeps {
-  /** LLM client (NVIDIA NIM, OpenAI-compatible). Phase 2. */
+  /** LLM client (NVIDIA NIM, OpenAI-compatible). */
   readonly llm: LlmClient;
-  /** Read tools (12 MCP tools). Phase 1. */
+  /** Read tools (12 MCP tools). */
   readonly readTools: McpReadTools;
-  /** Write tools (7 Agent Context Kit tools + REST fallback). Phase 4. */
+  /** Write tools (7 Agent Context Kit tools + REST fallback). */
   readonly writeTools: WriteBackTools;
-  /** Action connectors. Phase 3. */
+  /** Action connectors. */
   readonly github: GitHubConnector;
   readonly slack: SlackConnector;
-  /** Guardrail. Phase 3. */
+  /** Guardrail. */
   readonly guardrail: Guardrail;
-  /** Audit log. Phase 2. */
+  /** Audit log. */
   readonly audit: AuditLog;
-  /** Reasoning stream — called on every step for the live console. Phase 5. */
+  /** Reasoning stream — called on every step for the live console. */
   readonly onReasoningStep?: (step: ReasoningStep) => void;
 }
 
 export interface LlmClient {
   /**
    * One LLM completion with tool-calling.
-   * Phase 2 implementation: POST to NVIDIA NIM `chat/completions` with the
-   * OpenAI-compatible schema, model `nvidia/llama-3.3-nemotron-super-49b-v1`,
-   * temperature 0, tools = the catalogue, tool_choice 'auto'. Fallback to
+   * POST to NVIDIA NIM `chat/completions` with the OpenAI-compatible
+   * schema, model `nvidia/llama-3.3-nemotron-super-49b-v1`, temperature 0,
+   * tools = the catalogue, tool_choice 'auto'. Fallback to
    * `openai/gpt-oss-120b` on 429/timeout.
    */
   complete(input: {
@@ -145,7 +141,7 @@ export interface IngestionClient {
 }
 
 export interface WriteBackRunner {
-  /** Dual write-back path (PDF §12.2). Try Agent Context Kit; on failure → REST ingestion. */
+  /** Dual write-back path. Try Agent Context Kit; on failure → REST ingestion. */
   writeContextDoc(assetUrn: string, title: string, content: string): Promise<WriteBackResult>;
   proposeGlossary(assetUrn: string, termUrns: string[]): Promise<WriteBackResult>;
   proposeOwnership(assetUrn: string, owners: { urn: string; type: 'user' | 'team' | 'group' }[]): Promise<WriteBackResult>;
@@ -169,7 +165,7 @@ export interface GitHubConnector {
     body: string;
     branch: string;
     base: string;
-    /** Sentinel NEVER merges — PDF §9.3.5 no-merge policy. */
+    /** Sentinel NEVER merges (no-merge policy). */
   }): Promise<{ url: string; number: number }>;
 }
 
@@ -182,7 +178,6 @@ export interface Guardrail {
    * Check a proposed action against the governance policy.
    * Returns allowed=true to proceed; needsApproval=true to pause for human.
    * Refuses PII-tagged assets without prior approval. Never auto-merges PRs.
-   * PDF §9.3.5 + §12.3.
    */
   check(input: {
     kind: 'github.openIssue' | 'github.openPR' | 'slack.postMessage' | 'datahub.write';
@@ -207,8 +202,8 @@ export interface AuditLog {
 }
 
 /**
- * The layered system prompt (PDF §9.4.4). Phase 2 assembles the layers from
- * `src/lib/agent/prompts/*.md`. Phase 0 ships the contract.
+ * The layered system prompt. Assembles the layers from
+ * `src/lib/agent/prompts/*.md`.
  */
 export interface SystemPromptParts {
   role: string;
@@ -219,8 +214,8 @@ export interface SystemPromptParts {
 }
 
 /**
- * Phase 0 placeholder — the real ReAct loop is the Phase 2 deliverable.
- * The interface is stable; later phases fill the implementation.
+ * Stable interface for the ReAct loop. The runtime implementation is
+ * provided separately; the interface is the stable contract surface.
  */
 export class SentinelOrchestrator implements Orchestrator {
   constructor(private readonly deps: OrchestratorDeps) {
@@ -229,24 +224,22 @@ export class SentinelOrchestrator implements Orchestrator {
   }
 
   /**
-   * PDF §9.4.2 incident lifecycle (15 steps), implemented as a ReAct loop.
-   * Phase 0: not yet implemented — throws to make the contract obvious.
-   * Phase 2 wires the real loop.
+   * Incident lifecycle (15 steps), implemented as a ReAct loop.
+   * Not yet implemented — throws to make the contract obvious.
    */
   async handleSignal(_signal: Signal): Promise<Incident> {
     throw new Error(
-      'SentinelOrchestrator.handleSignal is a Phase 2 deliverable. ' +
-        'Phase 0 ships the interface only. See refined v2 plan Part D, Phase 2.',
+      'SentinelOrchestrator.handleSignal is not implemented. ' +
+        'The interface ships as the stable contract.',
     );
   }
 
   /**
-   * Read the prior post-mortem for this asset, if any — the compounding beat
-   * (PDF §12.2). Run 2 visibly reads Run 1's post-mortem.
-   * Phase 2 implementation.
+   * Read the prior post-mortem for this asset, if any — the compounding beat.
+   * Run 2 visibly reads Run 1's post-mortem.
    */
   async readPriorPostMortem(_assetUrn: string): Promise<Assertion | null> {
-    throw new Error('Phase 2 deliverable');
+    throw new Error('Not implemented');
   }
 }
 

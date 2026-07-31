@@ -1,10 +1,8 @@
 /**
  * Sentinel — public entry point.
  *
- * Re-exports the stable interfaces from each module. Phase 0 only ships
- * the contracts; later phases fill the implementations.
- *
- * PDF §9.4.1 component breakdown.
+ * Re-exports the stable interfaces from each module. Ships the stable
+ * contract surface; implementations are filled in across the modules.
  */
 export * from './types';
 export * from './orchestrator';

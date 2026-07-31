@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 // =============================================================================
 // GET /api/datahub/lineage-graph?urn=<urn>&maxHops=<n>
 //
-// Phase 5 — Incident Console UI. Returns the full lineage graph (root +
+// Incident Console UI. Returns the full lineage graph (root +
 // upstream + downstream nodes + explicit edges) so the SVG <LineageGraph>
 // component can render the asset's context graph in one shot, with the
 // failing asset highlighted in the centre and traversal edges animated as

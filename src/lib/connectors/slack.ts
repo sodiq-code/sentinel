@@ -1,18 +1,18 @@
 // =============================================================================
-// Sentinel — Slack Connector (Phase 3)
+// Sentinel — Slack Connector
 //
-// PDF §10.3 Phase 3 spec:
+// Connector spec:
 //   postTriage(channel, summary) — Slack Web API `chat.postMessage` with a
 //   structured, scannable triage card (3 bullets — what failed, who is
 //   affected, what on-call should do). Trace mode writes JSONL to
 //   `examples/trace/slack-posts.log`.
 //
-// Token scope (PDF §10.3): a single bot token scoped to one channel
+// Token scope: a single bot token scoped to one channel
 // (chat:write + the bot's user identity). The bot does NOT need
 // `channels:read` — chat:write is sufficient to post to a channel it has
 // been invited to. Verified live: sentinel_bot2 posts to C0BL9CQ4D5G.
 //
-// PDF §11.1 beat 1:30–2:00 — the Slack triage card surfaces in the demo
+// The Slack triage card surfaces in the demo
 // UI as part of <ActionsPanel>.
 // =============================================================================
 

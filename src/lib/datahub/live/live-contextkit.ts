@@ -1,7 +1,7 @@
 // =============================================================================
-// Sentinel — Live ContextKitClient (LIVE mode — Phase 1 stub)
+// Sentinel — Live ContextKitClient (LIVE mode — structure stub)
 //
-// Phase 1 (PDF §10.3 / v2 plan §"Phase 1 — Real implementation shipped alongside")
+// Live implementation that ships alongside the mock.
 //
 // This is the REAL ContextKitClient that calls DataHub's Agent Context Kit
 // (ACK) mutation tools. ACK exposes a LangChain integration:
@@ -10,10 +10,10 @@
 //   from datahub_agent_context.langchain_tools import build_langchain_tools
 //
 // In TypeScript we call the same underlying HTTP/JSON-RPC surface. The tool
-// names below are the EXACT names ACK exposes (verified v2 plan Part A.2 —
-// `include_mutations=True` unlocks the 7 write tools).
+// names below are the EXACT names ACK exposes
+// (`include_mutations=True` unlocks the 7 write tools).
 //
-// Phase 1 ships the structure. Phase 4 (write-back) wires the orchestrator
+// Ships the structure. The orchestrator is wired
 // to call these when `DATAHUB_MODE=live`. In DEMO mode the mock implements
 // them against Prisma seed tables.
 // =============================================================================

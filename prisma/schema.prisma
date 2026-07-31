@@ -1,16 +1,16 @@
 // =============================================================================
 // Sentinel — Prisma schema
 //
-// PDF §9.4.3 — SQLite schema (minimal):
+// SQLite schema (minimal):
 //   incidents, tool_calls, actions, writebacks, audit_log
 //   (5 tables) + demo seed tables.
 //
 // "The schema is intentionally tiny — the demo must run from a fresh clone in
-//  under a minute." (PDF §9.4.3)
+//  under a minute."
 //
 // The only durable state is what is written back to DataHub (context docs,
 // assertions, glossary/ownership proposals) — by design, Sentinel is stateless
-// across incidents except for what lives in DataHub. (PDF §9.3.4)
+// across incidents except for what lives in DataHub.
 // =============================================================================
 
 generator client {
@@ -24,11 +24,11 @@ datasource db {
 }
 
 // ---------------------------------------------------------------------------
-// PDF §9.4.3 — the 5 incident-state tables
+// The 5 incident-state tables
 // ---------------------------------------------------------------------------
 
 model Incident {
-  // PDF §9.4.3: incidents(urn, signal_type, asset_urn, status, created_at, resolved_at)
+  // incidents(urn, signal_type, asset_urn, status, created_at, resolved_at)
   urn         String   @id
   signalType  String   // freshness | schema | quality | pii
   assetUrn    String
@@ -37,7 +37,7 @@ model Incident {
   resolvedAt  DateTime?
   updatedAt   DateTime @updatedAt
 
-  // Relations — cascade on incident delete (PDF §9.3.4: stateless across incidents)
+  // Relations — cascade on incident delete (stateless across incidents)
   toolCalls   ToolCall[]
   actions     Action[]
   writebacks  WriteBack[]
@@ -48,7 +48,7 @@ model Incident {
   @@index([assetUrn])
 }
 
-/// PDF §9.4.3: tool_calls(id, incident_urn, tool, args_json, result_json, ts)
+/// tool_calls(id, incident_urn, tool, args_json, result_json, ts)
 model ToolCall {
   id          String   @id @default(cuid())
   incidentUrn String
@@ -64,7 +64,7 @@ model ToolCall {
   @@index([tool, ts])
 }
 
-/// PDF §9.4.3: actions(id, incident_urn, kind, target, payload, status, ts)
+/// actions(id, incident_urn, kind, target, payload, status, ts)
 model Action {
   id          String   @id @default(cuid())
   incidentUrn String
@@ -80,7 +80,7 @@ model Action {
   @@index([kind, status])
 }
 
-/// PDF §9.4.3: writebacks(id, incident_urn, kind, datahub_urn, status, ts)
+/// writebacks(id, incident_urn, kind, datahub_urn, status, ts)
 model WriteBack {
   id          String   @id @default(cuid())
   incidentUrn String
@@ -88,7 +88,7 @@ model WriteBack {
   kind        String   // context_doc | glossary_proposal | ownership_proposal | assertion
   datahubUrn  String?  // the URN DataHub assigned (or null if failed)
   status      String   @default("proposed") // proposed | succeeded | failed | pending_approval
-  path        String   @default("agent_context_kit") // agent_context_kit | rest_ingestion (PDF §12.2 dual path)
+  path        String   @default("agent_context_kit") // agent_context_kit | rest_ingestion (dual path)
   dataJson    String   // JSON.stringify(the write payload)
   ts          DateTime @default(now())
 
@@ -96,7 +96,7 @@ model WriteBack {
   @@index([kind, status])
 }
 
-/// PDF §9.4.3: audit_log(id, incident_urn, event, ts) — mirror of DataHub Assertion/Event
+/// audit_log(id, incident_urn, event, ts) — mirror of DataHub Assertion/Event
 model AuditEvent {
   id          String   @id @default(cuid())
   incidentUrn String
@@ -112,7 +112,7 @@ model AuditEvent {
 
 // ---------------------------------------------------------------------------
 // Signals — the raw input from DataHub. Stored so a demo can replay them.
-// PDF §9.4.1: SignalListener "Subscribe to DataHub assertion failures (webhook or poll). Python async; idempotent."
+// SignalListener "Subscribe to DataHub assertion failures (webhook or poll). Python async; idempotent."
 // ---------------------------------------------------------------------------
 
 model SignalRecord {
@@ -134,7 +134,7 @@ model SignalRecord {
 
 // ---------------------------------------------------------------------------
 // Demo seed — the seeded DataHub-equivalent fixtures used in DEMO mode
-// (PDF §9.3.3 — DataHub as RAG substrate, demo uses showcase-ecommerce for
+// (DataHub as RAG substrate, demo uses showcase-ecommerce for
 // cross-platform lineage and nyc-taxi for the freshness scenario)
 // ---------------------------------------------------------------------------
 
@@ -198,7 +198,7 @@ model SeedContextDoc {
 
 // ---------------------------------------------------------------------------
 // Pending approvals — surfaced by the guardrail for the human-approval gate
-// (PDF §9.3.5 — 'human-approval gate' / PDF §11.1 beat 2:00–2:20)
+// ('human-approval gate')
 // ---------------------------------------------------------------------------
 
 model PendingApproval {
@@ -227,7 +227,7 @@ model Setting {
 }
 
 // ---------------------------------------------------------------------------
-// Scaffolded scaffold models kept for compatibility — unused by Sentinel
+// Compatibility models kept from the Next.js scaffold — unused by Sentinel
 // (the original User/Post models from the Z.ai Next.js scaffold). Safe to
 // keep; not exercised by Sentinel code paths.
 // ---------------------------------------------------------------------------

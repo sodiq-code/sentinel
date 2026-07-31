@@ -1,9 +1,8 @@
 /**
  * Sentinel — shared types for the autonomous incident-response agent.
  *
- * PDF §9.4.1 component breakdown; refined v2 plan Part C.
- * These types are implemented in Phase 1+ and consumed by the Next.js console
- * (Phase 5) and the CI integration test (Phase 7).
+ * These types are consumed by the Next.js console and the CI integration
+ * test.
  */
 
 // ---------------------------------------------------------------------------
@@ -275,7 +274,7 @@ export interface AuditEvent {
 }
 
 // ---------------------------------------------------------------------------
-// Write-back artefacts (PDF §9.4.2 sequence, steps 12–14)
+// Write-back artefacts
 // ---------------------------------------------------------------------------
 
 export interface WriteBackResult {

@@ -5,8 +5,8 @@ export const dynamic = 'force-dynamic'
 
 // GET /api/datahub/print-lineage?urn=<urn>&direction=upstream|downstream&maxHops=<n>
 // Returns the ASCII lineage tree as plain text. This is the HTTP version of the
-// Phase 1 "script that prints lineage" deliverable, exposed so the incident
-// console UI (Phase 5) can show it inline.
+// "script that prints lineage" deliverable, exposed so the incident
+// console UI can show it inline.
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const urn = searchParams.get('urn')

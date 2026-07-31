@@ -45,5 +45,14 @@ tool arguments, not on your text. (Prompt-injection mitigation.)
 
 6. **Contained.** All actions target the demo GitHub org + the demo
    Slack workspace. The tokens are scoped to a single demo repo / single
-   channel. The `SENTINEL_DRY_RUN` toggle (default `true`) writes actions to
-   a local trace log instead of calling the live APIs.
+   channel. The DRY-RUN toggle (default on; controllable from the dashboard
+   or the `SENTINEL_DRY_RUN` env var) writes actions to a local trace log
+   instead of calling the live APIs.
+
+7. **Refusal is a durable write-back.** When the PII rule refuses a
+   post-mortem, the orchestrator still writes a **governance refusal record**
+   to DataHub — it records the decision (asset URN, PII tags, refusal reason,
+   timestamp), NOT the post-mortem content. The incident resolves with
+   WRITE-BACKS=1. You do not need to call a tool for this; the orchestrator
+   handles it automatically when the guardrail refuses your `save_document`
+   call.

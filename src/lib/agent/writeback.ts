@@ -1,5 +1,5 @@
 // =============================================================================
-// Sentinel — Dual write-back path (Phase 4, PDF §12.2)
+// Sentinel — Dual write-back path
 //
 // The compounding artefact (a Sentinel post-mortem context doc) is written
 // back to DataHub through TWO paths, in order:
@@ -8,7 +8,7 @@
 //   2. REST ingestion      (ingestion.ingestProposal)    — FALLBACK
 //
 // The Agent Context Kit is the structured, schema-validated write path
-// DataHub ships for agents (PDF §10.2). When it is unavailable — the ACK
+// DataHub ships for agents. When it is unavailable — the ACK
 // endpoint is down, the auth token expired, or a 5xx is returned — Sentinel
 // falls back to the REST ingestion path: a GraphQL `createDatahubPostMortemDoc`
 // proposal POSTed to the GMS `/api/graphql` endpoint. Both paths produce a
@@ -92,8 +92,8 @@ function isHardClientError(err: unknown): boolean {
 }
 
 /**
- * Write a post-mortem context doc to DataHub via the dual write-back path
- * (PDF §12.2). Returns the outcome (path used, URN, status). Records a
+ * Write a post-mortem context doc to DataHub via the dual write-back path.
+ * Returns the outcome (path used, URN, status). Records a
  * WriteBack row + audit events regardless of outcome.
  */
 export async function writeBackDocument(
@@ -146,7 +146,7 @@ export async function writeBackDocument(
       summary: `Write-back succeeded via Agent Context Kit: ${res.urn}`,
       payload: { path: 'agent_context_kit', urn: res.urn, title, fallback: false },
     })
-    // Phase 4: mirror the lifecycle event to DataHub Assertions (best-effort,
+    // Mirror the lifecycle event to DataHub Assertions (best-effort,
     // non-fatal — the write already succeeded).
     void getAuditMirror().mirror({
       incidentUrn,
@@ -244,7 +244,7 @@ export async function writeBackDocument(
           primaryError,
         },
       })
-      // Phase 4: mirror the lifecycle event to DataHub Assertions (best-effort).
+      // Mirror the lifecycle event to DataHub Assertions (best-effort).
       void getAuditMirror().mirror({
         incidentUrn,
         kind: 'writeback_succeeded',

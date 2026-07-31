@@ -1,5 +1,5 @@
 // =============================================================================
-// Sentinel — Connectors barrel (Phase 3)
+// Sentinel — Connectors barrel
 //
 // Two action connectors:
 //   github — openIssue + openPR (NEVER merges) against the demo repo
@@ -7,7 +7,7 @@
 //
 // Both honor SENTINEL_DRY_RUN=true (default) — trace mode writes JSONL
 // to `examples/trace/{kind}-actions.log` instead of calling the live API.
-// PDF §11.3 contingency plan: the dry-run toggle is exposed in the DemoControlBar.
+// Fallback path: the dry-run toggle is exposed in the DemoControlBar.
 // =============================================================================
 
 export * from './github'

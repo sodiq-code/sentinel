@@ -1,8 +1,8 @@
 // GET /api/agent/audit/[urn] — the full audit log for an incident, with
-// payloads. This is the "first-class audit log view" Phase 4 surfaces —
+// payloads. This is the "first-class audit log view" surfaced to operators —
 // the reasoning trace reconstruction lives in hydrateIncident, but the
 // audit log itself (every lifecycle event, every tool call, every write-
-// back) is its own deliverable (PDF §9.4.3 / §13.4).
+// back) is its own deliverable.
 //
 // Returns: {
 //   incidentUrn,

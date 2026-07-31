@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic'
 
 // GET /api/datahub/seed/overview
 // Returns the whole seeded DataHub graph (assets, lineage edges, assertions,
-// context docs) grouped by scenario. Powers the Phase 1 status UI's graph
+// context docs) grouped by scenario. Powers the status UI's graph
 // renderer.
 export async function GET() {
   const overview = await getSeedOverview()

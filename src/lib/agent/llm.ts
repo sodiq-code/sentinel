@@ -29,38 +29,30 @@
 //
 // Provider selection (LLM_PROVIDER env, default 'zai'):
 //
-//   zai     — z-ai-web-dev-sdk gateway (DEFAULT in this build environment).
-//             Free, no key, no rate limits, tool-calling verified. The SDK
-//             works on ANY Node.js runtime (sandbox, local dev, AND Vercel
-//             serverless) — it is NOT sandbox-only. It is the default HERE
-//             because the SDK is pre-installed in this build environment and
-//             the gateway is reachable with no configuration. For an open-
-//             source hackathon project that judges will deploy cold, we use
-//             universally-available providers (gemini primary, groq fallback)
-//             as the documented production stack, so a cold clone runs without
-//             depending on the z-ai SDK being pre-installed. Set
-//             LLM_PROVIDER=zai and LLM_FALLBACK_PROVIDER=zai on any runtime
-//             where z-ai-web-dev-sdk is installed to use it as primary.
+//   zai     — z-ai-web-dev-sdk gateway (default). Free, no key, no rate
+//             limits, tool-calling verified. The z-ai-web-dev-sdk is
+//             available as a dependency, so this provider works on any
+//             Node.js runtime without additional configuration. Set
+//             LLM_PROVIDER=zai (and LLM_FALLBACK_PROVIDER=zai) on any
+//             runtime where the SDK is installed to use it as primary.
 //
-//   gemini  — Google Gemini 2.0 Flash (PRODUCTION primary). Free forever,
+//   gemini  — Google Gemini 2.0 Flash (production primary). Free forever,
 //             1M tokens-per-minute, 1M context window, best-in-class native
 //             function-calling. OpenAI-compatible endpoint at
 //             generativelanguage.googleapis.com/v1beta/openai. Solves the
 //             Groq free-tier TPM bottleneck (the 7-8k token Sentinel system
 //             prompt exceeds Groq's 6k TPM 8b fallback, so the fallback path
 //             was skipped and the 70b primary 429'd). Groq remains the
-//             dormant failover for the Gemini path (kept — honors the
-//             "never remove Groq" constraint). Get a free key at
+//             dormant failover for the Gemini path. Get a free key at
 //             https://aistudio.google.com/apikey (no credit card).
 //
-//   groq    — direct Groq API (FALLBACK, kept). llama-3.3-70b-versatile
+//   groq    — direct Groq API (fallback, kept). llama-3.3-70b-versatile
 //             primary, llama-3.1-8b-instant fallback. OpenAI-compatible
-//             endpoint at api.groq.com/openai/v1. Groq is geo-blocked from
-//             some regions (Cloudflare HKG in the build sandbox → HTTP 403)
-//             and the free tier's 6k TPM on the 8b fallback cannot absorb
-//             the Sentinel system prompt, so this is now the fallback for
-//             Gemini rather than the primary. The resilience layer still
-//             catches failures + runs the post-loop fallback post-mortem.
+//             endpoint at api.groq.com/openai/v1. The Groq free tier's 6k
+//             TPM on the 8b fallback cannot absorb the Sentinel system
+//             prompt, so this is the fallback for Gemini rather than the
+//             primary. The resilience layer still catches failures and
+//             runs the post-loop fallback post-mortem.
 //
 //   nvidia  — direct NVIDIA NIM OpenAI-compatible endpoint (dormant
 //             failover for the zai path). PRIMARY model
@@ -139,15 +131,15 @@ function getProvider(): LlmProvider {
 
 /**
  * Fallback provider when the primary's circuit opens. Defaults per primary:
- *   gemini → 'groq' (production) — overridden to 'zai' in sandbox/local dev
+ *   gemini → 'groq' (production) — overridden to 'zai' in local development
  *           via LLM_FALLBACK_PROVIDER=zai so the agent loop always completes
  *           even when Gemini's free-tier daily quota is exhausted.
  *   zai    → 'nvidia' (dormant)
  *   groq   → (none — orchestrator post-loop fallback runs)
  *   nvidia → (none)
  *
- * Honors the "never remove Groq" constraint: Groq remains the production
- * fallback for Gemini and is always available as a manual LLM_PROVIDER choice.
+ * Groq remains the production fallback for Gemini and is always available as
+ * a manual LLM_PROVIDER choice.
  */
 function getFallbackProvider(): LlmProvider | null {
   const raw = (process.env.LLM_FALLBACK_PROVIDER ?? '').toLowerCase()
@@ -389,7 +381,7 @@ function mapCompletion(res: OpenAiResponse, provider?: string): LlmCompletion {
 }
 
 // ===========================================================================
-// Provider: z-ai-web-dev-sdk (works in the local build environment)
+// Provider: z-ai-web-dev-sdk (local development default)
 // ===========================================================================
 
 class ZaiLlmClient implements ResilientLlmClient {
@@ -659,13 +651,13 @@ class NvidiaNimLlmClient implements ResilientLlmClient {
 }
 
 // ===========================================================================
-// Provider: Groq (OpenAI-compatible, real outbound LLM — DEFAULT)
+// Provider: Groq (OpenAI-compatible, real outbound LLM)
 //
 // Groq's chat/completions endpoint is a drop-in OpenAI-compatible surface
 // (same request/response shape as NVIDIA NIM), so it reuses the exact same
 // resilience primitives (TokenBucket, CircuitBreaker, retry/backoff). This
-// is the provider actually reachable from outside the build environment — no
-// z-ai gateway, no dead NVIDIA key. Get a free key at console.groq.com/keys.
+// provider uses the public Groq API directly. Get a free key at
+// console.groq.com/keys.
 // ===========================================================================
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL ?? 'https://api.groq.com/openai/v1'
@@ -828,7 +820,7 @@ class GroqLlmClient implements ResilientLlmClient {
     // calls, the request may exceed 8b's TPM and return 413 "Request too
     // large". We estimate the prompt token count and SKIP the 8b fallback
     // when it would obviously 413 — counting it as a real 429 against the
-    // circuit instead, so the graceful-degradation path runs.
+    // circuit instead, so the fallback path runs.
     const primary = await this.callModel(primaryModel, body, apiKey)
     if (primary.ok) {
       this.circuit.recordSuccess()
@@ -883,8 +875,7 @@ class GroqLlmClient implements ResilientLlmClient {
       }
       // Prompt too large for the 8b fallback's TPM — don't waste a call.
       // Record a 429 against the circuit (the heavy model is rate-limited
-      // AND we can't fall back), let the orchestrator's graceful-degradation
-      // path run.
+      // AND we can't fall back), let the orchestrator's fallback path run.
       const openedNow = this.circuit.recordFailure(429)
       if (openedNow) {
         throw new CircuitOpenError(
@@ -953,7 +944,7 @@ class GroqLlmClient implements ResilientLlmClient {
 //     without truncation, even on long incidents.
 //   • Best-in-class native function-calling — parallel tool calls, structured
 //     outputs, deterministic at temperature 0.
-//   • No geo-block — reachable from both the build sandbox AND Vercel.
+//   • Globally reachable from any standard runtime, including Vercel.
 //   • Get a free key at https://aistudio.google.com/apikey.
 //
 // Endpoint: https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
@@ -1204,14 +1195,13 @@ export function getLlm(): LlmClient {
         s.gemini = new GeminiLlmClient()
         // Configurable failover when the Gemini circuit opens (e.g. daily
         // free-tier quota exhausted). LLM_FALLBACK_PROVIDER picks the target:
-        //   'zai'  — sandbox/local dev (default here): the free z-ai gateway
+        //   'zai'  — local development (default here): the free z-ai gateway
         //            has no rate limits, so the agent loop ALWAYS completes
         //            even when Gemini's daily quota is exhausted. When the
         //            quota resets at midnight PT, Gemini transparently
         //            resumes as the primary.
-        //   'groq' — production (Vercel default): Groq free tier. Kept per the
-        //            "never remove Groq" constraint — Groq still serves real
-        //            traffic when Gemini is throttled.
+        //   'groq' — production (Vercel default): Groq free tier. Groq still
+        //            serves real traffic when Gemini is throttled.
         //   'none' — disable failover; the orchestrator's post-loop fallback
         //            post-mortem path runs gracefully.
         if (LLM_FAILOVER_ENABLED) {
@@ -1243,10 +1233,10 @@ export function getLlm(): LlmClient {
         }
       }
     } else {
-      // zai (in-sandbox default). Optional dormant failover to NVIDIA if a
-      // key is configured (the key is list-only in dev, so failover surfaces
-      // a clean CircuitOpenError and the orchestrator's post-loop fallback
-      // post-mortem path runs gracefully).
+      // zai (local development default). Optional dormant failover to NVIDIA
+      // if a key is configured (the key is list-only in dev, so failover
+      // surfaces a clean CircuitOpenError and the orchestrator's post-loop
+      // fallback post-mortem path runs gracefully).
       s.zai = new ZaiLlmClient()
       if (LLM_FAILOVER_ENABLED) {
         const fb = getFallbackProvider()
@@ -1293,10 +1283,10 @@ export function getLlmModel(): string {
 }
 
 /**
- * Phase 3 resilience — expose circuit state for the UI status chip and the
+ * Resilience — expose circuit state for the UI status chip and the
  * `/api/llm/status` endpoint. Read-only; never throws.
  *
- * In local dev (z-ai + dead NVIDIA key), `failoverEnabled` is true but
+ * In local dev (z-ai + a dead NVIDIA key), `failoverEnabled` is true but
  * `nvidiaHealthy` is false — the UI shows the operator that the agent will
  * degrade gracefully via the post-loop fallback path, not via live NVIDIA.
  *
@@ -1337,8 +1327,8 @@ export function getLlmResilienceStatus(): {
   const hasGroqKey = !!(
     process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.startsWith('gsk_')
   )
-  // zai has no key — it's a free in-sandbox gateway. Mark "available" when
-  // the SDK is importable (always true in this repo).
+  // zai has no key — it is a free local-development gateway. Mark "available"
+  // when the SDK is importable (always true in this repo).
   const hasZaiKey = true
   const s = getSingleton()
   const provider = getProvider()
