@@ -9,10 +9,21 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-blue.svg)](https://www.typescriptlang.org/)
 [![Hackathon](https://img.shields.io/badge/DataHub-Agent%20Hackathon-emerald.svg)](https://datahub.devpost.com)
+[![Demo Video](https://img.shields.io/badge/▶_Watch_Demo-3_min-ff0000.svg?logo=youtube&logoColor=white)](https://youtu.be/gpPB2UNSTPA)
 
 **The autonomous data-incident agent for DataHub.**
 
-**Live:** [sentinel-ivory-two-79.vercel.app](https://sentinel-ivory-two-79.vercel.app) · **Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel) · **Submission:** [Build with DataHub: The Agent Hack](https://datahub.devpost.com) — Challenge 1, *Agents That Do Real Work*
+**Demo video:** [youtu.be/gpPB2UNSTPA](https://youtu.be/gpPB2UNSTPA) · **Live:** [sentinel-ivory-two-79.vercel.app](https://sentinel-ivory-two-79.vercel.app) · **Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel) · **Submission:** [Build with DataHub: The Agent Hack](https://datahub.devpost.com) — Challenge 1, *Agents That Do Real Work*
+
+</div>
+
+<div align="center">
+
+### ▶ Watch the 3-minute demo
+
+[![Sentinel — 3-minute demo](https://img.youtube.com/vi/gpPB2UNSTPA/hqdefault.jpg)](https://youtu.be/gpPB2UNSTPA)
+
+*Every incident leaves the catalog smarter. Run 1 writes. Run 2 reads. Each run compounds.*
 
 </div>
 
@@ -165,6 +176,7 @@ sentinel/
 
 - ✅ **[`incident-triage` DataHub Skill](./skill/incident-triage/)** — packaged, with `manifest.json` + `SKILL.md`, compatible with Cursor / Claude Code / Copilot / Codex / Gemini CLI.
 - ✅ **[closed-loop-metadata-agents RFC](./rfc/closed-loop-metadata-agents.md)** — generalises the closed-loop write-back pattern beyond incidents (applies to any metadata agent).
+- ✅ **[3-minute demo video](https://youtu.be/gpPB2UNSTPA)** — the full closed loop, narrated end-to-end.
 - ✅ **[Live demo on Vercel](https://sentinel-ivory-two-79.vercel.app)** — real LLM, real GitHub, real Slack, real DataHub write-backs.
 - ✅ **Runtime DRY-RUN ↔ LIVE toggle** — flip connector mode from the dashboard without redeploying; persisted in a server-side `Setting` table.
 - ✅ **"View post-mortem" / "View assertion" inspector** — click any write-back URN to read the full document Sentinel wrote back to DataHub.
