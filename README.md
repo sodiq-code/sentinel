@@ -13,7 +13,7 @@
 
 **The autonomous data-incident agent for DataHub.**
 
-**Demo video:** [youtu.be/gpPB2UNSTPA](https://youtu.be/gpPB2UNSTPA) · **Live:** [sentinel-ivory-two-79.vercel.app](https://sentinel-ivory-two-79.vercel.app) · **Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel) · **Submission:** [Build with DataHub: The Agent Hack](https://datahub.devpost.com) — Challenge 1, *Agents That Do Real Work*
+**Source:** [sodiq-code/sentinel](https://github.com/sodiq-code/sentinel) · **Submission:** [Build with DataHub: The Agent Hack](https://datahub.devpost.com) — Challenge 1, *Agents That Do Real Work*
 
 </div>
 
